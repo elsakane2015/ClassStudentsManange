@@ -10,7 +10,7 @@ export default function LoginPage() {
     const [loading, setLoading] = useState(false);
 
     // Store
-    const setUser = useAuthStore((state) => state.setUser);
+    const { setUser, setToken } = useAuthStore();
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
@@ -22,15 +22,9 @@ export default function LoginPage() {
             const data = await authService.login(email, password);
             console.log('Login success:', data);
 
-            // Just saving token is usually enough if using Bearer, 
-            // but Sanctum cookie mode manages auth state via cookies primarily.
-            // If API returned a plainTextToken, we'd store it.
-            // Our Controller returns `access_token`.
-
+            // Handle Token Logic via Store
             if (data.access_token) {
-                localStorage.setItem('token', data.access_token);
-                // Set default header
-                axios.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
+                setToken(data.access_token);
             }
 
             // Fetch full user details to trust state
@@ -39,7 +33,7 @@ export default function LoginPage() {
 
             // Redirect based on role
             if (user.role === 'student') navigate('/student/dashboard');
-            else if (['teacher', 'admin', 'manager'].includes(user.role)) navigate('/teacher/dashboard');
+            else if (['teacher', 'system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user.role)) navigate('/teacher/dashboard');
             else navigate('/');
 
         } catch (err) {
@@ -54,10 +48,10 @@ export default function LoginPage() {
         <div className="flex min-h-screen flex-col justify-center px-6 py-12 lg:px-8 bg-gray-50">
             <div className="sm:mx-auto sm:w-full sm:max-w-sm">
                 <h2 className="mt-10 text-center text-2xl font-bold leading-9 tracking-tight text-gray-900">
-                    Sign in to your account
+                    账号登录
                 </h2>
                 <p className="text-center text-sm text-gray-500 mt-2">
-                    Leave & Attendance System
+                    智慧校园考勤系统
                 </p>
             </div>
 
@@ -75,7 +69,7 @@ export default function LoginPage() {
 
                     <div>
                         <label htmlFor="email" className="block text-sm font-medium leading-6 text-gray-900">
-                            Email address
+                            邮箱地址
                         </label>
                         <div className="mt-2">
                             <input
@@ -94,7 +88,7 @@ export default function LoginPage() {
                     <div>
                         <div className="flex items-center justify-between">
                             <label htmlFor="password" className="block text-sm font-medium leading-6 text-gray-900">
-                                Password
+                                密码
                             </label>
                         </div>
                         <div className="mt-2">
@@ -117,7 +111,7 @@ export default function LoginPage() {
                             disabled={loading}
                             className="flex w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50"
                         >
-                            {loading ? 'Signing in...' : 'Sign in'}
+                            {loading ? '登录中...' : '登 录'}
                         </button>
                     </div>
                 </form>

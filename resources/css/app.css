@@ -7,3 +7,65 @@
     @apply antialiased text-gray-900 bg-gray-50;
   }
 }
+
+/* FullCalendar Customization */
+.fc .fc-toolbar-title {
+  font-size: 1.25rem !important;
+  /* text-xl */
+  font-weight: 600 !important;
+}
+
+.fc .fc-button {
+  background-color: #4f46e5 !important;
+  /* indigo-600 */
+  border-color: #4f46e5 !important;
+  font-size: 0.875rem !important;
+  /* text-sm */
+  text-transform: capitalize;
+}
+
+.fc .fc-button:hover {
+  background-color: #4338ca !important;
+  /* indigo-700 */
+  border-color: #4338ca !important;
+}
+
+.fc .fc-button-active {
+  background-color: #3730a3 !important;
+  /* indigo-800 */
+  border-color: #3730a3 !important;
+}
+
+.fc-daygrid-event {
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+}
+
+/* Fix for overlapping layout issues if any */
+.fc {
+  z-index: 1;
+  width: 100% !important;
+  /* Force full width */
+}
+
+/* Ensure header toolbar spreads out */
+.fc .fc-toolbar {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Prevent day header squishing */
+.fc-col-header-cell {
+  min-width: 40px;
+  /* Minimum width for day columns */
+}
+
+/* Prevent cell content vertically stacking weirdly */
+.fc-daygrid-day-frame {
+  min-height: 80px;
+  /* Give cells some height */
+}

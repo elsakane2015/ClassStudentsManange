@@ -20,6 +20,11 @@ class SchoolClass extends Model
     {
         return $this->belongsTo(Grade::class);
     }
+
+    public function department()
+    {
+        return $this->belongsTo(Department::class);
+    }
     
     public function teacher()
     {

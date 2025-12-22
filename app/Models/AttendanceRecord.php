@@ -13,6 +13,9 @@ class AttendanceRecord extends Model
     protected $casts = [
         'date' => 'date',
         'informed_parent' => 'boolean',
+        'details' => 'array',
+        'is_self_applied' => 'boolean',
+        'approved_at' => 'datetime',
     ];
 
     public function student()
@@ -33,5 +36,15 @@ class AttendanceRecord extends Model
     public function class()
     {
         return $this->belongsTo(SchoolClass::class, 'class_id');
+    }
+
+    public function leaveType()
+    {
+        return $this->belongsTo(LeaveType::class);
+    }
+
+    public function approver()
+    {
+        return $this->belongsTo(User::class, 'approver_id');
     }
 }

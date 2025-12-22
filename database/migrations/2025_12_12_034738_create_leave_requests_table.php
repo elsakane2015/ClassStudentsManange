@@ -18,7 +18,7 @@ return new class extends Migration
             $table->foreignId('school_id')->constrained()->cascadeOnDelete();
             $table->foreignId('class_id')->nullable()->constrained()->nullOnDelete();
             
-            $table->enum('type', ['sick', 'personal'])->default('personal');
+            $table->string('type')->default('personal'); // sick, personal, menstrual, etc.
             $table->date('start_date');
             $table->date('end_date');
             $table->enum('half_day', ['am', 'pm'])->nullable(); // Only if start=end

@@ -41,4 +41,9 @@ class LeaveRequest extends Model
     {
         return $this->belongsTo(SchoolClass::class, 'class_id');
     }
+
+    public function leaveType()
+    {
+        return $this->belongsTo(LeaveType::class, 'type', 'slug');
+    }
 }

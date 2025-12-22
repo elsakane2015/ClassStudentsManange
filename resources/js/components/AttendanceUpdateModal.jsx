@@ -1,0 +1,746 @@
+import React, { useState, useEffect, Fragment } from 'react';
+import axios from 'axios';
+import { format } from 'date-fns';
+import { Dialog, Transition } from '@headlessui/react';
+import { CheckIcon } from '@heroicons/react/24/outline'; // Adjust if not installed
+
+export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
+    const formattedDate = date ? format(date, 'yyyy-MM-dd') : '';
+    const [students, setStudents] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
+    const [leaveTypes, setLeaveTypes] = useState([]);
+    const [periods, setPeriods] = useState([]); // 时段列表
+    const [selectedPeriod, setSelectedPeriod] = useState(null); // 选中的时段ID，null表示全天
+
+    // Dynamic Input State
+    const [pendingAction, setPendingAction] = useState(null); // { status, leaveType, ... }
+    const [inputModalOpen, setInputModalOpen] = useState(false);
+    const [inputData, setInputData] = useState({});
+
+    useEffect(() => {
+        if (isOpen && date) {
+            fetchAttendance();
+            axios.get('/leave-types').then(res => {
+                setLeaveTypes(res.data.data || res.data);
+            }).catch(e => console.error("Failed to load leave types"));
+
+            // 获取节次列表（添加时间戳防止缓存）
+            axios.get('/class-periods', {
+                params: { _t: Date.now() }
+            }).then(res => {
+                const allPeriods = res.data.data || res.data || [];
+                console.log('[Class Periods] API returned:', allPeriods);
+                console.log('[Class Periods] Count:', allPeriods.length);
+                // 后端已经过滤和限制了，前端直接使用
+                setPeriods(allPeriods);
+            }).catch(e => console.error("Failed to load periods"));
+        }
+    }, [isOpen, date]);
+
+    const fetchAttendance = async () => {
+        setLoading(true);
+        try {
+            const res = await axios.get('/attendance/overview', { params: { date: formattedDate } });
+            // Flatten logic
+            let allStudents = [];
+            // Handle different API responses (overview gives departments -> classes -> students)
+            const data = Array.isArray(res.data) ? res.data : (res.data.data || []);
+            console.log("Attendance Modal Overview Data:", data);
+
+            data.forEach(dept => {
+                const classes = dept.classes || [];
+                if (Array.isArray(classes)) {
+                    classes.forEach(cls => {
+                        if (Array.isArray(cls.students)) {
+                            allStudents = [...allStudents, ...cls.students];
+                        }
+                    });
+                }
+            });
+            console.log("All Students Found:", allStudents.length);
+            setStudents(allStudents);
+            setSelectedStudentIds(new Set());
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const toggleSelection = (id) => {
+        const newSet = new Set(selectedStudentIds);
+        if (newSet.has(id)) newSet.delete(id);
+        else newSet.add(id);
+        setSelectedStudentIds(newSet);
+    };
+
+    const toggleAll = () => {
+        if (selectedStudentIds.size === students.length) {
+            setSelectedStudentIds(new Set());
+        } else {
+            setSelectedStudentIds(new Set(students.map(s => s.id)));
+        }
+    };
+
+    const handleActionClick = async (typeOrStatus) => {
+        if (selectedStudentIds.size === 0) return;
+
+        if (typeOrStatus === 'present') {
+            executeBulkUpdate('present', null, null);
+            return;
+        }
+
+        // It's a leave type object
+        const lt = typeOrStatus;
+
+        // Map slug to status
+        // Slugs: late, absent, early_leave -> map to status 'late', 'absent', 'early_leave'
+        // Others -> status 'leave'
+        let status = 'leave';
+        if (['late', 'absent', 'early_leave'].includes(lt.slug)) {
+            status = lt.slug;
+        }
+
+        if (!lt.input_type || lt.input_type === 'none') {
+            executeBulkUpdate(status, lt.id, null);
+        } else {
+            // Open Input Modal
+            console.log('[handleActionClick] Opening input modal, status:', status, 'leaveType:', lt);
+            setPendingAction({ status, leaveType: lt });
+
+            // 对于旷课，预填充已有的节次
+            if (status === 'absent' && selectedStudentIds.size > 0) {
+                console.log('[Absent Pre-fill] Starting pre-fill logic');
+                const firstStudentId = Array.from(selectedStudentIds)[0];
+
+                // 从 API 获取该学生的考勤记录
+                try {
+                    const res = await axios.get('/attendance/overview', {
+                        params: { date: formattedDate }
+                    });
+                    const data = Array.isArray(res.data) ? res.data : (res.data.data || []);
+
+                    // 查找该学生
+                    let studentWithRecords = null;
+                    data.forEach(dept => {
+                        const classes = dept.classes || [];
+                        classes.forEach(cls => {
+                            if (Array.isArray(cls.students)) {
+                                const found = cls.students.find(s => s.id === firstStudentId);
+                                if (found) studentWithRecords = found;
+                            }
+                        });
+                    });
+
+                    console.log('[Absent Pre-fill] Student with records:', studentWithRecords);
+
+                    if (studentWithRecords && studentWithRecords.attendance) {
+                        const absentRecords = studentWithRecords.attendance.filter(r => r.status === 'absent');
+                        const existingPeriods = [];
+
+                        absentRecords.forEach(record => {
+                            // Parse details if it's a string
+                            let details = record.details;
+                            if (typeof details === 'string') {
+                                try {
+                                    details = JSON.parse(details);
+                                } catch (e) {
+                                    console.error('Failed to parse details:', e);
+                                    details = null;
+                                }
+                            }
+
+                            if (details && details.periods) {
+                                existingPeriods.push(...details.periods);
+                            }
+                        });
+
+                        const uniquePeriods = [...new Set(existingPeriods)];
+                        console.log('[Absent Pre-fill] Absent records:', absentRecords);
+                        console.log('[Absent Pre-fill] Existing periods:', existingPeriods);
+                        console.log('[Absent Pre-fill] Unique periods:', uniquePeriods);
+
+                        setInputData(uniquePeriods.length > 0 ? { periods: uniquePeriods } : {});
+                    } else {
+                        console.log('[Absent Pre-fill] No attendance records found');
+                        setInputData({});
+                    }
+                } catch (error) {
+                    console.error('[Absent Pre-fill] Failed to fetch records:', error);
+                    setInputData({});
+                }
+            } else {
+                setInputData({}); // Reset input
+            }
+            setInputModalOpen(true);
+        }
+    };
+
+    const executeBulkUpdate = async (status, leaveTypeId, details) => {
+        try {
+            const records = Array.from(selectedStudentIds).map(id => ({
+                student_id: id,
+                status: status,
+                leave_type_id: leaveTypeId,
+                details: details
+            }));
+
+            // 确定需要创建的时段列表
+            let periodIds = [null]; // 默认全天
+            let shouldLoopPeriods = true; // 是否需要循环每个节次
+
+            if (details) {
+                if (details.option === 'full_day') {
+                    // 全天 - 创建全天记录，会删除所有时段记录
+                    periodIds = [null];
+                } else if (details.option === 'morning_exercise') {
+                    // 早操 - ID=8
+                    periodIds = [8];
+                } else if (details.option === 'evening_exercise') {
+                    // 晚操 - ID=9
+                    periodIds = [9];
+                } else if (details.option === 'morning_half') {
+                    // 上午半天 - 使用第1节代表
+                    periodIds = [1];
+                } else if (details.option === 'afternoon_half') {
+                    // 下午半天 - 使用第6节代表
+                    periodIds = [6];
+                } else if (details.time) {
+                    // 有时间输入（迟到/早退）
+                    // 如果用户选择了节次，使用用户选择的节次
+                    // 否则使用默认值：迟到用第1节，早退用第8节
+                    if (details.period) {
+                        periodIds = [details.period];
+                    } else if (status === 'late') {
+                        periodIds = [1];
+                    } else if (status === 'early_leave') {
+                        periodIds = [8];
+                    } else {
+                        periodIds = [1]; // 其他情况默认第1节
+                    }
+                } else if (details.periods && details.periods.length > 0) {
+                    // 有时段选择（旷课）- 创建一条记录，包含所有节次信息
+                    // 使用第一个节次作为 period_id，所有节次信息保存在 details 中
+                    periodIds = [details.periods[0]];
+                    shouldLoopPeriods = false; // 不循环，只发送一次
+                }
+            }
+
+            // 为每个时段发送请求（旷课只发送一次）
+            if (shouldLoopPeriods) {
+                for (const periodId of periodIds) {
+                    await axios.post('/attendance/bulk', {
+                        date: formattedDate,
+                        period_id: periodId,
+                        records: records
+                    });
+                }
+            } else {
+                // 旷课：先删除旧的旷课记录，然后创建新的合并记录
+                // 重新获取数据以确保有 attendance 字段
+                try {
+                    const res = await axios.get('/attendance/overview', {
+                        params: { date: formattedDate }
+                    });
+                    const data = Array.isArray(res.data) ? res.data : (res.data.data || []);
+
+                    for (const studentId of selectedStudentIds) {
+                        // 查找该学生
+                        let studentWithRecords = null;
+                        data.forEach(dept => {
+                            const classes = dept.classes || [];
+                            classes.forEach(cls => {
+                                if (Array.isArray(cls.students)) {
+                                    const found = cls.students.find(s => s.id === studentId);
+                                    if (found) studentWithRecords = found;
+                                }
+                            });
+                        });
+
+                        if (studentWithRecords && studentWithRecords.attendance) {
+                            const absentRecords = studentWithRecords.attendance.filter(r => r.status === 'absent');
+                            for (const record of absentRecords) {
+                                try {
+                                    await axios.delete('/attendance/records', {
+                                        data: {
+                                            student_id: studentId,
+                                            date: formattedDate,
+                                            period_id: record.period_id
+                                        }
+                                    });
+                                } catch (e) {
+                                    console.error('Failed to delete old absent record:', e);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('[Absent Delete] Failed to fetch records:', error);
+                }
+
+                // 创建新的合并记录
+                await axios.post('/attendance/bulk', {
+                    date: formattedDate,
+                    period_id: periodIds[0],
+                    records: records
+                });
+            }
+
+            // Close inputs if any
+            setInputModalOpen(false);
+            setPendingAction(null);
+
+            // Refresh
+            fetchAttendance();
+        } catch (error) {
+            console.error("Failed to update", error);
+            alert("更新失败: " + (error.response?.data?.message || error.message));
+        }
+    };
+
+    // 删除考勤记录
+    const handleDeleteRecord = async (studentId, periodId) => {
+        if (!window.confirm('确定要撤销这条考勤记录吗？')) {
+            return;
+        }
+
+        try {
+            await axios.delete(`/attendance/records`, {
+                params: {
+                    student_id: studentId,
+                    date: formattedDate,
+                    period_id: periodId
+                }
+            });
+
+            // Refresh
+            fetchAttendance();
+        } catch (error) {
+            console.error("Failed to delete", error);
+            alert("删除失败: " + (error.response?.data?.message || error.message));
+        }
+    };
+
+    const handleInputConfirm = () => {
+        if (!pendingAction) return;
+
+        // 如果有periods（旷课），需要将ID转换为节次编号
+        let enhancedInputData = { ...inputData };
+        if (inputData.periods && Array.isArray(inputData.periods)) {
+            // 创建ID到索引的映射
+            const periodNumbers = inputData.periods.map(periodId => {
+                const index = periods.findIndex(p => p.id === periodId);
+                return index + 1; // 节次编号 = 索引 + 1
+            });
+
+            enhancedInputData = {
+                ...inputData,
+                period_numbers: periodNumbers // 添加节次编号数组
+            };
+
+            console.log('[Input Confirm] Period IDs:', inputData.periods);
+            console.log('[Input Confirm] Period Numbers:', periodNumbers);
+        }
+
+        executeBulkUpdate(pendingAction.status, pendingAction.leaveType.id, enhancedInputData);
+    };
+
+    const StatusBadge = ({ status, details, leaveTypeId, leaveType, onClick, periodId, period }) => {
+        const styles = {
+            present: 'bg-green-100 text-green-800',
+            absent: 'bg-red-100 text-red-800',
+            late: 'bg-yellow-100 text-yellow-800',
+            leave: 'bg-blue-100 text-blue-800',
+            excused: 'bg-purple-100 text-purple-800',
+            early_leave: 'bg-orange-100 text-orange-800',
+            unmarked: 'bg-gray-100 text-gray-400'
+        };
+        const labels = {
+            present: '出勤',
+            absent: '缺勤',
+            late: '迟到',
+            leave: '请假',
+            excused: '已审批',
+            early_leave: '早退',
+            unmarked: '出勤'
+        };
+
+        // Determine label: prefer leaveType object from record, then lookup by ID
+        let label = labels[status] || status;
+        let leaveTypeName = '';
+
+        // Get leave type name from data
+        if (leaveType && leaveType.name) {
+            leaveTypeName = leaveType.name;
+        } else if (leaveTypeId) {
+            // Try to find leave type name from loaded leaveTypes
+            const lt = leaveTypes.find(l => l.id === leaveTypeId);
+            if (lt) leaveTypeName = lt.name;
+        }
+
+        // For excused or leave status with leave type, show the leave type name directly
+        if (leaveTypeName && (status === 'leave' || status === 'excused')) {
+            label = leaveTypeName;
+        }
+
+        // Add details text if possible
+        let detailText = '';
+        if (details) {
+            if (details.time) detailText = `(${details.time})`;
+            // 优先使用 period_numbers（节次编号），否则使用 periods（ID）
+            if (details.period_numbers) {
+                detailText = `(第${details.period_numbers.join(',')}节)`;
+            } else if (details.periods) {
+                detailText = `(第${details.periods.join(',')}节)`; // 兼容旧数据
+            }
+            if (details.option) {
+                // 从leaveType的input_config中获取label
+                let optionLabel = details.option;
+
+                if (leaveTypeId) {
+                    const leaveType = leaveTypes.find(lt => lt.id === leaveTypeId);
+                    if (leaveType && leaveType.input_config) {
+                        try {
+                            const config = typeof leaveType.input_config === 'string'
+                                ? JSON.parse(leaveType.input_config)
+                                : leaveType.input_config;
+
+                            if (config.options && Array.isArray(config.options)) {
+                                const option = config.options.find(opt => opt.key === details.option);
+                                if (option && option.label) {
+                                    optionLabel = option.label;
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Failed to parse input_config:', e);
+                        }
+                    }
+                }
+
+                detailText = `(${optionLabel})`;
+            }
+        }
+
+        // 如果没有详细信息，且有时段ID，显示时段
+        if (!detailText && periodId) {
+            detailText = `(${period?.name || `第${periodId}节`})`;
+        }
+
+        const s = status || 'unmarked';
+        const classes = `px-2 py-0.5 rounded text-xs font-medium ${styles[s] || styles.unmarked} truncate max-w-[150px] ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
+
+        return (
+            <span
+                className={classes}
+                onClick={onClick}
+                title={onClick ? "点击撤销此记录" : ""}
+            >
+                {label} {detailText}
+            </span>
+        );
+    };
+
+    return (
+        <Transition appear show={isOpen} as={Fragment}>
+            <Dialog as="div" className="relative z-50" onClose={onClose}>
+                <div className="fixed inset-0 bg-black bg-opacity-25" />
+                <div className="fixed inset-0 overflow-y-auto">
+                    <div className="flex min-h-full items-center justify-center p-4 text-center">
+                        <Dialog.Panel className="w-full max-w-5xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+                            <div className="flex justify-between items-center mb-4">
+                                <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900">
+                                    考勤标记 - {formattedDate}
+                                </Dialog.Title>
+                                <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
+                                    <span className="text-2xl">&times;</span>
+                                </button>
+                            </div>
+
+                            {/* Action Toolbar */}
+                            <div className="flex flex-wrap gap-2 mb-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
+                                <span className="text-sm text-gray-500 flex items-center mr-2">批量标记 ({selectedStudentIds.size}人):</span>
+                                <button onClick={() => handleActionClick('present')} className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700">出勤</button>
+
+                                {leaveTypes.map(lt => (
+                                    <button
+                                        key={lt.id}
+                                        onClick={() => handleActionClick(lt)}
+                                        className={`px-3 py-1 text-white rounded text-sm ${['late', 'early_leave'].includes(lt.slug) ? 'bg-yellow-500 hover:bg-yellow-600' : (lt.slug === 'absent' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700')}`}
+                                        title={lt.description}
+                                    >
+                                        {lt.name}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="overflow-y-auto max-h-[60vh] border rounded-md">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50 sticky top-0">
+                                        <tr>
+                                            <th scope="col" className="px-6 py-3 text-left w-12">
+                                                <input
+                                                    type="checkbox"
+                                                    className="h-4 w-4 text-indigo-600 rounded"
+                                                    checked={students.length > 0 && selectedStudentIds.size === students.length}
+                                                    onChange={toggleAll}
+                                                />
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {students.map(student => {
+                                            // 获取所有考勤记录
+                                            const records = student.attendance || [];
+                                            const summary = student.attendance_summary || {};
+
+                                            return (
+                                                <tr key={student.id} className={selectedStudentIds.has(student.id) ? 'bg-indigo-50' : 'hover:bg-gray-50'}>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="h-4 w-4 text-indigo-600 rounded"
+                                                            checked={selectedStudentIds.has(student.id)}
+                                                            onChange={() => toggleSelection(student.id)}
+                                                        />
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{student.student_no}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{student.user?.name}</td>
+                                                    <td className="px-6 py-4">
+                                                        {/* 显示多个状态 */}
+                                                        {records.length === 0 && (
+                                                            <StatusBadge status="present" />
+                                                        )}
+                                                        {records.length > 0 && (
+                                                            <div className="flex flex-wrap items-center gap-1">
+                                                                {/* 全天基础状态 */}
+                                                                {records.find(r => r.period_id === null) && (
+                                                                    <>
+                                                                        <StatusBadge
+                                                                            status={records.find(r => r.period_id === null).status}
+                                                                            details={records.find(r => r.period_id === null).details}
+                                                                            leaveTypeId={records.find(r => r.period_id === null).leave_type_id}
+                                                                            leaveType={records.find(r => r.period_id === null).leave_type}
+                                                                            onClick={records.find(r => r.period_id === null).status !== 'present'
+                                                                                ? () => handleDeleteRecord(student.id, null)
+                                                                                : undefined}
+                                                                        />
+                                                                        {records.filter(r => r.period_id !== null).length > 0 && (
+                                                                            <span className="text-gray-400">|</span>
+                                                                        )}
+                                                                    </>
+                                                                )}
+
+                                                                {/* 时段记录 */}
+                                                                {records.filter(r => r.period_id !== null).map((record, idx) => {
+                                                                    return (
+                                                                        <React.Fragment key={idx}>
+                                                                            <StatusBadge
+                                                                                status={record.status}
+                                                                                details={record.details}
+                                                                                leaveTypeId={record.leave_type_id}
+                                                                                leaveType={record.leave_type}
+                                                                                periodId={record.period_id}
+                                                                                period={record.period}
+                                                                                onClick={() => handleDeleteRecord(student.id, record.period_id)}
+                                                                            />
+                                                                            {idx < records.filter(r => r.period_id !== null).length - 1 && (
+                                                                                <span className="text-gray-400">|</span>
+                                                                            )}
+                                                                        </React.Fragment>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                        {students.length === 0 && !loading && <tr><td colSpan="4" className="text-center py-4 text-gray-500">无学生数据</td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Dialog.Panel>
+                    </div>
+                </div>
+
+                {/* Second Dialog for Dynamic Input */}
+                <Transition appear show={inputModalOpen} as={Fragment}>
+                    <Dialog as="div" className="relative z-[60]" onClose={() => setInputModalOpen(false)}>
+                        <div className="fixed inset-0 bg-black bg-opacity-30" />
+                        <div className="fixed inset-0 overflow-y-auto">
+                            <div className="flex min-h-full items-center justify-center p-4 text-center">
+                                <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+                                    <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 mb-4">
+                                        {pendingAction?.leaveType?.name} - 详细信息
+                                    </Dialog.Title>
+
+                                    <div className="space-y-4">
+                                        {pendingAction?.leaveType?.input_type === 'time' && (() => {
+                                            // 解析input_config
+                                            let config = {};
+                                            try {
+                                                config = typeof pendingAction.leaveType.input_config === 'string'
+                                                    ? JSON.parse(pendingAction.leaveType.input_config)
+                                                    : pendingAction.leaveType.input_config || {};
+                                            } catch (e) {
+                                                console.error('Failed to parse input_config:', e);
+                                            }
+
+                                            return (
+                                                <>
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-2">时间</label>
+                                                        <input
+                                                            type="time"
+                                                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                            onChange={e => setInputData({ ...inputData, time: e.target.value })}
+                                                        />
+                                                    </div>
+
+                                                    {config.require_period && (
+                                                        <div className="mt-4">
+                                                            <label className="block text-sm font-medium text-gray-700 mb-2">选择节次</label>
+                                                            <select
+                                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                                onChange={e => setInputData({ ...inputData, period: parseInt(e.target.value) })}
+                                                                defaultValue=""
+                                                            >
+                                                                <option value="" disabled>请选择节次</option>
+                                                                {periods.map((p, index) => (
+                                                                    <option key={p.id} value={p.id}>第{index + 1}节</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
+
+                                        {pendingAction?.leaveType?.input_type === 'period_select' && (() => {
+                                            // 解析input_config
+                                            let config = {};
+                                            try {
+                                                config = typeof pendingAction.leaveType.input_config === 'string'
+                                                    ? JSON.parse(pendingAction.leaveType.input_config)
+                                                    : pendingAction.leaveType.input_config || {};
+                                            } catch (e) {
+                                                console.error('Failed to parse input_config:', e);
+                                            }
+
+                                            // 如果有options，显示选项（如早操/晚操）
+                                            if (config.options && config.options.length > 0) {
+                                                return (
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-2">选择选项</label>
+                                                        <div className="space-y-2">
+                                                            {config.options.map(opt => (
+                                                                <label key={opt} className="flex items-center">
+                                                                    <input
+                                                                        type="radio"
+                                                                        name="period_option"
+                                                                        className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                                                                        onChange={() => setInputData({ ...inputData, option: opt })}
+                                                                    />
+                                                                    <span className="ml-2 text-sm text-gray-700">
+                                                                        {opt === 'morning_exercise' ? '早操' :
+                                                                            (opt === 'evening_exercise' ? '晚操' : opt)}
+                                                                    </span>
+                                                                </label>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+
+                                            // 否则显示节次选择（旷课）
+                                            return (
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">选择节次</label>
+                                                    <div className="grid grid-cols-4 gap-2">
+                                                        {(() => {
+                                                            console.log('[Absent Periods] Rendering periods:', periods.map((p, i) => ({
+                                                                id: p.id,
+                                                                name: p.name,
+                                                                ordinal: p.ordinal,
+                                                                index: i,
+                                                                display: `第${i + 1}节`
+                                                            })));
+                                                            return periods.map((p, index) => (
+                                                                <label key={p.id} className={`flex items-center justify-center p-2 border rounded cursor-pointer ${inputData.periods?.includes(p.id) ? 'bg-indigo-100 border-indigo-500 text-indigo-700' : 'hover:bg-gray-50'}`}>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        className="sr-only"
+                                                                        onChange={e => {
+                                                                            const current = inputData.periods || [];
+                                                                            if (current.includes(p.id)) setInputData({ ...inputData, periods: current.filter(x => x !== p.id) });
+                                                                            else setInputData({ ...inputData, periods: [...current, p.id] });
+                                                                        }}
+                                                                    />
+                                                                    第{index + 1}节
+                                                                </label>
+                                                            ));
+                                                        })()}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {pendingAction?.leaveType?.input_type === 'duration_select' && (
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">选择时长</label>
+                                                <div className="space-y-2">
+                                                    {(() => {
+                                                        // 解析input_config
+                                                        let options = [];
+                                                        try {
+                                                            const config = typeof pendingAction.leaveType.input_config === 'string'
+                                                                ? JSON.parse(pendingAction.leaveType.input_config)
+                                                                : pendingAction.leaveType.input_config;
+                                                            options = config?.options || [];
+                                                        } catch (e) {
+                                                            console.error('Failed to parse input_config:', e);
+                                                            options = [];
+                                                        }
+
+                                                        return options.map(opt => {
+                                                            // 优先使用配置中的label
+                                                            const optKey = typeof opt === 'object' ? opt.key : opt;
+                                                            const optLabel = typeof opt === 'object' && opt.label ? opt.label : optKey;
+
+                                                            return (
+                                                                <label key={optKey} className="flex items-center">
+                                                                    <input
+                                                                        type="radio"
+                                                                        name="duration_opt"
+                                                                        className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                                                                        onChange={() => setInputData({ ...inputData, option: optKey })}
+                                                                    />
+                                                                    <span className="ml-2 text-sm text-gray-700">
+                                                                        {optLabel}
+                                                                    </span>
+                                                                </label>
+                                                            );
+                                                        })
+                                                    })()}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="mt-6 flex justify-end space-x-2">
+                                        <button onClick={() => setInputModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">取消</button>
+                                        <button onClick={handleInputConfirm} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">确定</button>
+                                    </div>
+                                </Dialog.Panel>
+                            </div>
+                        </div>
+                    </Dialog>
+                </Transition>
+            </Dialog>
+        </Transition>
+    );
+}

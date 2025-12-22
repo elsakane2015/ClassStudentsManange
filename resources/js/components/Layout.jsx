@@ -16,21 +16,29 @@ export default function Layout({ children }) {
     const navigate = useNavigate();
 
     const handleLogout = async () => {
-        await authService.logout();
-        logout();
-        navigate('/login');
+        try {
+            await authService.logout();
+        } catch (error) {
+            console.error("Logout API failed", error);
+        } finally {
+            logout();
+            navigate('/login');
+        }
     };
 
     const navigation = user?.role === 'student'
         ? [
-            { name: 'Dashboard', href: '/student/dashboard' },
-            { name: 'Request Leave', href: '/student/request' },
-            { name: 'My History', href: '/student/history' },
+            { name: '仪表盘', href: '/student/dashboard' },
+            { name: '请假申请', href: '/student/request' },
+            { name: '我的记录', href: '/student/history' },
         ]
         : [
-            { name: 'Dashboard', href: '/teacher/dashboard' },
-            { name: 'Approvals', href: '/teacher/approvals' },
-            { name: 'Class List', href: '/teacher/students' },
+            { name: '概览', href: '/teacher/dashboard' },
+            { name: '请假审批', href: '/teacher/approvals' },
+            { name: '学生管理', href: '/teacher/students' },
+            ...(['system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user?.role) ? [{ name: '人员管理', href: '/admin/staff' }] : []),
+            ...(['system_admin', 'school_admin', 'admin'].includes(user?.role) ? [{ name: '系统设置', href: '/admin/settings' }] : []),
+            ...(['system_admin'].includes(user?.role) ? [{ name: '权限管理', href: '/admin/permissions' }] : [])
         ];
 
     return (
@@ -42,7 +50,7 @@ export default function Layout({ children }) {
                             <div className="flex h-16 items-center justify-between">
                                 <div className="flex items-center">
                                     <div className="flex-shrink-0">
-                                        <span className="text-white font-bold text-xl">🛡️ School</span>
+                                        <span className="text-white font-bold text-xl">🛡️ 智慧校园</span>
                                     </div>
                                     <div className="hidden md:block">
                                         <div className="ml-10 flex items-baseline space-x-4">
@@ -65,12 +73,12 @@ export default function Layout({ children }) {
                                 </div>
                                 <div className="hidden md:block">
                                     <div className="ml-4 flex items-center md:ml-6">
-                                        <span className="text-indigo-200 text-sm mr-4">Hi, {user?.name}</span>
+                                        <span className="text-indigo-200 text-sm mr-4">你好, {user?.name}</span>
                                         <button
                                             onClick={handleLogout}
                                             className="text-white text-sm hover:text-indigo-200"
                                         >
-                                            Sign out
+                                            退出登录
                                         </button>
                                     </div>
                                 </div>
@@ -109,7 +117,7 @@ export default function Layout({ children }) {
                                     onClick={handleLogout}
                                     className="block w-full text-left rounded-md px-3 py-2 text-base font-medium text-white hover:bg-indigo-500 hover:bg-opacity-75"
                                 >
-                                    Sign out
+                                    退出登录
                                 </button>
                             </div>
                         </Disclosure.Panel>
