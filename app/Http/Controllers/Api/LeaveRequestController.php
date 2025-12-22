@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\LeaveRequest;
 use App\Models\AttendanceRecord;
 use App\Services\LeaveConflictService;
 use Illuminate\Http\Request;
@@ -11,6 +10,18 @@ use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Illuminate\Validation\Rule;
 
+/**
+ * UNIFIED DATA SOURCE: All leave/attendance data is stored in attendance_records table.
+ * LeaveRequest table is DEPRECATED and no longer used.
+ * 
+ * Key fields in attendance_records:
+ * - is_self_applied: true = student applied, false = teacher marked
+ * - approval_status: pending/approved/rejected (for self-applied)
+ * - source_type: 'self_applied' for student requests
+ * - leave_type_id: the type of leave
+ * - details: JSON with option (am/pm/etc)
+ * - reason: the reason for leave
+ */
 class LeaveRequestController extends Controller
 {
     protected $conflictService;
@@ -20,10 +31,16 @@ class LeaveRequestController extends Controller
         $this->conflictService = $conflictService;
     }
 
+    /**
+     * List leave records (self-applied attendance records with pending status)
+     */
     public function index(Request $request)
     {
         $user = $request->user();
-        $query = LeaveRequest::with(['student.user', 'class']);
+        
+        // Query attendance_records for self-applied leaves
+        $query = AttendanceRecord::with(['student.user', 'class', 'leaveType'])
+            ->where('is_self_applied', true);
 
         if ($user->role === 'student') {
             // Check if student is class admin
@@ -42,12 +59,45 @@ class LeaveRequestController extends Controller
         // Admin sees all
 
         if ($request->has('status')) {
-            $query->where('status', $request->status);
+            $query->where('approval_status', $request->status);
         }
 
-        return response()->json($query->latest()->paginate(20));
+        // Group by student_id, date, approval_status for list display
+        $records = $query->orderBy('created_at', 'desc')->get();
+        
+        // Group records into "requests" (by student + date range + approval_status)
+        $groupedRequests = $records->groupBy(function($record) {
+            return $record->student_id . '_' . $record->date->format('Y-m-d') . '_' . $record->approval_status;
+        })->map(function($group) {
+            $first = $group->first();
+            return [
+                'id' => $first->id, // Use first record's id as request id
+                'student_id' => $first->student_id,
+                'student' => $first->student,
+                'class' => $first->class,
+                'class_id' => $first->class_id,
+                'type' => $first->leaveType?->slug ?? 'leave',
+                'leave_type' => $first->leaveType,
+                'start_date' => $first->date->format('Y-m-d'),
+                'end_date' => $group->max('date')->format('Y-m-d'),
+                'half_day' => $first->details['option'] ?? null,
+                'reason' => $first->reason,
+                'status' => $first->approval_status ?? 'approved',
+                'approval_status' => $first->approval_status,
+                'created_at' => $first->created_at,
+                'record_ids' => $group->pluck('id')->toArray(),
+            ];
+        })->values();
+
+        return response()->json([
+            'data' => $groupedRequests,
+            'total' => $groupedRequests->count(),
+        ]);
     }
 
+    /**
+     * Create a new leave request (creates attendance_records with pending status)
+     */
     public function store(Request $request)
     {
         $user = $request->user();
@@ -60,7 +110,6 @@ class LeaveRequestController extends Controller
         $request->validate([
             'type' => [
                 'required',
-                // Validate slug exists in leave_types for THIS school
                 Rule::exists('leave_types', 'slug')->where(function ($query) use ($user) {
                      $query->where('school_id', $user->student->school_id);
                 }),
@@ -68,7 +117,7 @@ class LeaveRequestController extends Controller
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'half_day' => 'nullable|in:am,pm',
-            'sessions' => 'nullable|array', // [1, 2]
+            'sessions' => 'nullable|array',
             'reason' => 'nullable|string',
         ]);
         
@@ -79,7 +128,7 @@ class LeaveRequestController extends Controller
             ->where('school_id', $student->school_id)
             ->first();
 
-        // Conflict Check - check attendance_records with pending or approved status
+        // Conflict Check
         $conflicts = $this->conflictService->check(
             $student->id,
             $request->start_date,
@@ -88,15 +137,6 @@ class LeaveRequestController extends Controller
         );
 
         if ($conflicts->isNotEmpty()) {
-            // Log for debugging
-            \Log::info('Leave conflict detected', [
-                'student_id' => $student->id,
-                'start' => $request->start_date,
-                'end' => $request->end_date,
-                'sessions' => $request->sessions,
-                'conflicts' => $conflicts->toArray()
-            ]);
-            
             return response()->json([
                 'error' => 'Conflict detected with existing requests.',
                 'conflicts' => $conflicts
@@ -105,262 +145,204 @@ class LeaveRequestController extends Controller
 
         // Build details
         $details = [];
+        $requestDetails = $request->details;
+        if (is_string($requestDetails)) {
+            $requestDetails = json_decode($requestDetails, true);
+        }
+        
+        if (!empty($requestDetails['option'])) {
+            $details['option'] = $requestDetails['option'];
+        }
         if ($request->half_day) {
             $details['option'] = $request->half_day;
         }
+        if (!empty($requestDetails)) {
+            foreach ($requestDetails as $key => $value) {
+                if (!isset($details[$key])) {
+                    $details[$key] = $value;
+                }
+            }
+        }
 
-        // Create attendance records directly (unified data source)
+        // Create attendance records (UNIFIED DATA SOURCE)
         $start = Carbon::parse($request->start_date);
         $end = Carbon::parse($request->end_date);
         $createdRecords = [];
 
-        while ($start->lte($end)) {
-            if ($request->sessions) {
-                // Partial day - create record for each period
-                foreach ($request->sessions as $periodId) {
+        DB::beginTransaction();
+        try {
+            while ($start->lte($end)) {
+                if ($request->sessions) {
+                    foreach ($request->sessions as $periodId) {
+                        $record = AttendanceRecord::create([
+                            'student_id' => $student->id,
+                            'school_id' => $student->school_id,
+                            'class_id' => $student->class_id,
+                            'date' => $start->toDateString(),
+                            'period_id' => $periodId,
+                            'status' => 'leave',
+                            'leave_type_id' => $leaveType?->id,
+                            'details' => !empty($details) ? $details : null,
+                            'is_self_applied' => true,
+                            'approval_status' => 'pending',
+                            'reason' => $request->reason,
+                            'source_type' => 'self_applied',
+                        ]);
+                        $createdRecords[] = $record;
+                    }
+                } else {
                     $record = AttendanceRecord::create([
                         'student_id' => $student->id,
                         'school_id' => $student->school_id,
                         'class_id' => $student->class_id,
                         'date' => $start->toDateString(),
-                        'period_id' => $periodId,
-                        'status' => 'leave',  // Will be changed to 'excused' when approved
+                        'period_id' => null,
+                        'status' => 'leave',
                         'leave_type_id' => $leaveType?->id,
                         'details' => !empty($details) ? $details : null,
                         'is_self_applied' => true,
                         'approval_status' => 'pending',
                         'reason' => $request->reason,
                         'source_type' => 'self_applied',
-                        'source_id' => null,
                     ]);
                     $createdRecords[] = $record;
                 }
-            } else {
-                // Whole day
-                $record = AttendanceRecord::create([
-                    'student_id' => $student->id,
-                    'school_id' => $student->school_id,
-                    'class_id' => $student->class_id,
-                    'date' => $start->toDateString(),
-                    'period_id' => null,
-                    'status' => 'leave',  // Will be changed to 'excused' when approved
-                    'leave_type_id' => $leaveType?->id,
-                    'details' => !empty($details) ? $details : null,
-                    'is_self_applied' => true,
-                    'approval_status' => 'pending',
-                    'reason' => $request->reason,
-                    'source_type' => 'self_applied',
-                    'source_id' => null,
-                ]);
-                $createdRecords[] = $record;
+                $start->addDay();
             }
-
-            $start->addDay();
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Failed to create leave request: ' . $e->getMessage()], 500);
         }
 
-        // Also create a LeaveRequest for backward compatibility and tracking
-        $leave = LeaveRequest::create([
+        // Return first record as the "request" representation
+        $firstRecord = $createdRecords[0] ?? null;
+        
+        return response()->json([
+            'id' => $firstRecord?->id,
             'student_id' => $student->id,
-            'user_id' => $user->id,
-            'school_id' => $student->school_id,
-            'class_id' => $student->class_id,
             'type' => $request->type,
             'start_date' => $request->start_date,
             'end_date' => $request->end_date,
-            'half_day' => $request->half_day,
-            'sessions' => $request->sessions,
+            'half_day' => $details['option'] ?? null,
             'reason' => $request->reason,
             'status' => 'pending',
-        ]);
-
-        // Link attendance records to leave request
-        foreach ($createdRecords as $record) {
-            $record->update([
-                'source_type' => 'leave_request',
-                'source_id' => $leave->id,
-            ]);
-        }
-
-        return response()->json($leave, 201);
+            'record_count' => count($createdRecords),
+        ], 201);
     }
 
+    /**
+     * Approve a leave request (update attendance_records)
+     */
     public function approve(Request $request, $id)
     {
         $user = $request->user();
         
-        // Check if user is class admin student
         $isClassAdmin = $user->student && $user->student->is_class_admin;
         
-        // Check permission
         if (!in_array($user->role, ['teacher', 'admin', 'manager']) && !$isClassAdmin) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        $leave = LeaveRequest::findOrFail($id);
+        $record = AttendanceRecord::findOrFail($id);
         
-        // Ensure teacher owns this class
+        // Ensure teacher/class admin owns this class
         if ($user->role === 'teacher') {
-             $ownsClass = $user->teacherClasses()->where('id', $leave->class_id)->exists();
-             if (!$ownsClass) return response()->json(['error' => 'Not your class'], 403);
+            $ownsClass = $user->teacherClasses()->where('id', $record->class_id)->exists();
+            if (!$ownsClass) return response()->json(['error' => 'Not your class'], 403);
         }
         
-        // Ensure class admin can only approve requests from their own class
-        if ($isClassAdmin) {
-            if ($leave->class_id !== $user->student->class_id) {
-                return response()->json(['error' => 'Not your class'], 403);
-            }
+        if ($isClassAdmin && $record->class_id !== $user->student->class_id) {
+            return response()->json(['error' => 'Not your class'], 403);
         }
 
-        $leave->update([
-            'status' => 'approved',
-            'approver_id' => $user->id,
-            'approved_at' => now(),
-        ]);
+        // Find all related records (same student, same date range, same source)
+        // For now, approve just this single record or all records for same student on same date
+        $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+            ->where('date', $record->date)
+            ->where('approval_status', 'pending')
+            ->where('is_self_applied', true)
+            ->get();
 
-        // Update existing attendance records (created when leave was submitted)
-        AttendanceRecord::where('source_type', 'leave_request')
-            ->where('source_id', $leave->id)
-            ->update([
+        foreach ($relatedRecords as $r) {
+            $r->update([
                 'status' => 'excused',
                 'approval_status' => 'approved',
                 'approver_id' => $user->id,
                 'approved_at' => now(),
             ]);
+        }
 
-        return response()->json(['message' => 'Approved', 'data' => $leave]);
+        return response()->json(['message' => 'Approved', 'approved_count' => $relatedRecords->count()]);
     }
 
+    /**
+     * Reject a leave request
+     */
     public function reject(Request $request, $id)
     {
         $user = $request->user();
         
-        // Check if user is class admin student
         $isClassAdmin = $user->student && $user->student->is_class_admin;
         
-        // Check permission
         if (!in_array($user->role, ['teacher', 'admin', 'manager']) && !$isClassAdmin) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
         
-        $leave = LeaveRequest::findOrFail($id);
+        $record = AttendanceRecord::findOrFail($id);
         
-        // Ensure class admin can only reject requests from their own class
-        if ($isClassAdmin) {
-            if ($leave->class_id !== $user->student->class_id) {
-                return response()->json(['error' => 'Not your class'], 403);
-            }
+        if ($isClassAdmin && $record->class_id !== $user->student->class_id) {
+            return response()->json(['error' => 'Not your class'], 403);
         }
         
-        $leave->update([
-            'status' => 'rejected',
-            'approver_id' => $user->id,
-            'rejection_reason' => $request->input('reason'),
-        ]);
+        // Find and delete all related pending records
+        $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+            ->where('date', $record->date)
+            ->where('approval_status', 'pending')
+            ->where('is_self_applied', true)
+            ->get();
+        
+        foreach ($relatedRecords as $r) {
+            $r->update([
+                'approval_status' => 'rejected',
+                'approver_id' => $user->id,
+                'rejection_reason' => $request->input('reason'),
+            ]);
+        }
+        
+        // Optionally delete rejected records
+        // AttendanceRecord::whereIn('id', $relatedRecords->pluck('id'))->delete();
 
-        // Delete associated attendance records (they were created when leave was submitted)
-        AttendanceRecord::where('source_type', 'leave_request')
-            ->where('source_id', $leave->id)
-            ->delete();
-
-        return response()->json(['message' => 'Rejected']);
+        return response()->json(['message' => 'Rejected', 'rejected_count' => $relatedRecords->count()]);
     }
 
     /**
-     * Delete/Cancel a pending leave request (student can only cancel their own pending requests)
+     * Cancel/Delete a pending leave request (student can only cancel their own)
      */
     public function destroy(Request $request, $id)
     {
         $user = $request->user();
-        $leave = LeaveRequest::findOrFail($id);
+        $record = AttendanceRecord::findOrFail($id);
         
         // Students can only cancel their own pending requests
         if ($user->role === 'student') {
-            if ($leave->student_id !== $user->student->id) {
+            if ($record->student_id !== $user->student->id) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
-            if ($leave->status !== 'pending') {
+            if ($record->approval_status !== 'pending') {
                 return response()->json(['error' => 'Only pending requests can be cancelled'], 400);
             }
         }
         
-        // Delete associated attendance records
-        AttendanceRecord::where('source_type', 'leave_request')
-            ->where('source_id', $leave->id)
-            ->delete();
-        
-        // Update status to cancelled
-        $leave->update(['status' => 'cancelled']);
-        
-        return response()->json(['message' => 'Leave request cancelled successfully.']);
-    }
-
-    protected function generateAttendance(LeaveRequest $leave)
-    {
-        // Get leave type by slug to get the ID
-        $leaveType = \App\Models\LeaveType::where('slug', $leave->type)
-            ->where('school_id', $leave->school_id)
-            ->first();
-        
-        $leaveTypeId = $leaveType ? $leaveType->id : null;
-
-        // Build details from leave request
-        $details = [];
-        if ($leave->details) {
-            $details = is_string($leave->details) ? json_decode($leave->details, true) : $leave->details;
-        }
-        // Add half_day info if present
-        if ($leave->half_day) {
-            $details['option'] = $leave->half_day; // 'am' or 'pm'
-        }
-
-        // Simple logic: Loop days and create record
-        $start = Carbon::parse($leave->start_date);
-        $end = Carbon::parse($leave->end_date);
-
-        while ($start->lte($end)) {
-            // Skip weekends? Configuration dependent. Assuming simple flow for now.
+        // Find and delete all related pending records for same date
+        $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+            ->where('date', $record->date)
+            ->where('approval_status', 'pending')
+            ->where('is_self_applied', true);
             
-            if ($leave->sessions) {
-                // Partial day
-                foreach ($leave->sessions as $periodId) {
-                    AttendanceRecord::updateOrCreate(
-                        [
-                            'student_id' => $leave->student_id,
-                            'date' => $start->toDateString(),
-                            'period_id' => $periodId,
-                        ],
-                        [
-                            'school_id' => $leave->school_id,
-                            'class_id' => $leave->class_id,
-                            'status' => 'excused',
-                            'leave_type_id' => $leaveTypeId,
-                            'details' => !empty($details) ? $details : null,
-                            'source_type' => 'leave_request',
-                            'source_id' => $leave->id,
-                        ]
-                    );
-                }
-            } else {
-                // Whole day
-                AttendanceRecord::updateOrCreate(
-                    [
-                        'student_id' => $leave->student_id,
-                        'date' => $start->toDateString(),
-                        'period_id' => null, // Whole day
-                    ],
-                    [
-                        'school_id' => $leave->school_id,
-                        'class_id' => $leave->class_id,
-                        'status' => 'excused',
-                        'leave_type_id' => $leaveTypeId,
-                        'details' => !empty($details) ? $details : null,
-                        'source_type' => 'leave_request',
-                        'source_id' => $leave->id,
-                    ]
-                );
-            }
-
-            $start->addDay();
-        }
+        $count = $relatedRecords->count();
+        $relatedRecords->delete();
+        
+        return response()->json(['message' => 'Leave request cancelled successfully.', 'deleted_count' => $count]);
     }
 }

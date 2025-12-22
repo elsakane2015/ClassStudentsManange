@@ -613,10 +613,12 @@ class AttendanceController extends Controller
             // For class admin: add pending requests count
             if ($user->student->is_class_admin) {
                 $classId = $user->student->class_id;
+                // Count unique pending leave requests (group by student_id and date)
                 $pendingCount = AttendanceRecord::where('class_id', $classId)
                     ->where('approval_status', 'pending')
-                    ->distinct('student_id', 'date', 'period_id')
-                    ->count();
+                    ->where('is_self_applied', true)
+                    ->selectRaw('COUNT(DISTINCT student_id, date) as count')
+                    ->value('count') ?? 0;
                 $stats['pending_requests'] = $pendingCount;
             }
 

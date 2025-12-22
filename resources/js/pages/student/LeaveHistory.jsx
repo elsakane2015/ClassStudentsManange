@@ -64,8 +64,19 @@ export default function LeaveHistory() {
         }
     };
 
-    const getTypeLabel = (type) => {
-        return type === 'sick' ? '病假' : '事假';
+    const getTypeLabel = (leave) => {
+        // Use leave_type name if available
+        if (leave.leave_type?.name) {
+            return leave.leave_type.name;
+        }
+        // Fallback to type slug mapping
+        const typeMap = {
+            'sick_leave': '病假',
+            'sick': '病假',
+            'personal_leave': '事假',
+            'personal': '事假',
+        };
+        return typeMap[leave.type] || leave.type || '请假';
     };
 
     return (
@@ -92,7 +103,7 @@ export default function LeaveHistory() {
                                 <div className="flex items-center justify-between">
                                     <div className="flex flex-col">
                                         <div className="flex items-center text-sm text-indigo-600 font-medium mb-1">
-                                            {getTypeLabel(leave.type)}
+                                            {getTypeLabel(leave)}
                                             <span className="text-gray-400 mx-2">•</span>
                                             <span className="text-gray-600">
                                                 {format(new Date(leave.start_date), 'yyyy-MM-dd')} 至 {format(new Date(leave.end_date), 'yyyy-MM-dd')}
