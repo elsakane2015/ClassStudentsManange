@@ -331,11 +331,21 @@ export default function StaffPage() {
                                                     setFormData({ ...formData, department_ids: selected });
                                                 }}
                                             >
-                                                {departments.map(d => (
-                                                    <option key={d.id} value={d.id}>{d.name}</option>
-                                                ))}
+                                                {departments.map(d => {
+                                                    // Check if this department is managed by someone else
+                                                    const currentManager = managers.find(m =>
+                                                        m.managed_departments?.some(md => md.id === d.id) &&
+                                                        m.id !== editingUser?.id
+                                                    );
+                                                    return (
+                                                        <option key={d.id} value={d.id}>
+                                                            {d.name}{currentManager ? ` (当前: ${currentManager.name})` : ''}
+                                                        </option>
+                                                    );
+                                                })}
                                             </select>
-                                            <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。被选中的系部将由此用户管理。</p>
+                                            <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。</p>
+                                            <p className="mt-1 text-xs text-yellow-600">⚠️ 每个系部只能有一个管理员。选择已分配的系部将接管其管理权。</p>
                                         </div>
                                     )}
 

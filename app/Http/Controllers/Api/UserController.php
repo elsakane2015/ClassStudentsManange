@@ -48,7 +48,8 @@ class UserController extends Controller
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
             'role' => ['required', Rule::in(['system_admin', 'school_admin', 'department_manager', 'teacher', 'manager', 'admin'])], // Support old and new
-            'department_id' => 'nullable|exists:departments,id',
+            'department_ids' => 'nullable|array',
+            'department_ids.*' => 'exists:departments,id',
             'class_ids' => 'nullable|array',
             'class_ids.*' => 'exists:classes,id',
         ]);
@@ -77,8 +78,8 @@ class UserController extends Controller
         ]);
 
         // Assignments
-        if (in_array($role, ['department_manager', 'manager']) && $request->filled('department_id')) {
-            \App\Models\Department::where('id', $request->department_id)->update(['manager_id' => $user->id]);
+        if (in_array($role, ['department_manager', 'manager']) && $request->filled('department_ids')) {
+            \App\Models\Department::whereIn('id', $request->department_ids)->update(['manager_id' => $user->id]);
         }
         
         if ($role === 'teacher' && $request->filled('class_ids')) {
@@ -100,7 +101,8 @@ class UserController extends Controller
         $request->validate([
             'name' => 'sometimes|string|max:255',
             'email' => ['sometimes', 'email', Rule::unique('users')->ignore($user->id)],
-            'department_id' => 'nullable|exists:departments,id', 
+            'department_ids' => 'nullable|array',
+            'department_ids.*' => 'exists:departments,id',
             'class_ids' => 'nullable|array',
             'class_ids.*' => 'exists:classes,id',
         ]);
@@ -113,8 +115,13 @@ class UserController extends Controller
 
         // Update Assignments
         if (in_array($user->role, ['department_manager', 'manager'])) {
-            if ($request->has('department_id') && $request->department_id) {
-                \App\Models\Department::where('id', $request->department_id)->update(['manager_id' => $user->id]);
+            if ($request->has('department_ids')) {
+                // Clear previous assignments
+                \App\Models\Department::where('manager_id', $user->id)->update(['manager_id' => null]);
+                // Assign new departments
+                if (!empty($request->department_ids)) {
+                    \App\Models\Department::whereIn('id', $request->department_ids)->update(['manager_id' => $user->id]);
+                }
             }
         }
         
