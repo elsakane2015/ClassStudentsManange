@@ -45,12 +45,25 @@ export default function StudentDashboard() {
         // eslint-disable-next-line
     }, [leaveTypes, scope, isClassAdmin]);
 
-    const fetchStats = async () => {
+    const fetchStats = async (retryCount = 0) => {
         try {
             const res = await axios.get('/student/stats', { params: { scope } });
-            setStats(res.data);
+            const data = res.data;
+
+            // Validate that we got valid data (working_days should be > 0 for month/semester)
+            if (scope !== 'today' && data.working_days === 0 && retryCount < 3) {
+                console.warn(`Stats returned working_days=0 for scope=${scope}, retrying... (${retryCount + 1})`);
+                setTimeout(() => fetchStats(retryCount + 1), 500);
+                return;
+            }
+
+            setStats(data);
         } catch (error) {
             console.error("Failed to fetch stats", error);
+            // Retry on error
+            if (retryCount < 3) {
+                setTimeout(() => fetchStats(retryCount + 1), 500);
+            }
         }
     };
 
@@ -129,41 +142,48 @@ export default function StudentDashboard() {
 
                     // Use leave_type from backend if available, otherwise use status-based mapping
                     let title = '';
-                    if (record.leave_type) {
-                        title = record.leave_type.name;
-                    } else if (record.status === 'excused' || record.status === 'leave') {
-                        // For excused/leave without leave_type, show generic label
-                        title = '请假';
-                    } else if (leaveTypeMap[record.status]) {
-                        title = leaveTypeMap[record.status].name;
-                    } else {
-                        // Use status as fallback
-                        title = record.status;
-                    }
-
-                    // Add details if present (from backend detail_label or parse locally)
                     let detailLabel = record.detail_label || '';
-                    if (!detailLabel && record.details) {
-                        const details = typeof record.details === 'string'
-                            ? JSON.parse(record.details)
-                            : record.details;
-                        if (details.option && record.leave_type?.input_config) {
-                            const config = typeof record.leave_type.input_config === 'string'
-                                ? JSON.parse(record.leave_type.input_config)
-                                : record.leave_type.input_config;
-                            if (config.options) {
-                                const opt = config.options.find(o =>
-                                    (typeof o === 'object' ? o.key : o) === details.option
-                                );
-                                if (opt) {
-                                    detailLabel = typeof opt === 'object' ? opt.label : opt;
+
+                    // Special handling for roll_call source: use detail_label directly as title
+                    if (record.source_type === 'roll_call' && detailLabel) {
+                        title = detailLabel;
+                        detailLabel = ''; // Clear so we don't append again
+                    } else {
+                        if (record.leave_type) {
+                            title = record.leave_type.name;
+                        } else if (record.status === 'excused' || record.status === 'leave') {
+                            // For excused/leave without leave_type, show generic label
+                            title = '请假';
+                        } else if (leaveTypeMap[record.status]) {
+                            title = leaveTypeMap[record.status].name;
+                        } else {
+                            // Use status as fallback
+                            title = record.status;
+                        }
+
+                        // Add details if present (from backend detail_label or parse locally)
+                        if (!detailLabel && record.details) {
+                            const details = typeof record.details === 'string'
+                                ? JSON.parse(record.details)
+                                : record.details;
+                            if (details.option && record.leave_type?.input_config) {
+                                const config = typeof record.leave_type.input_config === 'string'
+                                    ? JSON.parse(record.leave_type.input_config)
+                                    : record.leave_type.input_config;
+                                if (config.options) {
+                                    const opt = config.options.find(o =>
+                                        (typeof o === 'object' ? o.key : o) === details.option
+                                    );
+                                    if (opt) {
+                                        detailLabel = typeof opt === 'object' ? opt.label : opt;
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if (detailLabel) {
-                        title += `(${detailLabel})`;
+                        if (detailLabel) {
+                            title += `(${detailLabel})`;
+                        }
                     }
 
                     // Add pending status indicator for self-applied leaves
@@ -185,7 +205,8 @@ export default function StudentDashboard() {
                         detail: detailLabel,
                         note: record.reason || record.note || '',
                         approvalStatus: record.approval_status,
-                        isSelfApplied: record.is_self_applied
+                        isSelfApplied: record.is_self_applied,
+                        recordTime: record.record_time || null
                     });
                 });
             }
@@ -267,19 +288,9 @@ export default function StudentDashboard() {
     return (
         <Layout>
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                {/* Header with Scope Selector and Class Admin Button */}
+                {/* Header with Scope Selector */}
                 <div className="lg:col-span-4 flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-4">
-                        <h2 className="text-xl font-bold">我的记录</h2>
-                        {isClassAdmin && (
-                            <button
-                                onClick={() => setShowAttendanceModal(true)}
-                                className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition text-sm"
-                            >
-                                管理班级考勤
-                            </button>
-                        )}
-                    </div>
+                    <h2 className="text-xl font-bold">我的记录</h2>
                     {/* Scope Selector */}
                     <div className="inline-flex rounded-md shadow-sm" role="group">
                         <button
@@ -353,41 +364,6 @@ export default function StudentDashboard() {
                             }}
                         />
                     </div>
-
-                    {/* Sidebar Section */}
-                    <div className="w-full lg:w-80 space-y-6 shrink-0">
-                        <div className="bg-white p-6 rounded-lg shadow">
-                            <h3 className="font-semibold mb-4">快捷操作</h3>
-                            <Link to="/student/request" className="block w-full text-center bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 transition">
-                                申请请假
-                            </Link>
-                        </div>
-
-                        <div className="bg-white p-6 rounded-lg shadow text-sm">
-                            <h3 className="font-semibold mb-2">图例</h3>
-                            <div className="space-y-2">
-                                <div className="flex items-center">
-                                    <span className="w-3 h-3 rounded-full bg-green-500 mr-2"></span> 正常出勤
-                                </div>
-                                {leaveTypes.map(type => {
-                                    const colorMap = {
-                                        'sick_leave': 'purple',
-                                        'personal_leave': 'blue',
-                                        'health_leave': 'pink',
-                                        'absent': 'red',
-                                        'late': 'yellow',
-                                        'early_leave': 'orange',
-                                    };
-                                    const color = colorMap[type.slug] || 'gray';
-                                    return (
-                                        <div key={type.id} className="flex items-center">
-                                            <span className={`w-3 h-3 rounded-full bg-${color}-500 mr-2`}></span> {type.name}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -417,20 +393,25 @@ export default function StudentDashboard() {
                             </button>
                         </div>
 
-                        {detailModal.message ? (
-                            <p className="text-gray-600">{detailModal.message}</p>
-                        ) : detailModal.records.length === 0 ? (
+                        {detailModal.message && (
+                            <p className="text-gray-600 mb-3">{detailModal.message}</p>
+                        )}
+
+                        {detailModal.records.length === 0 && !detailModal.message ? (
                             <p className="text-gray-500 text-center py-4">暂无记录</p>
-                        ) : (
+                        ) : detailModal.records.length === 0 && detailModal.message ? null : (
                             <div className="space-y-3">
                                 {detailModal.records.map((record, idx) => (
                                     <div key={idx} className="border rounded-lg p-3 bg-gray-50">
                                         <div className="flex justify-between items-start">
                                             <div>
-                                                <div className="font-medium">{record.date}</div>
+                                                <div className="font-medium">
+                                                    {record.date}
+                                                    {record.time && <span className="text-gray-500 ml-2">{record.time}</span>}
+                                                </div>
                                                 <div className="text-sm text-gray-600">
                                                     {record.type_name}
-                                                    {record.detail_label && ` (${record.detail_label})`}
+                                                    {record.detail_label && `(${record.detail_label})`}
                                                 </div>
                                             </div>
                                         </div>

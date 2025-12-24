@@ -17,9 +17,20 @@ class AttendanceController extends Controller
 
         $user = $request->user();
         
+        // Calculate hierarchical student counts
+        $schoolTotalStudents = \App\Models\Student::count();
+        $departmentTotalStudents = null;
+        $classTotalStudents = null;
+        
         if ($user->role === 'teacher') {
             $classIds = $user->teacherClasses->pluck('id');
             $query = \App\Models\Student::whereIn('class_id', $classIds);
+            $classTotalStudents = $query->clone()->count();
+            
+            // Get department total for teacher's classes
+            $deptIds = \App\Models\SchoolClass::whereIn('id', $classIds)->pluck('department_id')->unique();
+            $deptClassIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->pluck('id');
+            $departmentTotalStudents = \App\Models\Student::whereIn('class_id', $deptClassIds)->count();
         } elseif (in_array($user->role, ['department_manager', 'manager'])) {
             // Get classes belonging to departments managed by this user
             $deptIds = $user->managedDepartments->pluck('id');
@@ -29,6 +40,7 @@ class AttendanceController extends Controller
              // Or get all class IDs first.
              $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->pluck('id');
              $query = \App\Models\Student::whereIn('class_id', $classIds);
+             $departmentTotalStudents = $query->clone()->count();
         } elseif (in_array($user->role, ['system_admin', 'school_admin', 'admin'])) {
             $query = \App\Models\Student::query();
         } else {
@@ -37,7 +49,7 @@ class AttendanceController extends Controller
 
         $scope = $request->input('scope', 'today'); // today, week, month, semester
         
-        // Total Students (Snapshot, invariant of time scope usually, unless we track enrollment history)
+        // Total Students (role-based count)
         $totalStudents = $query->count();
         
         // Prepare base query for related records (Attendance)
@@ -120,12 +132,18 @@ class AttendanceController extends Controller
             $leaveStats['早退'] = "{$earlyPeopleCount}人/{$earlyRecordCount}次";
         }
         
-        // 计算旷课总节次数（从 details 中解析）
+        // 计算旷课总节次数
+        // 旷课来源有两种：
+        // 1. status='absent' - 手动标记的旷课
+        // 2. status='leave' + leave_type.slug='absent' + source_type='roll_call' - 点名产生的旷课
         $absentPeopleCount = $attendanceStats['absent'] ?? 0;
         $absentPeriodCount = 0;
         
+        // 查找旷课leave_type的ID
+        $absenceLeaveType = \App\Models\LeaveType::where('slug', 'absent')->first();
+        
+        // 获取手动标记的旷课记录
         if ($absentPeopleCount > 0) {
-            // 获取所有旷课记录
             $absentRecords = $attendanceQuery->clone()
                 ->where('status', 'absent')
                 ->get(['details']);
@@ -158,8 +176,25 @@ class AttendanceController extends Controller
                     $absentPeriodCount += 1;
                 }
             }
+        }
+        
+        // 获取点名产生的旷课记录（source_type='roll_call' + leave_type='absent'）
+        if ($absenceLeaveType) {
+            $rollCallAbsents = $attendanceQuery->clone()
+                ->where('source_type', 'roll_call')
+                ->where('leave_type_id', $absenceLeaveType->id)
+                ->get();
             
-            // 显示格式：2人/6节
+            $rollCallAbsentStudents = $rollCallAbsents->pluck('student_id')->unique()->count();
+            $rollCallAbsentCount = $rollCallAbsents->count();
+            
+            // 合并统计
+            $absentPeopleCount += $rollCallAbsentStudents;
+            $absentPeriodCount += $rollCallAbsentCount;
+        }
+        
+        // 显示格式：2人/6节
+        if ($absentPeopleCount > 0) {
             $leaveStats['旷课'] = "{$absentPeopleCount}人/{$absentPeriodCount}节";
         }
              
@@ -191,6 +226,9 @@ class AttendanceController extends Controller
             
         return response()->json([
             'total_students' => $totalStudents,
+            'school_total_students' => $schoolTotalStudents,
+            'department_total_students' => $departmentTotalStudents,
+            'class_total_students' => $classTotalStudents,
             'present_count' => $effectiveAttendance,
             'pending_requests' => $pendingRequests,
             'scope' => $scope,
@@ -365,6 +403,22 @@ class AttendanceController extends Controller
                     }
                 }
             }
+            
+            // Add display_label for roll_call source records
+            if ($record->source_type === 'roll_call') {
+                $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                if (isset($details['roll_call_type'])) {
+                    $originalStatus = $details['original_status'] ?? $record->status;
+                    $statusLabel = match($originalStatus) {
+                        'absent' => '旷课',
+                        'late' => '迟到',
+                        'early_leave' => '早退',
+                        default => $originalStatus,
+                    };
+                    $record->display_label = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                }
+            }
+            
             return $record;
         });
         
@@ -465,7 +519,22 @@ class AttendanceController extends Controller
                 ->map(function($record) {
                     // Add detail_label for display
                     $detailLabel = '';
-                    if ($record->details && $record->leaveType && $record->leaveType->input_config) {
+                    $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                    
+                    // Special handling for roll_call source
+                    if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
+                        // Use original_status from details if available (for accurate label)
+                        $originalStatus = $details['original_status'] ?? $record->status;
+                        $statusLabel = match($originalStatus) {
+                            'absent' => '旷课',
+                            'late' => '迟到',
+                            'early_leave' => '早退',
+                            default => $originalStatus,
+                        };
+                        $detailLabel = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                    }
+                    // Normal leave type handling
+                    elseif ($record->details && $record->leaveType && $record->leaveType->input_config) {
                         $config = $record->leaveType->input_config;
                         if (is_string($config)) {
                             try {
@@ -475,7 +544,6 @@ class AttendanceController extends Controller
                             }
                         }
                         
-                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
                         if (isset($details['option']) && isset($config['options'])) {
                             foreach ($config['options'] as $opt) {
                                 $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
@@ -487,8 +555,16 @@ class AttendanceController extends Controller
                             }
                         }
                     }
+                    // Determine record time
+                    $recordTime = null;
+                    if ($record->source_type === 'roll_call' && isset($details['roll_call_time'])) {
+                        $recordTime = $details['roll_call_time'];
+                    } elseif ($record->created_at) {
+                        $recordTime = $record->created_at->setTimezone('Asia/Shanghai')->format('H:i');
+                    }
                     
                     $record->detail_label = $detailLabel;
+                    $record->record_time = $recordTime;
                     return $record;
                 });
                 
@@ -504,10 +580,31 @@ class AttendanceController extends Controller
 
     /**
      * Get student's own attendance statistics with scope support
+     * 
+     * Business Logic:
+     * - Denominator (working_days): For 'semester' scope, this is the TOTAL semester working days
+     * - Numerator (present): From semester start to TODAY, working days minus absent days
+     * - Absent days = Full-day leaves (excl. period_leave) + Absent periods converted to days
+     * - Absent conversion: total absent periods / absent_lessons_as_day (system setting)
      */
     public function studentStats(Request $request)
     {
         try {
+            // Ensure database connection is fresh with retry
+            $maxRetries = 3;
+            for ($i = 0; $i < $maxRetries; $i++) {
+                try {
+                    \DB::reconnect();
+                    \DB::select('SELECT 1'); // Test connection
+                    break;
+                } catch (\Exception $e) {
+                    if ($i === $maxRetries - 1) {
+                        \Log::error('studentStats: DB connection failed after retries');
+                    }
+                    usleep(100000); // 100ms wait
+                }
+            }
+
             $user = $request->user();
             if ($user->role !== 'student' || !$user->student) {
                 return response()->json(['error' => 'Not a student'], 403);
@@ -516,42 +613,19 @@ class AttendanceController extends Controller
             $studentId = $user->student->id;
             $scope = $request->input('scope', 'month'); // today, month, semester
 
-            // Get current semester
-            $semester = \App\Models\Semester::where('is_current', true)->first();
-            
-            // Calculate date range based on scope
-            $startDate = now()->startOfDay();
-            $endDate = now()->endOfDay();
-
-            if ($scope === 'today') {
-                $startDate = now()->startOfDay();
-                $endDate = now()->endOfDay();
-            } elseif ($scope === 'month') {
-                $startDate = now()->startOfMonth();
-                $endDate = now()->endOfDay();
-            } elseif ($scope === 'semester') {
-                if ($semester) {
-                    $startDate = \Carbon\Carbon::parse($semester->start_date);
-                    $endDate = now()->endOfDay();
-                } else {
-                    $startDate = now()->startOfYear();
-                    $endDate = now()->endOfDay();
+            // Get current semester with retry
+            $semester = null;
+            for ($i = 0; $i < $maxRetries; $i++) {
+                try {
+                    $semester = \App\Models\Semester::where('is_current', true)->first();
+                    break;
+                } catch (\Exception $e) {
+                    \Log::warning('studentStats: Semester query retry ' . ($i + 1));
+                    usleep(100000);
                 }
             }
-
-            // Build base query
-            $query = AttendanceRecord::where('student_id', $studentId)
-                ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')]);
-
-            // Get attendance count by status
-            $attendanceStats = $query->clone()
-                ->selectRaw('status, count(*) as count')
-                ->groupBy('status')
-                ->pluck('count', 'status')
-                ->toArray();
-
-            // Calculate working days in range (excluding weekends and holidays)
-            $workingDays = 0;
+            
+            // Get holidays from semester
             $holidays = [];
             if ($semester && $semester->holidays) {
                 $holidays = is_string($semester->holidays) 
@@ -559,38 +633,126 @@ class AttendanceController extends Controller
                     : $semester->holidays ?? [];
             }
 
-            $currentDay = $startDate->copy();
-            while ($currentDay <= $endDate) {
-                // Skip weekends (Saturday = 6, Sunday = 0)
-                $dayOfWeek = $currentDay->dayOfWeek;
-                if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
-                    // Skip holidays
-                    $dateStr = $currentDay->format('Y-m-d');
-                    if (!in_array($dateStr, $holidays)) {
-                        $workingDays++;
+            // Helper function to count working days in a range
+            $countWorkingDays = function($start, $end) use ($holidays) {
+                if (!$start || !$end) return 0;
+                $count = 0;
+                $current = $start->copy();
+                $maxDays = 400; // Safety limit to prevent infinite loop
+                $dayCount = 0;
+                while ($current <= $end && $dayCount < $maxDays) {
+                    $dayOfWeek = $current->dayOfWeek;
+                    if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
+                        $dateStr = $current->format('Y-m-d');
+                        if (!in_array($dateStr, $holidays)) {
+                            $count++;
+                        }
                     }
+                    $current->addDay();
+                    $dayCount++;
                 }
-                $currentDay->addDay();
+                return $count;
+            };
+
+            // Calculate date ranges based on scope
+            $today = now()->endOfDay();
+            $statsStartDate = now()->startOfDay();
+            $statsEndDate = now()->endOfDay();
+            $denominatorWorkingDays = 0;
+
+            if ($scope === 'today') {
+                $statsStartDate = now()->startOfDay();
+                $statsEndDate = now()->endOfDay();
+                $denominatorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
+            } elseif ($scope === 'month') {
+                $statsStartDate = now()->startOfMonth();
+                $statsEndDate = now()->endOfDay();
+                $denominatorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
+            } elseif ($scope === 'semester') {
+                if ($semester && $semester->start_date) {
+                    $semesterStart = \Carbon\Carbon::parse($semester->start_date);
+                    // Calculate semester end date
+                    $semesterEnd = $semesterStart->copy()->addWeeks($semester->total_weeks ?? 20)->subDay();
+                    
+                    // Stats are calculated from semester start to TODAY
+                    $statsStartDate = $semesterStart;
+                    $statsEndDate = min($today, $semesterEnd); // Don't go past semester end
+                    
+                    // Denominator is TOTAL semester working days (start to end)
+                    $denominatorWorkingDays = $countWorkingDays($semesterStart, $semesterEnd);
+                } else {
+                    // Fallback when no semester is configured
+                    $statsStartDate = now()->startOfMonth();
+                    $statsEndDate = now()->endOfDay();
+                    $denominatorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
+                    \Log::warning('studentStats: No semester found, using month fallback');
+                }
             }
 
-            // Count full-day leaves (unified data source - no need to check leave_requests separately)
-            $fullDayLeaves = $query->clone()
+            // Safety check: ensure we have valid working days
+            if ($denominatorWorkingDays <= 0) {
+                \Log::warning('studentStats: denominatorWorkingDays is ' . $denominatorWorkingDays . ', scope=' . $scope);
+                // Recalculate with current month as fallback
+                $statsStartDate = now()->startOfMonth();
+                $statsEndDate = now()->endOfDay();
+                $denominatorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
+            }
+
+            // Working days from start to today (for numerator calculation)
+            $numeratorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
+
+            // Build base query for the stats period
+            $query = AttendanceRecord::where('student_id', $studentId)
+                ->whereBetween('date', [$statsStartDate->format('Y-m-d'), $statsEndDate->format('Y-m-d')]);
+
+            // Get system settings for absent conversion
+            $absentLessonsAsDay = (int) (\App\Models\SystemSetting::where('key', 'absent_lessons_as_day')->value('value') ?? 6);
+            if ($absentLessonsAsDay < 1) $absentLessonsAsDay = 1;
+
+            // Count full-day leaves (excluding period_leave/生理假 which has slug 'period_leave')
+            // Full-day leave = status is 'leave' or 'excused', period_id is null, approved
+            $fullDayLeaveDates = $query->clone()
                 ->whereIn('status', ['leave', 'excused'])
                 ->whereNull('period_id')
                 ->where(function($q) {
-                    // Only count approved or teacher-marked
                     $q->where('approval_status', 'approved')
                       ->orWhereNull('approval_status');
                 })
+                // Exclude period_leave (生理假)
+                ->whereHas('leaveType', function($q) {
+                    $q->where('slug', '!=', 'period_leave');
+                })
+                ->distinct()
+                ->pluck('date')
                 ->count();
 
-            // Calculate present days: working days - leave days
-            $presentDays = max(0, $workingDays - $fullDayLeaves);
+            // Count total absent periods
+            // 1. Manual absents (status = 'absent')
+            $manualAbsentPeriods = $query->clone()
+                ->where('status', 'absent')
+                ->count();
+            
+            // 2. Roll call absents (source_type = 'roll_call' with original_status = 'absent' in details)
+            $rollCallAbsentPeriods = $query->clone()
+                ->where('source_type', 'roll_call')
+                ->whereRaw("JSON_EXTRACT(details, '$.original_status') = ?", ['absent'])
+                ->count();
+            
+            $totalAbsentPeriods = $manualAbsentPeriods + $rollCallAbsentPeriods;
+
+            // Convert absent periods to days (floor division)
+            $absentDaysFromPeriods = intval(floor($totalAbsentPeriods / $absentLessonsAsDay));
+
+            // Total absent days
+            $totalAbsentDays = $fullDayLeaveDates + $absentDaysFromPeriods;
+
+            // Calculate present days: working days to today - absent days
+            $presentDays = max(0, $numeratorWorkingDays - $totalAbsentDays);
 
             // Build response with leave type counts
             $stats = [
                 'present' => $presentDays,
-                'working_days' => $workingDays
+                'working_days' => $denominatorWorkingDays
             ];
 
             // Get leave types for mapping
@@ -602,9 +764,12 @@ class AttendanceController extends Controller
                     ->where('leave_type_id', $lt->id)
                     ->count();
                 
-                // Also check for status matching slug (for late, absent, early_leave)
+                // For status-based records (late, absent, early_leave), count by status
                 if (in_array($lt->slug, ['late', 'absent', 'early_leave'])) {
-                    $count = max($count, $attendanceStats[$lt->slug] ?? 0);
+                    $statusCount = $query->clone()
+                        ->where('status', $lt->slug)
+                        ->count();
+                    $count = max($count, $statusCount);
                 }
 
                 $stats[$lt->slug] = $count;
@@ -670,11 +835,88 @@ class AttendanceController extends Controller
             $records = [];
 
             if ($status === 'present') {
-                // For present, we calculate working days without full-day leaves
+                // For present, show all absence records (leaves, absents, late, early_leave)
+                // This helps the student understand how the present days are calculated
+                $absenceRecords = AttendanceRecord::where('student_id', $studentId)
+                    ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
+                    ->where(function($q) {
+                        $q->whereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave'])
+                          ->orWhere('source_type', 'roll_call');
+                    })
+                    ->where(function($q) {
+                        // Only count approved or teacher-marked
+                        $q->where('approval_status', 'approved')
+                          ->orWhereNull('approval_status');
+                    })
+                    ->with('leaveType')
+                    ->orderBy('date', 'desc')
+                    ->get();
+
+                foreach ($absenceRecords as $record) {
+                    $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                    $detailLabel = '';
+                    $typeName = '';
+                    
+                    // Special handling for roll_call source
+                    if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
+                        $originalStatus = $details['original_status'] ?? $record->status;
+                        $statusLabel = match($originalStatus) {
+                            'absent' => '旷课',
+                            'late' => '迟到',
+                            'early_leave' => '早退',
+                            default => $originalStatus,
+                        };
+                        $typeName = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                    } else {
+                        // Normal leave/absent/late/early_leave
+                        $typeName = $record->leaveType ? $record->leaveType->name : match($record->status) {
+                            'absent' => '旷课',
+                            'late' => '迟到',
+                            'early_leave' => '早退',
+                            'leave' => '请假',
+                            'excused' => '请假',
+                            default => $record->status,
+                        };
+                        
+                        // Add option label if available
+                        if ($record->details && $record->leaveType && $record->leaveType->input_config) {
+                            $config = is_string($record->leaveType->input_config) ? json_decode($record->leaveType->input_config, true) : $record->leaveType->input_config;
+                            
+                            if (isset($details['option']) && isset($config['options'])) {
+                                foreach ($config['options'] as $opt) {
+                                    $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
+                                    $optLabel = is_array($opt) ? ($opt['label'] ?? $optKey) : $optKey;
+                                    if ($optKey === $details['option']) {
+                                        $detailLabel = $optLabel;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Determine record time
+                    $recordTime = null;
+                    if ($record->source_type === 'roll_call' && isset($details['roll_call_time'])) {
+                        $recordTime = $details['roll_call_time'];
+                    } elseif ($record->created_at) {
+                        $recordTime = $record->created_at->setTimezone('Asia/Shanghai')->format('H:i');
+                    }
+
+                    $records[] = [
+                        'id' => $record->id,
+                        'date' => $record->date->format('Y.m.d'),
+                        'time' => $recordTime,
+                        'type_name' => $typeName,
+                        'detail_label' => $detailLabel,
+                        'note' => $record->note
+                    ];
+                }
+
                 return response()->json([
                     'status' => 'present',
-                    'message' => '正常出勤天数是根据工作日减去请假天数计算的',
-                    'records' => []
+                    'message' => '以下是影响出勤天数的缺勤记录',
+                    'records' => $records
                 ]);
             }
 
@@ -696,27 +938,53 @@ class AttendanceController extends Controller
                     ->get();
 
                 foreach ($attendanceRecords as $record) {
+                    $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
                     $detailLabel = '';
-                    if ($record->details && $record->leaveType && $record->leaveType->input_config) {
-                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
-                        $config = is_string($record->leaveType->input_config) ? json_decode($record->leaveType->input_config, true) : $record->leaveType->input_config;
+                    $typeName = '';
+                    
+                    // Special handling for roll_call source
+                    if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
+                        // Use original_status from details if available (for accurate label)
+                        $originalStatus = $details['original_status'] ?? $record->status;
+                        $statusLabel = match($originalStatus) {
+                            'absent' => '旷课',
+                            'late' => '迟到',
+                            'early_leave' => '早退',
+                            default => $originalStatus,
+                        };
+                        $typeName = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                    } else {
+                        $typeName = $record->leaveType ? $record->leaveType->name : $status;
                         
-                        if (isset($details['option']) && isset($config['options'])) {
-                            foreach ($config['options'] as $opt) {
-                                $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
-                                $optLabel = is_array($opt) ? ($opt['label'] ?? $optKey) : $optKey;
-                                if ($optKey === $details['option']) {
-                                    $detailLabel = $optLabel;
-                                    break;
+                        if ($record->details && $record->leaveType && $record->leaveType->input_config) {
+                            $config = is_string($record->leaveType->input_config) ? json_decode($record->leaveType->input_config, true) : $record->leaveType->input_config;
+                            
+                            if (isset($details['option']) && isset($config['options'])) {
+                                foreach ($config['options'] as $opt) {
+                                    $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
+                                    $optLabel = is_array($opt) ? ($opt['label'] ?? $optKey) : $optKey;
+                                    if ($optKey === $details['option']) {
+                                        $detailLabel = $optLabel;
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
 
+                    // Determine record time
+                    $recordTime = null;
+                    if ($record->source_type === 'roll_call' && isset($details['roll_call_time'])) {
+                        $recordTime = $details['roll_call_time'];
+                    } elseif ($record->created_at) {
+                        $recordTime = $record->created_at->setTimezone('Asia/Shanghai')->format('H:i');
+                    }
+
                     $records[] = [
                         'id' => $record->id,
-                        'date' => $record->date,
-                        'type_name' => $record->leaveType ? $record->leaveType->name : $status,
+                        'date' => $record->date->format('Y.m.d'),
+                        'time' => $recordTime,
+                        'type_name' => $typeName,
                         'detail_label' => $detailLabel,
                         'note' => $record->note
                     ];
@@ -980,23 +1248,56 @@ class AttendanceController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        // Query students with matching attendance records
-        $students = \App\Models\Student::whereIn('class_id', $classIds)
-            ->whereHas('attendance', function($q) use ($dateRange, $status, $leaveTypeId) {
-                $q->whereBetween('date', [$dateRange['start'], $dateRange['end']])
-                  ->where('status', $status);
+        // For 'absent' status, we need to include roll_call source records with leave_type.slug='absent'
+        $absenceLeaveTypeId = null;
+        if ($status === 'absent') {
+            $absenceLeaveType = \App\Models\LeaveType::where('slug', 'absent')->first();
+            $absenceLeaveTypeId = $absenceLeaveType?->id;
+        }
+
+        // Build the attendance query conditions
+        $attendanceCondition = function($q) use ($dateRange, $status, $leaveTypeId, $absenceLeaveTypeId) {
+            $q->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
+            
+            if ($status === 'absent' && $absenceLeaveTypeId) {
+                // For absent: include both status='absent' AND (source_type='roll_call' with leave_type_id=absent)
+                $q->where(function($q2) use ($absenceLeaveTypeId) {
+                    $q2->where('status', 'absent')
+                       ->orWhere(function($q3) use ($absenceLeaveTypeId) {
+                           $q3->where('source_type', 'roll_call')
+                              ->where('leave_type_id', $absenceLeaveTypeId);
+                       });
+                });
+            } else {
+                $q->where('status', $status);
                 if ($leaveTypeId) {
                     $q->where('leave_type_id', $leaveTypeId);
                 }
-            })
+            }
+        };
+
+        // Query students with matching attendance records
+        $students = \App\Models\Student::whereIn('class_id', $classIds)
+            ->whereHas('attendance', $attendanceCondition)
             ->with([
                 'user',
                 'schoolClass',
-                'attendance' => function($q) use ($dateRange, $status, $leaveTypeId) {
-                    $q->whereBetween('date', [$dateRange['start'], $dateRange['end']])
-                      ->where('status', $status);
-                    if ($leaveTypeId) {
-                        $q->where('leave_type_id', $leaveTypeId);
+                'attendance' => function($q) use ($dateRange, $status, $leaveTypeId, $absenceLeaveTypeId) {
+                    $q->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
+                    
+                    if ($status === 'absent' && $absenceLeaveTypeId) {
+                        $q->where(function($q2) use ($absenceLeaveTypeId) {
+                            $q2->where('status', 'absent')
+                               ->orWhere(function($q3) use ($absenceLeaveTypeId) {
+                                   $q3->where('source_type', 'roll_call')
+                                      ->where('leave_type_id', $absenceLeaveTypeId);
+                               });
+                        });
+                    } else {
+                        $q->where('status', $status);
+                        if ($leaveTypeId) {
+                            $q->where('leave_type_id', $leaveTypeId);
+                        }
                     }
                     $q->with(['leaveType', 'period']);
                 }

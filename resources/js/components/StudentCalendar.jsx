@@ -280,7 +280,10 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
                             <div className="border-t pt-3 space-y-2">
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">日期</span>
-                                    <span className="font-medium">{eventDetail.displayDate}</span>
+                                    <span className="font-medium">
+                                        {eventDetail.displayDate}
+                                        {eventDetail.recordTime && <span className="text-gray-500 ml-2">{eventDetail.recordTime}</span>}
+                                    </span>
                                 </div>
                                 {eventDetail.type && (
                                     <div className="flex justify-between">

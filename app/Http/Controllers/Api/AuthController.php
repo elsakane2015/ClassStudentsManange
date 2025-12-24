@@ -76,8 +76,21 @@ class AuthController extends Controller
     {
         $user = $request->user()->load('student');
         
+        // Check if student is a roll call admin
+        $isRollCallAdmin = false;
+        if ($user->student) {
+            $isRollCallAdmin = \App\Models\RollCallAdmin::where('student_id', $user->student->id)
+                ->where('is_active', true)
+                ->exists();
+        }
+        
+        $userData = $user->toArray();
+        if ($user->student) {
+            $userData['student']['is_roll_call_admin'] = $isRollCallAdmin;
+        }
+        
         return response()->json([
-            ...$user->toArray(),
+            ...$userData,
             'permissions' => $user->getPermissions()
         ]);
     }

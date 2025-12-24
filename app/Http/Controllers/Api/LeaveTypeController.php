@@ -35,7 +35,8 @@ class LeaveTypeController extends Controller
             'description' => 'nullable|string',
             'is_active' => 'boolean',
             'student_requestable' => 'boolean',
-            'color' => 'nullable|string|max:20',  // Added color
+            'gender_restriction' => 'nullable|string|in:all,male,female',
+            'color' => 'nullable|string|max:20',
             'input_type' => 'nullable|string|in:none,time,period_select,duration_select',
             'input_config' => 'nullable|array'
         ]);
@@ -63,7 +64,8 @@ class LeaveTypeController extends Controller
             'description' => 'nullable|string',
             'is_active' => 'boolean',
             'student_requestable' => 'boolean',
-            'color' => 'nullable|string|max:20',  // Added color
+            'gender_restriction' => 'nullable|string|in:all,male,female',
+            'color' => 'nullable|string|max:20',
             'input_type' => 'nullable|string|in:none,time,period_select,duration_select',
             'input_config' => 'nullable|array'
         ]);

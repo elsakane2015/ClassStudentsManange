@@ -81,6 +81,7 @@ class LeaveRequestController extends Controller
                 'start_date' => $first->date->format('Y-m-d'),
                 'end_date' => $group->max('date')->format('Y-m-d'),
                 'half_day' => $first->details['option'] ?? null,
+                'half_day_label' => $this->getOptionLabel($first),
                 'reason' => $first->reason,
                 'status' => $first->approval_status ?? 'approved',
                 'approval_status' => $first->approval_status,
@@ -344,5 +345,36 @@ class LeaveRequestController extends Controller
         $relatedRecords->delete();
         
         return response()->json(['message' => 'Leave request cancelled successfully.', 'deleted_count' => $count]);
+    }
+
+    /**
+     * Get option label from leave type config
+     */
+    protected function getOptionLabel($record)
+    {
+        $option = $record->details['option'] ?? null;
+        if (!$option || !$record->leaveType) {
+            return null;
+        }
+        
+        $config = $record->leaveType->input_config;
+        if (is_string($config)) {
+            try {
+                $config = json_decode($config, true);
+            } catch (\Exception $e) {
+                return $option;
+            }
+        }
+        
+        $options = $config['options'] ?? [];
+        foreach ($options as $opt) {
+            $key = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
+            $label = is_array($opt) ? ($opt['label'] ?? $key) : $key;
+            if ($key === $option) {
+                return $label;
+            }
+        }
+        
+        return $option;
     }
 }

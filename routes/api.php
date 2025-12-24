@@ -140,6 +140,24 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/settings', [\App\Http\Controllers\Api\SystemSettingController::class, 'index']);
     Route::post('/settings', [\App\Http\Controllers\Api\SystemSettingController::class, 'update']);
 
+    // Time Slots (Admin only)
+    Route::apiResource('time-slots', \App\Http\Controllers\Api\TimeSlotController::class);
+
+    // Roll Call Types (Teacher manages for their classes)
+    Route::apiResource('roll-call-types', \App\Http\Controllers\Api\RollCallTypeController::class);
+
+    // Roll Call Admins (Teacher manages for their classes)
+    Route::apiResource('roll-call-admins', \App\Http\Controllers\Api\RollCallAdminController::class);
+
+    // Roll Calls
+    Route::get('/roll-calls/in-progress', [\App\Http\Controllers\Api\RollCallController::class, 'inProgress']);
+    Route::get('/roll-calls/stats', [\App\Http\Controllers\Api\RollCallController::class, 'stats']);
+    Route::post('/roll-calls/{rollCall}/mark', [\App\Http\Controllers\Api\RollCallController::class, 'mark']);
+    Route::post('/roll-calls/{rollCall}/complete', [\App\Http\Controllers\Api\RollCallController::class, 'complete']);
+    Route::post('/roll-calls/{rollCall}/cancel', [\App\Http\Controllers\Api\RollCallController::class, 'cancel']);
+    Route::put('/roll-calls/{rollCall}/records/{record}', [\App\Http\Controllers\Api\RollCallController::class, 'updateRecord']);
+    Route::apiResource('roll-calls', \App\Http\Controllers\Api\RollCallController::class)->only(['index', 'store', 'show', 'destroy']);
+
 Route::get('/debug-migrate', function () {
     try {
         \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);

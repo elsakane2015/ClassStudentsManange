@@ -27,8 +27,22 @@ export default function LeaveRequestForm() {
         const fetchLeaveTypes = async () => {
             try {
                 const response = await axios.get('/leave-types');
-                // Filter for active AND student-requestable types
-                const studentTypes = response.data.filter(type => type.is_active && type.student_requestable);
+                // Get student's gender from auth store
+                const studentGender = user?.student?.gender;
+
+                // Filter for active AND student-requestable types AND matching gender restriction
+                const studentTypes = response.data.filter(type => {
+                    if (!type.is_active || !type.student_requestable) return false;
+
+                    // Check gender restriction
+                    if (type.gender_restriction === 'all') return true;
+                    if (type.gender_restriction === 'female' && studentGender === 'female') return true;
+                    if (type.gender_restriction === 'male' && studentGender === 'male') return true;
+
+                    // If no match, don't show this type
+                    return type.gender_restriction === 'all';
+                });
+
                 setLeaveTypes(studentTypes);
                 // Set default type to first available type
                 if (studentTypes.length > 0 && !formData.type) {
@@ -39,7 +53,7 @@ export default function LeaveRequestForm() {
             }
         };
         fetchLeaveTypes();
-    }, []);
+    }, [user]);
 
     // Fetch class periods for period_select types
     useEffect(() => {
@@ -53,6 +67,31 @@ export default function LeaveRequestForm() {
         };
         fetchPeriods();
     }, []);
+
+    // Set default option when leave type changes and has duration_select
+    useEffect(() => {
+        if (!formData.type || !leaveTypes.length) return;
+
+        const selectedType = leaveTypes.find(t => t.slug === formData.type);
+        if (!selectedType) return;
+
+        const inputType = selectedType.input_type;
+        if (inputType === 'duration_select') {
+            let config = selectedType.input_config;
+            if (typeof config === 'string') {
+                try { config = JSON.parse(config); } catch (e) { config = {}; }
+            }
+
+            const options = config?.options || [];
+            if (options.length > 0 && !formData.details.option) {
+                const firstOptKey = typeof options[0] === 'object' ? options[0].key : options[0];
+                setFormData(prev => ({
+                    ...prev,
+                    details: { ...prev.details, option: firstOptKey }
+                }));
+            }
+        }
+    }, [formData.type, leaveTypes]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;

@@ -8,7 +8,9 @@ import AttendanceCalendar from '../../components/AttendanceCalendar'; // Import
 
 export default function TeacherDashboard() {
     const navigate = useNavigate();
-    const user = useAuthStore((state) => state.user);
+    const { user, hasPermission } = useAuthStore();
+    const canApproveLeave = hasPermission('leave_requests.approve');
+    const canManageRollCall = hasPermission('roll_calls.manage');
     const [stats, setStats] = useState({ total_students: 0, present_count: 0, pending_requests: 0 });
     const [attendanceOverview, setAttendanceOverview] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -16,6 +18,7 @@ export default function TeacherDashboard() {
     const [expandedClasses, setExpandedClasses] = useState({});
     const [scope, setScope] = useState('today'); // today, week, month, semester
     const [leaveTypes, setLeaveTypes] = useState([]); // Added state
+    const [rollCallStats, setRollCallStats] = useState([]); // Roll call stats
 
     // 详情Modal状态
     const [detailModal, setDetailModal] = useState({
@@ -93,10 +96,12 @@ export default function TeacherDashboard() {
             setLoading(true);
             try {
                 // Parallel fetch: Stats (scoped) and Overview (always today for the list)
-                const [statsRes, overviewRes] = await Promise.all([
+                const [statsRes, overviewRes, rollCallStatsRes] = await Promise.all([
                     axios.get('/attendance/stats', { params: { scope } }),
-                    axios.get('/attendance/overview')
+                    axios.get('/attendance/overview'),
+                    axios.get('/roll-calls/stats', { params: { scope } }).catch(() => ({ data: [] }))
                 ]);
+
 
                 console.log('[Dashboard] Stats response:', statsRes.data);
                 console.log('[Dashboard] Overview response:', overviewRes.data);
@@ -113,6 +118,9 @@ export default function TeacherDashboard() {
                     console.error("Overview API returned non-array:", overviewRes.data);
                     setAttendanceOverview([]);
                 }
+
+                // Set roll call stats
+                setRollCallStats(rollCallStatsRes.data || []);
             } catch (error) {
                 console.error("[Dashboard] Failed to fetch dashboard data", error);
                 console.error("[Dashboard] Error details:", error.response?.data);
@@ -356,10 +364,26 @@ export default function TeacherDashboard() {
 
                     {/* Stats Grid */}
                     <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-                        {/* 1. Student Total */}
+                        {/* 1. Student Total - 分层显示 */}
                         <StatCard
                             title="学生总数"
-                            value={stats.total_students}
+                            value={
+                                // 班主任: 班级/系部/全校
+                                stats.class_total_students !== null && stats.class_total_students !== undefined
+                                    ? `${stats.class_total_students}/${stats.department_total_students}/${stats.school_total_students}`
+                                    // 系部管理员: 系部/全校
+                                    : stats.department_total_students !== null && stats.department_total_students !== undefined
+                                        ? `${stats.department_total_students}/${stats.school_total_students}`
+                                        // 系统管理员: 全校
+                                        : stats.school_total_students || stats.total_students
+                            }
+                            subtitle={
+                                stats.class_total_students !== null && stats.class_total_students !== undefined
+                                    ? '班级/系部/全校'
+                                    : stats.department_total_students !== null && stats.department_total_students !== undefined
+                                        ? '系部/全校'
+                                        : null
+                            }
                             icon={
                                 <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -368,33 +392,20 @@ export default function TeacherDashboard() {
                             color="bg-indigo-500"
                         />
 
-                        {/* 2. Period Statistics - 时段统计 */}
-                        {stats.period_stats && stats.period_stats.total_periods > 0 && (
+                        {/* 2. Pending Requests - 仅有审批权限的用户显示 */}
+                        {canApproveLeave && (
                             <StatCard
-                                title="时段出勤率"
-                                value={`${stats.period_stats.attendance_rate}%`}
-                                subtitle={`${stats.period_stats.present_periods}/${stats.period_stats.total_periods} 节次出勤`}
+                                title="待审批"
+                                value={stats.pending_requests}
                                 icon={
                                     <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
                                 }
-                                color="bg-green-500"
+                                color="bg-yellow-500"
+                                onClick={() => navigate('/teacher/approvals')}
                             />
                         )}
-
-                        {/* 3. Pending Requests */}
-                        <StatCard
-                            title="待审批"
-                            value={stats.pending_requests}
-                            icon={
-                                <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                            }
-                            color="bg-yellow-500"
-                            onClick={() => navigate('/teacher/approvals')}
-                        />
 
                         {/* Dynamic Leave Types (including Absent, Late, Early Leave if they are configured as leave types) */}
                         {leaveTypes.map(type => {
@@ -447,6 +458,38 @@ export default function TeacherDashboard() {
                             );
                         })}
                     </div>
+
+                    {/* Roll Call Stats Section - 仅有点名权限的用户显示 */}
+                    {canManageRollCall && rollCallStats.length > 0 && (
+                        <div className="mb-8">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-medium text-gray-900">点名统计</h3>
+                                <Link to="/roll-call" className="text-sm text-indigo-600 hover:text-indigo-800">
+                                    查看全部 →
+                                </Link>
+                            </div>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                                {rollCallStats.map(stat => (
+                                    <Link
+                                        key={stat.type_id}
+                                        to={`/roll-call/history?type_id=${stat.type_id}&scope=${scope}`}
+                                        className="bg-white rounded-lg shadow p-4 hover:shadow-md transition-shadow"
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <h4 className="text-sm font-medium text-gray-500">{stat.type_name}</h4>
+                                            <span className="bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full">
+                                                {stat.count}次
+                                            </span>
+                                        </div>
+                                        <div className="mt-2 flex items-baseline">
+                                            <span className="text-2xl font-bold text-red-600">{stat.absent_total}</span>
+                                            <span className="ml-1 text-sm text-gray-500">人次缺勤</span>
+                                        </div>
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* NEW: Calendar Section */}
                     <AttendanceCalendar user={user} />
@@ -579,31 +622,98 @@ export default function TeacherDashboard() {
                                             <table className="min-w-full divide-y divide-gray-200">
                                                 <thead className="bg-gray-50">
                                                     <tr>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">部门</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">班级</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">详情</th>
+                                                        {/* 系部列 - 仅系统管理员/系管理员可见 */}
+                                                        {['system_admin', 'school_admin', 'admin'].includes(user?.role) && (
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">系部</th>
+                                                        )}
+                                                        {/* 班级列 - 系统管理员/系管理员/系部管理员可见 */}
+                                                        {['system_admin', 'school_admin', 'admin', 'department_manager', 'manager'].includes(user?.role) && (
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">班级</th>
+                                                        )}
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">详情</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">次数</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="bg-white divide-y divide-gray-200">
-                                                    {detailModal.students.map((student, index) => (
-                                                        <tr
-                                                            key={index}
-                                                            onClick={() => handleStudentClick(student)}
-                                                            className="hover:bg-gray-50 cursor-pointer transition-colors"
-                                                        >
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                                                {student.student_no || 'N/A'}
-                                                            </td>
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                                                {student.name || '-'}
-                                                            </td>
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.department || '-'}</td>
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.class || '-'}</td>
-                                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.detail || '-'}</td>
-                                                        </tr>
-                                                    ))}
+                                                    {detailModal.students.map((student, index) => {
+                                                        // 解析详情信息
+                                                        const records = student.records || [];
+                                                        const recordCount = records.length;
+
+                                                        // 获取第一条记录的详细信息
+                                                        let detailText = student.detail || '-';
+                                                        let timeText = '';
+
+                                                        if (records.length > 0) {
+                                                            const firstRecord = records[0];
+                                                            let details = firstRecord.details;
+                                                            if (typeof details === 'string') {
+                                                                try { details = JSON.parse(details); } catch (e) { details = null; }
+                                                            }
+
+                                                            // 提取时间信息
+                                                            if (details) {
+                                                                if (details.time) {
+                                                                    timeText = details.time;
+                                                                } else if (details.roll_call_time) {
+                                                                    timeText = details.roll_call_time;
+                                                                }
+
+                                                                // 如果是点名记录，显示点名类型
+                                                                if (details.roll_call_type) {
+                                                                    detailText = details.roll_call_type;
+                                                                    if (timeText) {
+                                                                        detailText += ` (${timeText})`;
+                                                                    }
+                                                                } else if (details.option) {
+                                                                    // 请假选项
+                                                                    const optionMap = {
+                                                                        'morning_half': '上午',
+                                                                        'afternoon_half': '下午',
+                                                                        'full_day': '全天'
+                                                                    };
+                                                                    detailText = optionMap[details.option] || details.option;
+                                                                } else if (details.period_numbers && Array.isArray(details.period_numbers)) {
+                                                                    detailText = `第${details.period_numbers.join(',')}节`;
+                                                                } else if (details.periods && Array.isArray(details.periods)) {
+                                                                    detailText = `第${details.periods.join(',')}节`;
+                                                                }
+                                                            }
+                                                        }
+
+                                                        return (
+                                                            <tr
+                                                                key={index}
+                                                                onClick={() => handleStudentClick(student)}
+                                                                className="hover:bg-gray-50 cursor-pointer transition-colors"
+                                                            >
+                                                                {/* 系部列 */}
+                                                                {['system_admin', 'school_admin', 'admin'].includes(user?.role) && (
+                                                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{student.department || '-'}</td>
+                                                                )}
+                                                                {/* 班级列 */}
+                                                                {['system_admin', 'school_admin', 'admin', 'department_manager', 'manager'].includes(user?.role) && (
+                                                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{student.class || '-'}</td>
+                                                                )}
+                                                                <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
+                                                                    {student.student_no || 'N/A'}
+                                                                </td>
+                                                                <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                                    {student.name || '-'}
+                                                                </td>
+                                                                <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                                    {detailText}
+                                                                </td>
+                                                                <td className="px-4 py-4 whitespace-nowrap text-sm">
+                                                                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                                                                        {recordCount}次
+                                                                    </span>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
                                                 </tbody>
                                             </table>
                                         </div>
@@ -612,7 +722,10 @@ export default function TeacherDashboard() {
                                     )}
                                 </div>
 
-                                <div className="mt-4 flex justify-end">
+                                <div className="mt-4 flex justify-between items-center">
+                                    <span className="text-sm text-gray-500">
+                                        共 {detailModal.students.length} 人，点击行查看详细记录
+                                    </span>
                                     <button
                                         onClick={() => setDetailModal({ ...detailModal, isOpen: false })}
                                         className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
@@ -681,7 +794,10 @@ export default function TeacherDashboard() {
                                                         if (record.period && record.period.period_number) {
                                                             remarkText = `第${record.period.period_number}节`;
                                                         } else if (details) {
-                                                            if (details.period_numbers && Array.isArray(details.period_numbers) && details.period_numbers.length > 0) {
+                                                            // 点名记录：显示点名类型
+                                                            if (details.roll_call_type) {
+                                                                remarkText = details.roll_call_type;
+                                                            } else if (details.period_numbers && Array.isArray(details.period_numbers) && details.period_numbers.length > 0) {
                                                                 remarkText = `第${details.period_numbers.join(',')}节`;
                                                             } else if (details.periods && Array.isArray(details.periods) && details.periods.length > 0) {
                                                                 remarkText = `第${details.periods.join(',')}节`;
@@ -710,9 +826,15 @@ export default function TeacherDashboard() {
                                                             }
                                                         }
 
-                                                        // 时间列：显示具体时间（如迟到时间）
-                                                        if (details && details.time) {
-                                                            detailText = details.time;
+                                                        // 时间列：显示具体时间
+                                                        if (details) {
+                                                            if (details.roll_call_time) {
+                                                                // 点名时间
+                                                                detailText = details.roll_call_time;
+                                                            } else if (details.time) {
+                                                                // 迟到/早退时间
+                                                                detailText = details.time;
+                                                            }
                                                         }
 
                                                         // 格式化日期：只显示 YYYY-MM-DD
@@ -722,8 +844,8 @@ export default function TeacherDashboard() {
                                                         let statusText = '';
                                                         let statusColor = '';
 
-                                                        if (record.status === 'leave' && record.leave_type) {
-                                                            // 请假：显示请假类型
+                                                        if ((record.status === 'leave' || record.status === 'excused') && record.leave_type) {
+                                                            // 请假/excused：显示请假类型
                                                             statusText = record.leave_type.name;
                                                             statusColor = 'bg-blue-100 text-blue-800';
                                                         } else {
@@ -734,7 +856,7 @@ export default function TeacherDashboard() {
                                                                 'late': '迟到',
                                                                 'early_leave': '早退',
                                                                 'leave': '请假',
-                                                                'excused': '事假'
+                                                                'excused': '已批假'
                                                             };
                                                             statusText = statusMap[record.status] || record.status;
 

@@ -7,7 +7,7 @@ use App\Models\School;
 
 class LeaveType extends Model
 {
-    protected $fillable = ['school_id', 'name', 'slug', 'description', 'is_active', 'student_requestable', 'color', 'input_type', 'input_config'];
+    protected $fillable = ['school_id', 'name', 'slug', 'description', 'is_active', 'student_requestable', 'gender_restriction', 'color', 'input_type', 'input_config'];
 
     protected $casts = [
         'is_active' => 'boolean',

@@ -1,0 +1,688 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\RollCall;
+use App\Models\RollCallRecord;
+use App\Models\RollCallAdmin;
+use App\Models\RollCallType;
+use App\Models\Student;
+use App\Models\AttendanceRecord;
+use App\Models\TimeSlot;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class RollCallController extends Controller
+{
+    /**
+     * List roll calls (history)
+     */
+    public function index(Request $request)
+    {
+        $user = $request->user();
+        $classId = $request->query('class_id');
+        $status = $request->query('status');
+        $typeId = $request->query('type_id');
+        $scope = $request->query('scope', 'today'); // today, month, semester
+        
+        $query = RollCall::with(['rollCallType', 'creator', 'class']);
+
+        // Filter by user role
+        if ($user->role === 'teacher') {
+            $classIds = $user->teacherClasses->pluck('id');
+            $query->whereIn('class_id', $classId ? [$classId] : $classIds);
+        } elseif ($user->role === 'student' && $user->student) {
+            // Roll call admin only sees their own created
+            $query->where('created_by', $user->id);
+        } elseif (!in_array($user->role, ['admin', 'system_admin'])) {
+            return response()->json([]);
+        }
+
+        if ($status) {
+            $query->where('status', $status);
+        }
+
+        if ($typeId) {
+            $query->where('roll_call_type_id', $typeId);
+        }
+
+        // Date scope
+        $now = Carbon::now();
+        if ($scope === 'today') {
+            $query->whereDate('roll_call_time', $now->toDateString());
+        } elseif ($scope === 'month') {
+            $query->whereMonth('roll_call_time', $now->month)
+                  ->whereYear('roll_call_time', $now->year);
+        }
+        // semester: no date filter
+
+        $rollCalls = $query->orderBy('roll_call_time', 'desc')->paginate(20);
+        
+        return response()->json($rollCalls);
+    }
+
+    /**
+     * Get in-progress roll calls
+     */
+    public function inProgress(Request $request)
+    {
+        $user = $request->user();
+        
+        $query = RollCall::with(['rollCallType', 'class'])
+            ->where('status', 'in_progress');
+
+        if ($user->role === 'teacher') {
+            $classIds = $user->teacherClasses->pluck('id');
+            $query->whereIn('class_id', $classIds);
+        } elseif ($user->role === 'student') {
+            $query->where('created_by', $user->id);
+        }
+
+        return response()->json($query->orderBy('created_at', 'desc')->get());
+    }
+
+    /**
+     * Get roll call statistics for dashboard
+     */
+    public function stats(Request $request)
+    {
+        $user = $request->user();
+        $classId = $request->query('class_id');
+        $scope = $request->query('scope', 'today');
+        
+        if ($user->role !== 'teacher') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $classIds = $classId ? [$classId] : $user->teacherClasses->pluck('id')->toArray();
+        
+        $query = RollCall::whereIn('class_id', $classIds)
+            ->where('status', 'completed');
+
+        // Date scope
+        $now = Carbon::now();
+        if ($scope === 'today') {
+            $query->whereDate('roll_call_time', $now->toDateString());
+        } elseif ($scope === 'month') {
+            $query->whereMonth('roll_call_time', $now->month)
+                  ->whereYear('roll_call_time', $now->year);
+        }
+
+        $stats = $query->selectRaw('
+            roll_call_type_id,
+            COUNT(*) as total_count,
+            SUM(total_students - present_count - on_leave_count) as total_absent
+        ')
+        ->groupBy('roll_call_type_id')
+        ->get();
+
+        // Add type info
+        $typeIds = $stats->pluck('roll_call_type_id');
+        $types = RollCallType::whereIn('id', $typeIds)->get()->keyBy('id');
+
+        $result = $stats->map(function ($stat) use ($types) {
+            $type = $types[$stat->roll_call_type_id] ?? null;
+            return [
+                'type_id' => $stat->roll_call_type_id,
+                'type_name' => $type?->name ?? 'Unknown',
+                'count' => $stat->total_count,
+                'absent_total' => $stat->total_absent,
+            ];
+        });
+
+        return response()->json($result);
+    }
+
+    /**
+     * Create a new roll call
+     */
+    public function store(Request $request)
+    {
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'roll_call_type_id' => 'required|exists:roll_call_types,id',
+            'roll_call_time' => 'required|date',
+            'notes' => 'nullable|string',
+        ]);
+
+        $type = RollCallType::findOrFail($validated['roll_call_type_id']);
+        
+        // Verify authorization
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $type->class_id)->exists();
+            if (!$ownsClass) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif ($user->role === 'student' && $user->student) {
+            $admin = RollCallAdmin::where('student_id', $user->student->id)
+                ->where('is_active', true)
+                ->first();
+            
+            if (!$admin || !in_array($type->id, $admin->roll_call_type_ids ?? [])) {
+                return response()->json(['error' => 'You are not authorized for this roll call type'], 403);
+            }
+        } else {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        // Get students in the class
+        $students = Student::where('class_id', $type->class_id)->get();
+        $rollCallTime = Carbon::parse($validated['roll_call_time']);
+
+        DB::beginTransaction();
+        try {
+            // Create roll call
+            $rollCall = RollCall::create([
+                'class_id' => $type->class_id,
+                'school_id' => $type->school_id,
+                'roll_call_type_id' => $type->id,
+                'roll_call_time' => $rollCallTime,
+                'created_by' => $user->id,
+                'status' => 'in_progress',
+                'total_students' => $students->count(),
+                'notes' => $validated['notes'] ?? null,
+            ]);
+
+            // Create records for each student
+            foreach ($students as $student) {
+                $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime);
+                
+                RollCallRecord::create([
+                    'roll_call_id' => $rollCall->id,
+                    'student_id' => $student->id,
+                    'status' => $leaveInfo ? 'on_leave' : 'pending',
+                    'leave_type_id' => $leaveInfo['leave_type_id'] ?? null,
+                    'leave_detail' => $leaveInfo['detail'] ?? null,
+                ]);
+            }
+
+            // Update on_leave_count
+            $onLeaveCount = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'on_leave')
+                ->count();
+            $rollCall->update(['on_leave_count' => $onLeaveCount]);
+
+            DB::commit();
+
+            return response()->json($rollCall->load('rollCallType', 'records.student.user'), 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get roll call detail with student list
+     */
+    public function show(Request $request, RollCall $rollCall)
+    {
+        $user = $request->user();
+        
+        // Verify access
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if (!$ownsClass) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif ($user->role === 'student') {
+            if ($rollCall->created_by !== $user->id) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        }
+
+        $rollCall->load([
+            'rollCallType',
+            'class',
+            'creator',
+            'records.student.user',
+            'records.leaveType',
+        ]);
+
+        // Determine if current user can modify records
+        $canModifyRecords = false;
+        
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if ($ownsClass) {
+                $canModifyRecords = true;
+            }
+        } elseif (in_array($user->role, ['admin', 'system_admin'])) {
+            $canModifyRecords = true;
+        } elseif ($user->role === 'student' && $user->student) {
+            $admin = RollCallAdmin::where('student_id', $user->student->id)
+                ->where('class_id', $rollCall->class_id)
+                ->where('is_active', true)
+                ->first();
+            
+            if ($admin && $admin->can_modify_records) {
+                if (in_array($rollCall->roll_call_type_id, $admin->roll_call_type_ids ?? [])) {
+                    $canModifyRecords = true;
+                }
+            }
+        }
+
+        $response = $rollCall->toArray();
+        $response['can_modify_records'] = $canModifyRecords;
+
+        return response()->json($response);
+    }
+
+    /**
+     * Mark students as present/absent
+     */
+    public function mark(Request $request, RollCall $rollCall)
+    {
+        $user = $request->user();
+
+        if ($rollCall->status !== 'in_progress') {
+            return response()->json(['error' => 'Roll call is not in progress'], 400);
+        }
+
+        // Verify access
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if (!$ownsClass) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif ($user->role === 'student') {
+            if ($rollCall->created_by !== $user->id) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        }
+
+        $validated = $request->validate([
+            'student_ids' => 'required|array',
+            'student_ids.*' => 'exists:students,id',
+            'is_present' => 'required|boolean',
+        ]);
+
+        foreach ($validated['student_ids'] as $studentId) {
+            $record = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('student_id', $studentId)
+                ->first();
+
+            if ($record && $record->status !== 'on_leave') {
+                $record->update([
+                    'status' => $validated['is_present'] ? 'present' : 'pending',
+                    'marked_at' => $validated['is_present'] ? now() : null,
+                    'marked_by' => $validated['is_present'] ? $user->id : null,
+                ]);
+            }
+        }
+
+        // Update present count
+        $presentCount = RollCallRecord::where('roll_call_id', $rollCall->id)
+            ->where('status', 'present')
+            ->count();
+        $rollCall->update(['present_count' => $presentCount]);
+
+        return response()->json(['message' => 'Marked', 'present_count' => $presentCount]);
+    }
+
+    /**
+     * Complete a roll call
+     */
+    public function complete(Request $request, RollCall $rollCall)
+    {
+        $user = $request->user();
+
+        if ($rollCall->status !== 'in_progress') {
+            return response()->json(['error' => 'Roll call is not in progress'], 400);
+        }
+
+        // Verify access
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if (!$ownsClass) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif ($user->role === 'student') {
+            if ($rollCall->created_by !== $user->id) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        }
+
+        DB::beginTransaction();
+        try {
+            // Mark all pending as absent
+            RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'pending')
+                ->update(['status' => 'absent']);
+
+            // Write absent records to attendance_records
+            $absentRecords = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'absent')
+                ->get();
+
+            $type = $rollCall->rollCallType;
+            foreach ($absentRecords as $record) {
+                $student = Student::find($record->student_id);
+                
+                // Use 'leave' status with leave_type_id so it doesn't conflict with manual attendance marking
+                // The details field will contain the roll_call_type name for display purposes
+                AttendanceRecord::create([
+                    'student_id' => $record->student_id,
+                    'school_id' => $rollCall->school_id,
+                    'class_id' => $rollCall->class_id,
+                    'date' => $rollCall->roll_call_time->toDateString(),
+                    'status' => 'leave',  // Use 'leave' instead of 'absent' to avoid conflicts
+                    'leave_type_id' => $type->leave_type_id,
+                    'source_type' => 'roll_call',
+                    'source_id' => $rollCall->id,
+                    'is_self_applied' => false,
+                    'details' => [
+                        'roll_call_type' => $type->name,
+                        'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                        'original_status' => 'absent', // Keep track of original status for statistics
+                    ],
+                ]);
+            }
+
+            // Update counts
+            $presentCount = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'present')
+                ->count();
+            $onLeaveCount = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'on_leave')
+                ->count();
+
+            $rollCall->update([
+                'status' => 'completed',
+                'present_count' => $presentCount,
+                'on_leave_count' => $onLeaveCount,
+                'completed_at' => now(),
+            ]);
+
+            DB::commit();
+
+            return response()->json($rollCall->fresh()->load('rollCallType', 'records'));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Cancel a roll call (teacher or roll call admin with modify permission)
+     */
+    public function cancel(Request $request, RollCall $rollCall)
+    {
+        $user = $request->user();
+
+        // Check permission
+        $canCancel = false;
+        
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if ($ownsClass) {
+                $canCancel = true;
+            }
+        } elseif (in_array($user->role, ['admin', 'system_admin'])) {
+            $canCancel = true;
+        } elseif ($user->role === 'student' && $user->student && $rollCall->created_by === $user->id) {
+            // Student can cancel their own roll call if they have modify permission
+            $admin = RollCallAdmin::where('student_id', $user->student->id)
+                ->where('class_id', $rollCall->class_id)
+                ->where('is_active', true)
+                ->first();
+            
+            if ($admin && $admin->can_modify_records) {
+                $canCancel = true;
+            }
+        }
+
+        if (!$canCancel) {
+            return response()->json(['error' => '您没有权限取消此点名'], 403);
+        }
+
+        if ($rollCall->status !== 'in_progress') {
+            return response()->json(['error' => 'Only in-progress roll calls can be cancelled'], 400);
+        }
+
+        $rollCall->update(['status' => 'cancelled']);
+        
+        return response()->json(['message' => 'Cancelled']);
+    }
+
+    /**
+     * Update a record after completion (teacher or authorized roll call admin)
+     */
+    public function updateRecord(Request $request, RollCall $rollCall, RollCallRecord $record)
+    {
+        $user = $request->user();
+
+        // Check if user has permission to modify records
+        $canModify = false;
+        $debugInfo = [
+            'user_role' => $user->role,
+            'user_id' => $user->id,
+            'student_id' => $user->student?->id,
+            'rollCall_class_id' => $rollCall->class_id,
+            'rollCall_type_id' => $rollCall->roll_call_type_id,
+        ];
+        
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if ($ownsClass) {
+                $canModify = true;
+            }
+        } elseif (in_array($user->role, ['admin', 'system_admin'])) {
+            $canModify = true;
+        } elseif ($user->role === 'student' && $user->student) {
+            // Check if student is a roll call admin with modify permission
+            $admin = RollCallAdmin::where('student_id', $user->student->id)
+                ->where('class_id', $rollCall->class_id)
+                ->where('is_active', true)
+                ->first();
+            
+            $debugInfo['admin_found'] = $admin ? true : false;
+            $debugInfo['admin_can_modify'] = $admin?->can_modify_records;
+            $debugInfo['admin_type_ids'] = $admin?->roll_call_type_ids;
+            
+            if ($admin && $admin->can_modify_records) {
+                // Also check if admin is authorized for this roll call type
+                $typeIds = $admin->roll_call_type_ids ?? [];
+                $debugInfo['type_check'] = in_array($rollCall->roll_call_type_id, $typeIds);
+                if (in_array($rollCall->roll_call_type_id, $typeIds)) {
+                    $canModify = true;
+                }
+            }
+        }
+
+        \Log::info('updateRecord permission check', $debugInfo + ['canModify' => $canModify]);
+
+        if (!$canModify) {
+            return response()->json(['error' => '您没有修改点名记录的权限', 'debug' => $debugInfo], 403);
+        }
+
+        $validated = $request->validate([
+            'status' => 'required|in:present,absent,on_leave',
+        ]);
+
+        $oldStatus = $record->status;
+        $record->update([
+            'status' => $validated['status'],
+            'marked_at' => now(),
+            'marked_by' => $user->id,
+        ]);
+
+        // Update attendance_records if needed
+        if ($rollCall->status === 'completed') {
+            // Remove old attendance record
+            AttendanceRecord::where('source_type', 'roll_call')
+                ->where('source_id', $rollCall->id)
+                ->where('student_id', $record->student_id)
+                ->delete();
+
+            // Add new if absent
+            if ($validated['status'] === 'absent') {
+                $type = $rollCall->rollCallType;
+                $student = Student::find($record->student_id);
+                
+                // Use same format as complete() method - 'leave' status with details
+                AttendanceRecord::create([
+                    'student_id' => $record->student_id,
+                    'school_id' => $rollCall->school_id,
+                    'class_id' => $rollCall->class_id,
+                    'date' => $rollCall->roll_call_time->toDateString(),
+                    'status' => 'leave',  // Use 'leave' to match complete() method
+                    'leave_type_id' => $type->leave_type_id,
+                    'source_type' => 'roll_call',
+                    'source_id' => $rollCall->id,
+                    'is_self_applied' => false,
+                    'details' => [
+                        'roll_call_type' => $type->name,
+                        'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                        'original_status' => 'absent',
+                    ],
+                ]);
+            }
+
+            // Recalculate counts
+            $presentCount = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'present')
+                ->count();
+            $onLeaveCount = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'on_leave')
+                ->count();
+
+            $rollCall->update([
+                'present_count' => $presentCount,
+                'on_leave_count' => $onLeaveCount,
+            ]);
+        }
+
+        return response()->json($record);
+    }
+
+    /**
+     * Delete a roll call and related records (teacher or roll call admin with modify permission)
+     */
+    public function destroy(Request $request, RollCall $rollCall)
+    {
+        $user = $request->user();
+
+        // Check permission: teacher owns class, admin, or roll call admin with modify permission
+        $canDelete = false;
+        
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if ($ownsClass) {
+                $canDelete = true;
+            }
+        } elseif (in_array($user->role, ['admin', 'system_admin'])) {
+            $canDelete = true;
+        } elseif ($user->role === 'student' && $user->student && $rollCall->created_by === $user->id) {
+            // Student can delete their own roll call if they have modify permission
+            $admin = RollCallAdmin::where('student_id', $user->student->id)
+                ->where('class_id', $rollCall->class_id)
+                ->where('is_active', true)
+                ->first();
+            
+            if ($admin && $admin->can_modify_records) {
+                $canDelete = true;
+            }
+        }
+
+        if (!$canDelete) {
+            return response()->json(['error' => '您没有权限删除此点名'], 403);
+        }
+
+        DB::beginTransaction();
+        try {
+            // Delete related attendance records created by this roll call
+            AttendanceRecord::where('source_type', 'roll_call')
+                ->where('source_id', $rollCall->id)
+                ->delete();
+
+            // Delete roll call records
+            RollCallRecord::where('roll_call_id', $rollCall->id)->delete();
+
+            // Delete roll call itself
+            $rollCall->delete();
+
+            DB::commit();
+
+            return response()->json(['message' => 'Roll call deleted successfully']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Get student leave info for a specific time
+     */
+    private function getStudentLeaveInfo(Student $student, Carbon $rollCallTime): ?array
+    {
+        // Find approved leave for this date (exclude roll_call source - those are absences, not leaves)
+        $leaveRecords = AttendanceRecord::where('student_id', $student->id)
+            ->whereDate('date', $rollCallTime->toDateString())
+            ->whereIn('status', ['leave', 'excused'])
+            ->where('source_type', '!=', 'roll_call')  // Exclude roll call absences
+            ->where(function ($q) {
+                $q->where('approval_status', 'approved')
+                  ->orWhereNull('approval_status');
+            })
+            ->with('leaveType')
+            ->get();
+
+        foreach ($leaveRecords as $record) {
+            $details = $record->details ?? [];
+            $leaveTypeName = $record->leaveType?->name ?? '请假';
+            
+            // Check multiple possible detail formats
+            
+            // Format 1: time_slot_id directly
+            $timeSlotId = $details['time_slot_id'] ?? null;
+            
+            // Format 2: input_value contains time_slot_X
+            $inputValue = $details['input_value'] ?? null;
+            if (!$timeSlotId && $inputValue && is_string($inputValue) && str_starts_with($inputValue, 'time_slot_')) {
+                $timeSlotId = (int) str_replace('time_slot_', '', $inputValue);
+            }
+            
+            // Format 3: half_day or duration label stored directly
+            $halfDay = $details['half_day'] ?? $details['option_label'] ?? null;
+            
+            // If we have a time slot ID, check if current time falls within
+            if ($timeSlotId) {
+                $timeSlot = TimeSlot::find($timeSlotId);
+                if ($timeSlot) {
+                    $rollCallTimeOnly = $rollCallTime->format('H:i:s');
+                    $start = $timeSlot->time_start;
+                    $end = $timeSlot->time_end;
+
+                    // Check if roll call time falls within the time slot
+                    if ($rollCallTimeOnly >= $start && $rollCallTimeOnly <= $end) {
+                        return [
+                            'leave_type_id' => $record->leave_type_id,
+                            'detail' => $leaveTypeName . '(' . $timeSlot->name . ')',
+                        ];
+                    }
+                    // Has time slot but doesn't match current time - skip this record
+                    continue;
+                }
+            }
+            
+            // If we have a half_day label, use it directly
+            if ($halfDay) {
+                return [
+                    'leave_type_id' => $record->leave_type_id,
+                    'detail' => $leaveTypeName . '(' . $halfDay . ')',
+                ];
+            }
+            
+            // Full day leave (no time slot or specific period)
+            return [
+                'leave_type_id' => $record->leave_type_id,
+                'detail' => $leaveTypeName . '(全天)',
+            ];
+        }
+
+        return null;
+    }
+}

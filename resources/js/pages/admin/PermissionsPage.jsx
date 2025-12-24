@@ -7,8 +7,7 @@ export default function PermissionsPage() {
     const [matrix, setMatrix] = useState([]);
     const [roles, setRoles] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [changes, setChanges] = useState({});
+    const [updating, setUpdating] = useState(null); // Track which permission is being updated
 
     const roleLabels = {
         'system_admin': '系统管理员',
@@ -31,7 +30,8 @@ export default function PermissionsPage() {
         'attendance': '考勤管理',
         'leave': '请假管理',
         'student': '学生管理',
-        'class': '班级管理'
+        'class': '班级管理',
+        '点名管理': '点名管理'
     };
 
     useEffect(() => {
@@ -50,28 +50,16 @@ export default function PermissionsPage() {
         }
     };
 
-    const togglePermission = (permissionId, role, action) => {
-        const key = `${permissionId}-${role}-${action}`;
+    const togglePermission = async (permissionId, role, action) => {
         const permission = matrix.find(p => p.id === permissionId);
         const currentValue = permission.roles[role][action];
+        const newValue = !currentValue;
 
-        setChanges(prev => ({
-            ...prev,
-            [key]: {
-                permission_id: permissionId,
-                role,
-                [action]: !currentValue,
-                // Keep other actions unchanged
-                ...Object.keys(actionLabels).reduce((acc, act) => {
-                    if (act !== action) {
-                        acc[act] = permission.roles[role][act];
-                    }
-                    return acc;
-                }, {})
-            }
-        }));
+        // Create update key for loading state
+        const updateKey = `${permissionId}-${role}-${action}`;
+        setUpdating(updateKey);
 
-        // Update matrix locally
+        // Optimistically update UI
         setMatrix(prev => prev.map(p => {
             if (p.id === permissionId) {
                 return {
@@ -80,38 +68,51 @@ export default function PermissionsPage() {
                         ...p.roles,
                         [role]: {
                             ...p.roles[role],
-                            [action]: !currentValue
+                            [action]: newValue
                         }
                     }
                 };
             }
             return p;
         }));
-    };
 
-    const saveChanges = async () => {
-        if (Object.keys(changes).length === 0) {
-            alert('没有需要保存的更改');
-            return;
-        }
-
-        setSaving(true);
         try {
+            // Immediately save to server
             await axios.post('/permissions/batch-update', {
-                updates: Object.values(changes)
+                updates: [{
+                    permission_id: permissionId,
+                    role,
+                    [action]: newValue,
+                    // Keep other actions unchanged
+                    ...Object.keys(actionLabels).reduce((acc, act) => {
+                        if (act !== action) {
+                            acc[act] = permission.roles[role][act];
+                        }
+                        return acc;
+                    }, {})
+                }]
             });
-            setChanges({});
-            alert('权限配置已保存');
         } catch (error) {
-            alert('保存失败: ' + (error.response?.data?.message || '未知错误'));
+            // Revert on error
+            setMatrix(prev => prev.map(p => {
+                if (p.id === permissionId) {
+                    return {
+                        ...p,
+                        roles: {
+                            ...p.roles,
+                            [role]: {
+                                ...p.roles[role],
+                                [action]: currentValue
+                            }
+                        }
+                    };
+                }
+                return p;
+            }));
+            alert('更新失败: ' + (error.response?.data?.message || '未知错误'));
         } finally {
-            setSaving(false);
+            setUpdating(null);
         }
-    };
-
-    const resetChanges = () => {
-        setChanges({});
-        fetchMatrix();
     };
 
     // Group permissions by category
@@ -142,25 +143,6 @@ export default function PermissionsPage() {
                     <p className="mt-1 text-sm text-gray-500">
                         配置不同角色的系统权限（仅系统管理员可见）
                     </p>
-                </div>
-                <div className="mt-4 flex md:ml-4 md:mt-0 space-x-3">
-                    {Object.keys(changes).length > 0 && (
-                        <>
-                            <button
-                                onClick={resetChanges}
-                                className="inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
-                            >
-                                取消 ({Object.keys(changes).length})
-                            </button>
-                            <button
-                                onClick={saveChanges}
-                                disabled={saving}
-                                className="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
-                            >
-                                {saving ? '保存中...' : `保存更改 (${Object.keys(changes).length})`}
-                            </button>
-                        </>
-                    )}
                 </div>
             </div>
 
@@ -211,13 +193,17 @@ export default function PermissionsPage() {
                                                         {Object.keys(actionLabels).map(action => {
                                                             const isEnabled = permission.roles[role][action];
                                                             const isSystemAdmin = role === 'system_admin';
+                                                            const updateKey = `${permission.id}-${role}-${action}`;
+                                                            const isUpdating = updating === updateKey;
 
                                                             return (
                                                                 <td key={`${role}-${action}`} className="px-1 py-4 text-center">
                                                                     <button
-                                                                        onClick={() => !isSystemAdmin && togglePermission(permission.id, role, action)}
-                                                                        disabled={isSystemAdmin}
-                                                                        className={`inline-flex items-center justify-center w-8 h-8 rounded ${isSystemAdmin
+                                                                        onClick={() => !isSystemAdmin && !isUpdating && togglePermission(permission.id, role, action)}
+                                                                        disabled={isSystemAdmin || isUpdating}
+                                                                        className={`inline-flex items-center justify-center w-8 h-8 rounded transition-all ${isUpdating
+                                                                            ? 'bg-gray-100 animate-pulse'
+                                                                            : isSystemAdmin
                                                                                 ? 'bg-gray-200 cursor-not-allowed'
                                                                                 : isEnabled
                                                                                     ? 'bg-green-100 hover:bg-green-200 text-green-700'
@@ -225,7 +211,9 @@ export default function PermissionsPage() {
                                                                             }`}
                                                                         title={isSystemAdmin ? '系统管理员拥有所有权限' : (isEnabled ? '点击禁用' : '点击启用')}
                                                                     >
-                                                                        {isEnabled ? (
+                                                                        {isUpdating ? (
+                                                                            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                                                        ) : isEnabled ? (
                                                                             <CheckIcon className="h-5 w-5" />
                                                                         ) : (
                                                                             <XMarkIcon className="h-5 w-5" />
@@ -251,8 +239,7 @@ export default function PermissionsPage() {
                 <h4 className="text-sm font-semibold text-blue-900 mb-2">说明</h4>
                 <ul className="text-sm text-blue-800 space-y-1">
                     <li>• 系统管理员默认拥有所有权限，无法修改</li>
-                    <li>• 点击图标可以切换权限的启用/禁用状态</li>
-                    <li>• 修改后需要点击"保存更改"按钮才会生效</li>
+                    <li>• 点击图标可以切换权限的启用/禁用状态，<strong>即时生效</strong></li>
                     <li>• 学生管理员的权限通过is_manager标志控制，不在此配置</li>
                 </ul>
             </div>

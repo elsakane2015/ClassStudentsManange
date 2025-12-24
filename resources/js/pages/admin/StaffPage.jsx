@@ -24,7 +24,7 @@ export default function StaffPage() {
     const [classes, setClasses] = useState([]);
 
     // Form States
-    const [formData, setFormData] = useState({ name: '', email: '', password: '', role: '', department_id: '', class_ids: [] });
+    const [formData, setFormData] = useState({ name: '', email: '', password: '', role: '', department_ids: [], class_ids: [] });
     const [currentTabRole, setCurrentTabRole] = useState('system_admin'); // Updated default
 
     const fetchUsers = async (role) => {
@@ -69,10 +69,10 @@ export default function StaffPage() {
     const handleEdit = (userData) => {
         setEditingUser(userData);
         // Extract assignment
-        // Manager: userData.managed_departments (array) -> pick first id or ''
-        let deptId = '';
-        if (userData.role === 'manager' && userData.managed_departments?.length > 0) {
-            deptId = userData.managed_departments[0].id;
+        // Manager/Department Manager: userData.managed_departments (array) -> map ids
+        let deptIds = [];
+        if (['manager', 'department_manager'].includes(userData.role) && userData.managed_departments?.length > 0) {
+            deptIds = userData.managed_departments.map(d => d.id);
         }
 
         // Teacher: userData.teacher_classes (array) -> map ids
@@ -86,7 +86,7 @@ export default function StaffPage() {
             email: userData.email,
             password: '',  // Don't fill password
             role: userData.role,
-            department_id: deptId,
+            department_ids: deptIds,
             class_ids: clsIds
         });
         setShowForm(true);
@@ -116,7 +116,7 @@ export default function StaffPage() {
             }
             setShowForm(false);
             setEditingUser(null);
-            setFormData({ name: '', email: '', password: '', role: '', department_id: '', class_ids: [] });
+            setFormData({ name: '', email: '', password: '', role: '', department_ids: [], class_ids: [] });
             fetchUsers(currentTabRole);
         } catch (error) {
             alert('操作失败: ' + (error.response?.data?.message || '未知错误'));
@@ -126,7 +126,7 @@ export default function StaffPage() {
     const openCreateForm = (role) => {
         setCurrentTabRole(role);
         setEditingUser(null);
-        setFormData({ name: '', email: '', password: '', role, department_id: '', class_ids: [] });
+        setFormData({ name: '', email: '', password: '', role, department_ids: [], class_ids: [] });
         setShowForm(true);
     };
 
@@ -196,9 +196,9 @@ export default function StaffPage() {
                                         <tr>
                                             <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">姓名</th>
                                             <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">邮箱(账号)</th>
-                                            {tab.key !== 'admin' && (
+                                            {!['system_admin', 'school_admin', 'admin'].includes(tab.key) && (
                                                 <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
-                                                    {tab.key === 'manager' ? '管理系部' : '负责班级'}
+                                                    {['manager', 'department_manager'].includes(tab.key) ? '负责系部' : '负责班级'}
                                                 </th>
                                             )}
                                             <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
@@ -319,20 +319,23 @@ export default function StaffPage() {
                                     </div>
 
                                     {/* Role Specific Fields */}
-                                    {currentTabRole === 'manager' && (
+                                    {['manager', 'department_manager'].includes(currentTabRole) && (
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">管理系部</label>
+                                            <label className="block text-sm font-medium text-gray-700">负责系部</label>
                                             <select
-                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border"
-                                                value={formData.department_id}
-                                                onChange={(e) => setFormData({ ...formData, department_id: e.target.value })}
+                                                multiple
+                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border h-32"
+                                                value={formData.department_ids}
+                                                onChange={(e) => {
+                                                    const selected = Array.from(e.target.selectedOptions, option => parseInt(option.value));
+                                                    setFormData({ ...formData, department_ids: selected });
+                                                }}
                                             >
-                                                <option value="">-- 选择系部 --</option>
                                                 {departments.map(d => (
                                                     <option key={d.id} value={d.id}>{d.name}</option>
                                                 ))}
                                             </select>
-                                            <p className="mt-1 text-xs text-gray-500">注意：选择后该系部的管理员将变更为此用户。</p>
+                                            <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。被选中的系部将由此用户管理。</p>
                                         </div>
                                     )}
 

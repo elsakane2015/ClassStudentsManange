@@ -11,7 +11,7 @@ function classNames(...classes) {
 }
 
 export default function Layout({ children }) {
-    const { user, logout } = useAuthStore();
+    const { user, logout, hasPermission } = useAuthStore();
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -26,16 +26,28 @@ export default function Layout({ children }) {
         }
     };
 
+    // Check if student is a roll call admin
+    const isRollCallAdmin = user?.role === 'student' && user?.student?.is_roll_call_admin;
+    // Check if student is a class admin
+    const isClassAdmin = user?.role === 'student' && user?.student?.is_class_admin;
+    // Check if user has leave approval permission
+    const canApproveLeave = hasPermission('leave_requests.approve');
+    // Check if user has roll call management permission
+    const canManageRollCall = hasPermission('roll_calls.manage');
+
     const navigation = user?.role === 'student'
         ? [
             { name: '仪表盘', href: '/student/dashboard' },
             { name: '请假申请', href: '/student/request' },
             { name: '我的记录', href: '/student/history' },
+            ...(isClassAdmin ? [{ name: '管理班级考勤', href: '/student/class-attendance' }] : []),
+            ...(isRollCallAdmin ? [{ name: '点名', href: '/roll-call' }] : []),
         ]
         : [
             { name: '概览', href: '/teacher/dashboard' },
-            { name: '请假审批', href: '/teacher/approvals' },
+            ...(canApproveLeave ? [{ name: '请假审批', href: '/teacher/approvals' }] : []),
             { name: '学生管理', href: '/teacher/students' },
+            ...(canManageRollCall ? [{ name: '点名', href: '/roll-call' }] : []),
             ...(['system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user?.role) ? [{ name: '人员管理', href: '/admin/staff' }] : []),
             ...(['system_admin', 'school_admin', 'admin'].includes(user?.role) ? [{ name: '系统设置', href: '/admin/settings' }] : []),
             ...(['system_admin'].includes(user?.role) ? [{ name: '权限管理', href: '/admin/permissions' }] : [])

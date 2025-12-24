@@ -60,7 +60,7 @@ export default function LeaveApprovals() {
                                         <div className="flex flex-col">
                                             <p className="text-sm font-medium text-indigo-600 truncate">{request.student?.user?.name || request.student?.name}</p>
                                             <p className="flex items-center text-sm text-gray-500">
-                                                {request.leave_type?.name || (request.type === 'sick' ? '病假' : '事假')} • {request.half_day ? (request.half_day === 'am' ? '上午' : '下午') : '全天'}
+                                                {request.leave_type?.name || request.type || '请假'} • {request.half_day_label || (request.half_day ? request.half_day : '全天')}
                                             </p>
                                         </div>
                                         <div className="ml-2 flex-shrink-0 flex">

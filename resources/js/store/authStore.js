@@ -1,9 +1,14 @@
 import { create } from 'zustand';
 
-const useAuthStore = create((set) => ({
+const useAuthStore = create((set, get) => ({
     user: null,
+    permissions: [],
     token: localStorage.getItem('token') || null,
-    setUser: (user) => set({ user }),
+    setUser: (user) => {
+        // Extract permissions from user object if present
+        const permissions = user?.permissions || [];
+        set({ user, permissions });
+    },
     setToken: (token) => {
         if (token) {
             localStorage.setItem('token', token);
@@ -14,7 +19,12 @@ const useAuthStore = create((set) => ({
     },
     logout: () => {
         localStorage.removeItem('token');
-        set({ user: null, token: null });
+        set({ user: null, token: null, permissions: [] });
+    },
+    // Check if user has a specific permission
+    hasPermission: (permission) => {
+        const { permissions } = get();
+        return permissions.includes(permission);
     },
 }));
 

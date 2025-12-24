@@ -130,7 +130,7 @@ const CalendarSelector = ({ startDateStr, totalWeeks, holidays, onToggleDate, we
     );
 };
 
-const LeaveTypeForm = ({ initialData, onSubmit, onCancel }) => {
+const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [] }) => {
     const [inputType, setInputType] = useState(initialData?.input_type || 'none');
     const [config, setConfig] = useState(initialData?.input_config || {});
     // 动态选项管理（用于 duration_select）
@@ -193,6 +193,18 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel }) => {
         const newOptions = [...durationOptions];
         newOptions[index][field] = value;
         setDurationOptions(newOptions);
+    };
+
+    // 从全局时段导入
+    const importFromTimeSlots = () => {
+        const imported = timeSlots
+            .filter(slot => slot.is_active)
+            .map(slot => ({
+                key: `time_slot_${slot.id}`,
+                label: slot.name,
+                time_slot_id: slot.id,
+            }));
+        setDurationOptions(imported);
     };
 
     const handleFormSubmit = (e) => {
@@ -304,13 +316,24 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel }) => {
                             <div>
                                 <div className="flex justify-between items-center mb-2">
                                     <label className="text-xs text-gray-500">选项配置</label>
-                                    <button
-                                        type="button"
-                                        onClick={addDurationOption}
-                                        className="text-xs bg-indigo-500 text-white px-2 py-1 rounded hover:bg-indigo-600"
-                                    >
-                                        + 添加选项
-                                    </button>
+                                    <div className="flex gap-2">
+                                        {timeSlots.length > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={importFromTimeSlots}
+                                                className="text-xs bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
+                                            >
+                                                从时段导入
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={addDurationOption}
+                                            className="text-xs bg-indigo-500 text-white px-2 py-1 rounded hover:bg-indigo-600"
+                                        >
+                                            + 添加选项
+                                        </button>
+                                    </div>
                                 </div>
                                 <div className="space-y-2">
                                     {durationOptions.map((opt, index) => (
@@ -351,6 +374,15 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel }) => {
             <label className="flex items-center col-span-2 mt-2"><input name="is_active" type="checkbox" defaultChecked={initialData?.is_active ?? true} className="mr-2" /> 启用</label>
             <label className="flex items-center col-span-2"><input name="student_requestable" type="checkbox" defaultChecked={initialData?.student_requestable ?? false} className="mr-2" /> 学生可申请</label>
 
+            <div className="col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">适用性别</label>
+                <select name="gender_restriction" defaultValue={initialData?.gender_restriction || 'all'} className="input-field">
+                    <option value="all">全部学生</option>
+                    <option value="female">仅女生</option>
+                    <option value="male">仅男生</option>
+                </select>
+            </div>
+
             <div className="col-span-2 flex justify-end space-x-2">
                 <button type="button" onClick={onCancel} className="btn-secondary">取消</button>
                 <button type="submit" className="btn-primary">保存</button>
@@ -385,6 +417,11 @@ export default function SettingsPage() {
     // Settings State
     const [settings, setSettings] = useState({});
 
+    // Time Slots State
+    const [timeSlots, setTimeSlots] = useState([]);
+    const [editingTimeSlot, setEditingTimeSlot] = useState(null);
+    const [showTimeSlotForm, setShowTimeSlotForm] = useState(false);
+
     // Semester Form State (Controlled)
     const [semesterForm, setSemesterForm] = useState({
         name: '', start_date: '', total_weeks: 20, is_current: false, holidays: []
@@ -401,18 +438,20 @@ export default function SettingsPage() {
 
         try {
             // Fetch Core Data
-            const [semRes, leaveRes, deptRes, classRes, teacherRes] = await Promise.all([
+            const [semRes, leaveRes, deptRes, classRes, teacherRes, timeSlotsRes] = await Promise.all([
                 axios.get('/semesters'),
                 axios.get('/leave-types'),
                 axios.get('/departments'),
                 axios.get('/admin/classes'),
                 axios.get('/admin/teachers'),
+                axios.get('/time-slots'),
             ]);
             setSemesters(semRes.data);
             setLeaveTypes(leaveRes.data);
             setDepartments(deptRes.data);
             setClasses(classRes.data);
             setTeachers(teacherRes.data);
+            setTimeSlots(timeSlotsRes.data);
         } catch (err) {
             console.error(err);
             setError('Failed to load core data: ' + (err.response?.data?.message || err.message));
@@ -509,6 +548,7 @@ export default function SettingsPage() {
         const formData = new FormData(e.target);
         const data = Object.fromEntries(formData);
         data.is_active = data.is_active === 'on';
+        data.student_requestable = data.student_requestable === 'on';
 
         try {
             if (editingLeaveType) await axios.put(`/leave-types/${editingLeaveType.id}`, data);
@@ -553,6 +593,29 @@ export default function SettingsPage() {
         } catch (err) { console.error(err); }
     };
 
+    // Time Slot Handlers
+    const handleTimeSlotSubmit = async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const data = Object.fromEntries(formData);
+        data.is_active = data.is_active === 'on';
+        data.sort_order = parseInt(data.sort_order) || 0;
+
+        try {
+            if (editingTimeSlot) await axios.put(`/time-slots/${editingTimeSlot.id}`, data);
+            else await axios.post('/time-slots', data);
+            setShowTimeSlotForm(false); setEditingTimeSlot(null); fetchData();
+        } catch (err) { alert('Error: ' + (err.response?.data?.message || err.message)); }
+    };
+
+    const deleteTimeSlot = async (id) => {
+        if (!confirm('确定要删除这个时段吗？')) return;
+        try {
+            await axios.delete(`/time-slots/${id}`);
+            fetchData();
+        } catch (err) { alert('Error: ' + err.message); }
+    };
+
     const NavButton = ({ id, label }) => (
         <button
             onClick={() => setActiveTab(id)}
@@ -575,6 +638,7 @@ export default function SettingsPage() {
                                 <NavButton id="departments" label="系部管理" />
                                 <NavButton id="classes" label="班级管理" />
                                 <NavButton id="leaveTypes" label="请假类型" />
+                                <NavButton id="timeSlots" label="时段管理" />
                                 <NavButton id="attendance" label="考勤规则" />
                             </nav>
                         </div>
@@ -811,6 +875,7 @@ export default function SettingsPage() {
                                         <LeaveTypeForm
                                             key={editingLeaveType ? editingLeaveType.id : 'new'}
                                             initialData={editingLeaveType}
+                                            timeSlots={timeSlots}
                                             onSubmit={e => {
                                                 // Wrapper to match existing handler signature if needed, or update handler?
                                                 // handleLeaveTypeSubmit expects an event `e` with `e.target` as form.
@@ -843,6 +908,7 @@ export default function SettingsPage() {
                                                     <th className="text-left">输入类型</th>
                                                     <th className="text-center">状态</th>
                                                     <th className="text-center">学生可申请</th>
+                                                    <th className="text-center">适用性别</th>
                                                     <th className="text-center pr-4 sm:pr-6">操作</th>
                                                 </tr>
                                             </thead>
@@ -857,6 +923,7 @@ export default function SettingsPage() {
                                                         </td>
                                                         <td className="text-center">{lt.is_active ? <span className="badge-green">启用</span> : <span className="badge-gray">停用</span>}</td>
                                                         <td className="text-center">{lt.student_requestable ? <span className="badge-green">是</span> : <span className="badge-gray">否</span>}</td>
+                                                        <td className="text-center text-xs">{lt.gender_restriction === 'female' ? '仅女生' : lt.gender_restriction === 'male' ? '仅男生' : '全部'}</td>
                                                         <td className="text-center pr-4 sm:pr-6 space-x-2">
                                                             <button onClick={() => { setEditingLeaveType(lt); setShowLeaveTypeForm(true) }} className="text-indigo-600" title="编辑"><PencilIcon className="h-4 w-4" /></button>
                                                             <button onClick={() => toggleLeaveTypeActive(lt)} className="text-gray-500 text-xs underline" title="切换状态">切换状态</button>
@@ -881,6 +948,80 @@ export default function SettingsPage() {
                                                         </td>
                                                     </tr>
                                                 ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* TIME SLOTS */}
+                            {activeTab === 'timeSlots' && (
+                                <div>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h4 className="text-md font-bold text-gray-700">时段配置</h4>
+                                        <button onClick={() => { setEditingTimeSlot(null); setShowTimeSlotForm(true); }} className="btn-primary">
+                                            <PlusIcon className="h-4 w-4 mr-1" /> 新增
+                                        </button>
+                                    </div>
+                                    <p className="text-sm text-gray-500 mb-4">配置可用于请假和点名的时段，如早操、上午、下午、晚操等。</p>
+
+                                    {showTimeSlotForm && (
+                                        <form onSubmit={handleTimeSlotSubmit} className="bg-gray-50 p-4 rounded mb-4 border grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">名称</label>
+                                                <input required name="name" defaultValue={editingTimeSlot?.name} placeholder="早操" className="input-field" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">排序</label>
+                                                <input type="number" name="sort_order" defaultValue={editingTimeSlot?.sort_order || 0} className="input-field" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+                                                <input required type="time" name="time_start" defaultValue={editingTimeSlot?.time_start?.substring(0, 5)} className="input-field" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
+                                                <input required type="time" name="time_end" defaultValue={editingTimeSlot?.time_end?.substring(0, 5)} className="input-field" />
+                                            </div>
+                                            <label className="flex items-center col-span-2">
+                                                <input name="is_active" type="checkbox" defaultChecked={editingTimeSlot?.is_active ?? true} className="mr-2" /> 启用
+                                            </label>
+                                            <div className="col-span-2 flex justify-end space-x-2">
+                                                <button type="button" onClick={() => { setShowTimeSlotForm(false); setEditingTimeSlot(null); }} className="btn-secondary">取消</button>
+                                                <button type="submit" className="btn-primary">保存</button>
+                                            </div>
+                                        </form>
+                                    )}
+
+                                    <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 rounded-lg">
+                                        <table className="min-w-full divide-y divide-gray-300">
+                                            <thead className="bg-gray-50">
+                                                <tr>
+                                                    <th className="text-left pl-4 sm:pl-6">名称</th>
+                                                    <th className="text-left">开始时间</th>
+                                                    <th className="text-left">结束时间</th>
+                                                    <th className="text-center">排序</th>
+                                                    <th className="text-center">状态</th>
+                                                    <th className="text-center pr-4 sm:pr-6">操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-200 bg-white">
+                                                {timeSlots.map(slot => (
+                                                    <tr key={slot.id}>
+                                                        <td className="text-left pl-4 sm:pl-6 font-medium text-gray-900">{slot.name}</td>
+                                                        <td className="text-left">{slot.time_start?.substring(0, 5)}</td>
+                                                        <td className="text-left">{slot.time_end?.substring(0, 5)}</td>
+                                                        <td className="text-center text-gray-500">{slot.sort_order}</td>
+                                                        <td className="text-center">{slot.is_active ? <span className="badge-green">启用</span> : <span className="badge-gray">停用</span>}</td>
+                                                        <td className="text-center pr-4 sm:pr-6 space-x-2">
+                                                            <button onClick={() => { setEditingTimeSlot(slot); setShowTimeSlotForm(true); }} className="text-indigo-600" title="编辑"><PencilIcon className="h-4 w-4" /></button>
+                                                            <button onClick={() => deleteTimeSlot(slot.id)} className="text-red-600" title="删除"><TrashIcon className="h-4 w-4" /></button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {timeSlots.length === 0 && (
+                                                    <tr><td colSpan="6" className="text-center py-4 text-gray-500">暂无时段配置，请点击"新增"添加</td></tr>
+                                                )}
                                             </tbody>
                                         </table>
                                     </div>

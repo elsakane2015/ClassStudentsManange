@@ -65,18 +65,12 @@ export default function LeaveHistory() {
     };
 
     const getTypeLabel = (leave) => {
-        // Use leave_type name if available
+        // Use leave_type name if available (from API)
         if (leave.leave_type?.name) {
             return leave.leave_type.name;
         }
-        // Fallback to type slug mapping
-        const typeMap = {
-            'sick_leave': '病假',
-            'sick': '病假',
-            'personal_leave': '事假',
-            'personal': '事假',
-        };
-        return typeMap[leave.type] || leave.type || '请假';
+        // Fallback to type string as-is (API should always provide leave_type)
+        return leave.type || '请假';
     };
 
     return (
@@ -110,7 +104,7 @@ export default function LeaveHistory() {
                                             </span>
                                         </div>
                                         <div className="text-sm text-gray-500">
-                                            {leave.half_day ? (leave.half_day === 'am' ? '仅上午' : '仅下午') : '全天'}
+                                            {leave.half_day_label ? `仅${leave.half_day_label}` : (leave.half_day ? `仅${leave.half_day}` : '全天')}
                                         </div>
                                         <p className="mt-2 text-sm text-gray-700 italic">
                                             "{leave.reason}"

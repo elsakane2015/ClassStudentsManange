@@ -346,7 +346,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         executeBulkUpdate(pendingAction.status, pendingAction.leaveType.id, enhancedInputData);
     };
 
-    const StatusBadge = ({ status, details, leaveTypeId, leaveType, onClick, periodId, period }) => {
+    const StatusBadge = ({ status, details, leaveTypeId, leaveType, onClick, periodId, period, displayLabel }) => {
         const styles = {
             present: 'bg-green-100 text-green-800',
             absent: 'bg-red-100 text-red-800',
@@ -365,6 +365,19 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             early_leave: '早退',
             unmarked: '出勤'
         };
+
+        // If displayLabel is provided (from roll_call), use it directly
+        if (displayLabel) {
+            const s = status || 'leave';
+            // Use red style for roll_call absents (旷课)
+            const styleKey = displayLabel.includes('旷课') ? 'absent' : s;
+            const classes = `px-2 py-0.5 rounded text-xs font-medium ${styles[styleKey] || styles.unmarked} truncate max-w-[150px] ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
+            return (
+                <span className={classes} onClick={onClick} title={onClick ? "点击撤销此记录" : ""}>
+                    {displayLabel}
+                </span>
+            );
+        }
 
         // Determine label: prefer leaveType object from record, then lookup by ID
         let label = labels[status] || status;
@@ -524,6 +537,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                             details={records.find(r => r.period_id === null).details}
                                                                             leaveTypeId={records.find(r => r.period_id === null).leave_type_id}
                                                                             leaveType={records.find(r => r.period_id === null).leave_type}
+                                                                            displayLabel={records.find(r => r.period_id === null).display_label}
                                                                             onClick={records.find(r => r.period_id === null).status !== 'present'
                                                                                 ? () => handleDeleteRecord(student.id, null)
                                                                                 : undefined}
@@ -543,6 +557,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                                 details={record.details}
                                                                                 leaveTypeId={record.leave_type_id}
                                                                                 leaveType={record.leave_type}
+                                                                                displayLabel={record.display_label}
                                                                                 periodId={record.period_id}
                                                                                 period={record.period}
                                                                                 onClick={() => handleDeleteRecord(student.id, record.period_id)}
