@@ -79,7 +79,7 @@ class UserController extends Controller
 
         // Assignments
         if (in_array($role, ['department_manager', 'manager']) && $request->filled('department_ids')) {
-            \App\Models\Department::whereIn('id', $request->department_ids)->update(['manager_id' => $user->id]);
+            $user->managedDepartments()->sync($request->department_ids);
         }
         
         if ($role === 'teacher' && $request->filled('class_ids')) {
@@ -116,12 +116,8 @@ class UserController extends Controller
         // Update Assignments
         if (in_array($user->role, ['department_manager', 'manager'])) {
             if ($request->has('department_ids')) {
-                // Clear previous assignments
-                \App\Models\Department::where('manager_id', $user->id)->update(['manager_id' => null]);
-                // Assign new departments
-                if (!empty($request->department_ids)) {
-                    \App\Models\Department::whereIn('id', $request->department_ids)->update(['manager_id' => $user->id]);
-                }
+                // Use sync for many-to-many relationship
+                $user->managedDepartments()->sync($request->department_ids ?? []);
             }
         }
         
@@ -154,8 +150,8 @@ class UserController extends Controller
             return response()->json(['error' => 'Cannot delete system administrator'], 403);
         }
 
-        // Nullify foreign keys
-        \App\Models\Department::where('manager_id', $user->id)->update(['manager_id' => null]);
+        // Nullify foreign keys and detach relationships
+        $user->managedDepartments()->detach();
         \App\Models\SchoolClass::where('teacher_id', $user->id)->update(['teacher_id' => null]);
 
         $user->delete();

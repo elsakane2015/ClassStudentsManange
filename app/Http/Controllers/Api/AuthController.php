@@ -53,6 +53,16 @@ class AuthController extends Controller
             ]);
         }
 
+        // Check if student's class is graduated (archived)
+        if ($user->role === 'student') {
+            $student = $user->student;
+            if ($student && $student->schoolClass && $student->schoolClass->is_graduated) {
+                return response()->json([
+                    'message' => '您的班级已毕业，账号已归档，无法登录。如有问题请联系管理员。'
+                ], 403);
+            }
+        }
+
         // Optional: Revoke old tokens if single session policy
         // $user->tokens()->delete();
 

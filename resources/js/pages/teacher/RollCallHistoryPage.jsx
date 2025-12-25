@@ -215,8 +215,8 @@ export default function RollCallHistoryPage() {
                                                     >
                                                         <EyeIcon className="h-5 w-5" />
                                                     </Link>
-                                                    {/* Show delete button for teachers/admins, or for student with modify permission who created it */}
-                                                    {(user?.role === 'teacher' || ['admin', 'system_admin'].includes(user?.role) || (canModifyRecords && rc.created_by === user?.id)) && (
+                                                    {/* Show delete button for teachers/admins, or for roll call admin who created it */}
+                                                    {(user?.role === 'teacher' || ['admin', 'system_admin'].includes(user?.role) || (user?.student?.is_roll_call_admin && rc.created_by === user?.id)) && (
                                                         <button
                                                             onClick={() => deleteRollCall(rc.id, rc.roll_call_type?.name)}
                                                             className="text-red-500 hover:text-red-700"

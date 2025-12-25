@@ -32,6 +32,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::apiResource('admin/classes', SchoolClassController::class);
     Route::apiResource('users', UserController::class); // Managing users (managers, teachers)
     Route::get('admin/teachers', [SchoolClassController::class, 'availableTeachers']);
+    Route::post('admin/classes/{id}/toggle-graduated', [SchoolClassController::class, 'toggleGraduated']);
 
     // Permission Management (System Admin Only)
     Route::get('/permissions', [PermissionController::class, 'index']);
@@ -69,6 +70,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/students/{id}/toggle-manager', [StudentController::class, 'toggleManager']);
     Route::get('/student/is-class-admin', [StudentController::class, 'isClassAdmin']);
     Route::post('/students/{id}/toggle-class-admin', [StudentController::class, 'toggleClassAdmin']);
+    Route::post('/students/bulk-delete', [StudentController::class, 'bulkDestroy']);
     
     // Class/Utility routes
     Route::get('/options/departments', [OptionsController::class, 'departments']);

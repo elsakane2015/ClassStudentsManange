@@ -43,7 +43,8 @@ class User extends Authenticatable
 
     public function managedDepartments()
     {
-        return $this->hasMany(Department::class, 'manager_id');
+        return $this->belongsToMany(Department::class, 'department_managers', 'user_id', 'department_id')
+            ->withTimestamps();
     }
 
     /**

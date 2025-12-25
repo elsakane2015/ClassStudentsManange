@@ -16,7 +16,7 @@ class StudentController extends Controller
 
         // Query Builder start
         // Ensure we load User relationship for name
-        $query = \App\Models\Student::with(['user', 'schoolClass']);
+        $query = \App\Models\Student::with(['user', 'schoolClass.department']);
 
         // 1. Teacher: Filter by assigned classes
         if ($user->role === 'teacher') {
@@ -40,10 +40,27 @@ class StudentController extends Controller
              return response()->json(['data' => []]);
         }
 
-        $result = $query->get();
-        \Log::info('StudentController: Query found ' . $result->count() . ' students.');
+        // Apply filters from request
+        if ($request->filled('department_id')) {
+            $classIdsInDept = \App\Models\SchoolClass::where('department_id', $request->department_id)->pluck('id');
+            $query->whereIn('class_id', $classIdsInDept);
+        }
+        
+        if ($request->filled('enrollment_year')) {
+            $query->whereHas('schoolClass', function($q) use ($request) {
+                $q->where('enrollment_year', $request->enrollment_year);
+            });
+        }
+        
+        if ($request->filled('class_id')) {
+            $query->where('class_id', $request->class_id);
+        }
 
-        $students = $result->map(function ($student) {
+        // Pagination - order by student_no ascending
+        $perPage = $request->input('per_page', 50);
+        $result = $query->orderBy('student_no', 'asc')->paginate($perPage);
+
+        $students = $result->getCollection()->map(function ($student) {
             return [
                 'id' => $student->id,
                 'name' => $student->user ? $student->user->name : 'Unknown', // Safety check
@@ -52,19 +69,26 @@ class StudentController extends Controller
                 'parent_contact' => $student->parent_contact,
                 'class_id' => $student->class_id,
                 'class_name' => $student->schoolClass ? $student->schoolClass->name : '-',
+                'department_name' => $student->schoolClass?->department?->name ?? '-',
+                'enrollment_year' => $student->schoolClass?->enrollment_year ?? '-',
                 'email' => $student->user ? $student->user->email : null,
-                'is_manager' => $student->is_manager ?? false, // 添加管理员标识
+                'is_manager' => $student->is_manager ?? false,
+                'is_class_admin' => $student->is_class_admin ?? false,
             ];
         });
 
-        // Debug info included in response
         return response()->json([
             'data' => $students,
+            'meta' => [
+                'current_page' => $result->currentPage(),
+                'last_page' => $result->lastPage(),
+                'per_page' => $result->perPage(),
+                'total' => $result->total(),
+            ],
             'debug_meta' => [
                 'user_id' => $user->id,
                 'user_role' => $user->role,
                 'query_count' => $students->count(),
-                'is_admin_check' => in_array($user->role, ['system_admin', 'school_admin', 'admin']),
             ]
         ]);
     }
@@ -238,6 +262,50 @@ class StudentController extends Controller
         $student->delete();
 
         return response()->json(['message' => 'Deleted']);
+    }
+
+    /**
+     * Bulk delete students
+     */
+    public function bulkDestroy(Request $request)
+    {
+        $user = $request->user();
+        
+        $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'exists:students,id',
+        ]);
+
+        $studentIds = $request->input('ids');
+        $deletedCount = 0;
+        $errors = [];
+
+        foreach ($studentIds as $id) {
+            try {
+                $student = \App\Models\Student::with('schoolClass')->findOrFail($id);
+                
+                // Permission check for teacher
+                if ($user->role === 'teacher' && $student->schoolClass->teacher_id !== $user->id) {
+                    $errors[] = "学生 {$student->user->name} 不在您的班级";
+                    continue;
+                }
+                
+                // Delete user and student
+                if ($student->user) {
+                    $student->user->delete();
+                }
+                $student->delete();
+                $deletedCount++;
+            } catch (\Exception $e) {
+                $errors[] = "删除学生ID {$id} 失败: " . $e->getMessage();
+            }
+        }
+
+        return response()->json([
+            'message' => "成功删除 {$deletedCount} 名学生",
+            'deleted_count' => $deletedCount,
+            'errors' => $errors,
+        ]);
     }
 
     public function template()

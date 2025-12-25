@@ -332,20 +332,20 @@ export default function StaffPage() {
                                                 }}
                                             >
                                                 {departments.map(d => {
-                                                    // Check if this department is managed by someone else
-                                                    const currentManager = managers.find(m =>
+                                                    // Find all managers for this department (except current user if editing)
+                                                    const currentManagers = managers.filter(m =>
                                                         m.managed_departments?.some(md => md.id === d.id) &&
                                                         m.id !== editingUser?.id
                                                     );
+                                                    const managerNames = currentManagers.map(m => m.name).join(', ');
                                                     return (
                                                         <option key={d.id} value={d.id}>
-                                                            {d.name}{currentManager ? ` (当前: ${currentManager.name})` : ''}
+                                                            {d.name}{managerNames ? ` (现有: ${managerNames})` : ''}
                                                         </option>
                                                     );
                                                 })}
                                             </select>
-                                            <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。</p>
-                                            <p className="mt-1 text-xs text-yellow-600">⚠️ 每个系部只能有一个管理员。选择已分配的系部将接管其管理权。</p>
+                                            <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。一个系部可以有多个管理员。</p>
                                         </div>
                                     )}
 

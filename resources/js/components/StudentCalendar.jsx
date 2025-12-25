@@ -10,6 +10,7 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
     const [selectionStart, setSelectionStart] = useState(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [eventDetail, setEventDetail] = useState(null); // For showing event detail modal
+    const [expandedDay, setExpandedDay] = useState(null); // For showing all events of a day
 
     useEffect(() => {
         // Fetch active semester to calculate "Week Number"
@@ -232,7 +233,21 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
                                                             </div>
                                                         ))}
                                                         {dayEvents.length > 3 && (
-                                                            <div className="text-xs text-gray-500">+{dayEvents.length - 3}更多</div>
+                                                            <div
+                                                                className="text-xs text-indigo-600 hover:text-indigo-800 cursor-pointer hover:underline"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    e.preventDefault();
+                                                                    setExpandedDay({
+                                                                        date: day,
+                                                                        events: dayEvents
+                                                                    });
+                                                                }}
+                                                                onMouseDown={(e) => e.stopPropagation()}
+                                                                onMouseUp={(e) => e.stopPropagation()}
+                                                            >
+                                                                +{dayEvents.length - 3}更多
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </div>
@@ -310,6 +325,82 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
                             <button
                                 onClick={() => setEventDetail(null)}
                                 className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                            >
+                                关闭
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Expanded Day Modal - Show all events for a day */}
+            {expandedDay && (
+                <div
+                    className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+                    onClick={() => setExpandedDay(null)}
+                >
+                    <div
+                        className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold">
+                                {format(expandedDay.date, 'yyyy年M月d日', { locale: zhCN })} 考勤记录
+                            </h3>
+                            <button
+                                onClick={() => setExpandedDay(null)}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div className="space-y-2">
+                            {expandedDay.events.map((event, idx) => (
+                                <div
+                                    key={idx}
+                                    className="p-3 rounded-lg cursor-pointer hover:opacity-90 transition-opacity border-l-4"
+                                    style={{
+                                        backgroundColor: '#f9fafb',  // Light gray background
+                                        borderLeftColor: event.color || '#6366f1'
+                                    }}
+                                    onClick={() => {
+                                        setExpandedDay(null);
+                                        setEventDetail({
+                                            ...event,
+                                            displayDate: format(expandedDay.date, 'yyyy.MM.dd')
+                                        });
+                                    }}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center">
+                                            <span
+                                                className="w-3 h-3 rounded-full mr-2 flex-shrink-0"
+                                                style={{ backgroundColor: event.color || '#6366f1' }}
+                                            ></span>
+                                            <span className="font-medium text-gray-800">
+                                                {event.title}
+                                            </span>
+                                        </div>
+                                        {event.recordTime && (
+                                            <span className="text-sm text-gray-500 ml-2">
+                                                {event.recordTime}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {event.detail && (
+                                        <p className="text-sm text-gray-600 mt-1 ml-5">{event.detail}</p>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="mt-4 flex justify-end">
+                            <button
+                                onClick={() => setExpandedDay(null)}
+                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                             >
                                 关闭
                             </button>

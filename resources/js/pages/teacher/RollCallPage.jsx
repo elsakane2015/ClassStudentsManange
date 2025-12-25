@@ -5,9 +5,13 @@ import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { PlusIcon, TrashIcon, PencilIcon, UserGroupIcon, ClockIcon, CheckCircleIcon, PlayIcon } from '@heroicons/react/24/outline';
 import { Link, useNavigate } from 'react-router-dom';
+import useAuthStore from '../../store/authStore';
 
 export default function RollCallPage() {
     const navigate = useNavigate();
+    const { user } = useAuthStore();
+    // Check if user is teacher or admin (not a student roll call admin)
+    const isTeacherOrAdmin = user?.role === 'teacher' || ['admin', 'system_admin', 'school_admin', 'department_manager'].includes(user?.role);
     const [rollCallTypes, setRollCallTypes] = useState([]);
     const [inProgressRollCalls, setInProgressRollCalls] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -142,19 +146,21 @@ export default function RollCallPage() {
                     </div>
                 )}
 
-                {/* Class Filter */}
-                <div className="flex items-center gap-4">
-                    <label className="text-sm font-medium text-gray-700">选择班级:</label>
-                    <select
-                        value={selectedClassId || ''}
-                        onChange={(e) => setSelectedClassId(parseInt(e.target.value))}
-                        className="input-field max-w-xs"
-                    >
-                        {classes.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                    </select>
-                </div>
+                {/* Class Filter - Only show for teachers/admins */}
+                {isTeacherOrAdmin && classes.length > 1 && (
+                    <div className="flex items-center gap-4">
+                        <label className="text-sm font-medium text-gray-700">选择班级:</label>
+                        <select
+                            value={selectedClassId || ''}
+                            onChange={(e) => setSelectedClassId(parseInt(e.target.value))}
+                            className="input-field max-w-xs"
+                        >
+                            {classes.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
 
                 {/* Roll Call Types */}
                 <div className="bg-white shadow rounded-lg p-6">
@@ -168,20 +174,25 @@ export default function RollCallPage() {
                                 <ClockIcon className="h-4 w-4" />
                                 <span className="hidden sm:inline">历史</span>
                             </Link>
-                            <Link
-                                to="/roll-call/admins"
-                                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
-                            >
-                                <UserGroupIcon className="h-4 w-4" />
-                                <span className="hidden sm:inline">点名员</span>
-                            </Link>
-                            <button
-                                onClick={() => { setEditingType(null); setShowTypeForm(true); }}
-                                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
-                            >
-                                <PlusIcon className="h-4 w-4" />
-                                <span className="hidden sm:inline">新增</span>
-                            </button>
+                            {/* Only show admin buttons for teachers/admins */}
+                            {isTeacherOrAdmin && (
+                                <>
+                                    <Link
+                                        to="/roll-call/admins"
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+                                    >
+                                        <UserGroupIcon className="h-4 w-4" />
+                                        <span className="hidden sm:inline">点名员</span>
+                                    </Link>
+                                    <button
+                                        onClick={() => { setEditingType(null); setShowTypeForm(true); }}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
+                                    >
+                                        <PlusIcon className="h-4 w-4" />
+                                        <span className="hidden sm:inline">新增</span>
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
 
@@ -268,22 +279,24 @@ export default function RollCallPage() {
                                                 未到标记: {type.absent_status === 'absent' ? '旷课' : type.absent_status === 'late' ? '迟到' : '请假'}
                                             </div>
                                         </div>
-                                        <div className="flex gap-1">
-                                            <button
-                                                onClick={() => { setEditingType(type); setShowTypeForm(true); }}
-                                                className="text-indigo-600 hover:text-indigo-800 p-1"
-                                                title="编辑"
-                                            >
-                                                <PencilIcon className="h-4 w-4" />
-                                            </button>
-                                            <button
-                                                onClick={() => deleteType(type.id)}
-                                                className="text-red-600 hover:text-red-800 p-1"
-                                                title="删除"
-                                            >
-                                                <TrashIcon className="h-4 w-4" />
-                                            </button>
-                                        </div>
+                                        {isTeacherOrAdmin && (
+                                            <div className="flex gap-1">
+                                                <button
+                                                    onClick={() => { setEditingType(type); setShowTypeForm(true); }}
+                                                    className="text-indigo-600 hover:text-indigo-800 p-1"
+                                                    title="编辑"
+                                                >
+                                                    <PencilIcon className="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    onClick={() => deleteType(type.id)}
+                                                    className="text-red-600 hover:text-red-800 p-1"
+                                                    title="删除"
+                                                >
+                                                    <TrashIcon className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                     <button
                                         onClick={() => startRollCall(type.id)}

@@ -105,12 +105,9 @@ export default function RollCallOperationPage() {
     };
 
     const completeRollCall = async () => {
-        if (!confirm('确定要完成点名吗？未勾选的学生将被标记为缺勤。')) return;
-
         setSaving(true);
         try {
             await axios.post(`/roll-calls/${id}/complete`);
-            alert('点名已完成！');
             navigate('/roll-call');
         } catch (err) {
             alert('完成失败: ' + (err.response?.data?.error || err.message));
@@ -358,8 +355,8 @@ export default function RollCallOperationPage() {
                             onClick={completeRollCall}
                             disabled={saving}
                             className={`flex-1 max-w-xs px-6 py-3 rounded-lg text-white font-medium transition-all flex items-center justify-center gap-2 ${presentCount === totalCount - onLeaveCount
-                                    ? 'bg-green-500 hover:bg-green-600 shadow-lg'
-                                    : 'bg-indigo-600 hover:bg-indigo-700'
+                                ? 'bg-green-500 hover:bg-green-600 shadow-lg'
+                                : 'bg-indigo-600 hover:bg-indigo-700'
                                 }`}
                         >
                             <CheckCircleIcon className="h-5 w-5" />

@@ -9,16 +9,20 @@ class Department extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['school_id', 'name', 'manager_id'];
+    protected $fillable = ['school_id', 'name'];
 
     public function school()
     {
         return $this->belongsTo(School::class);
     }
 
-    public function manager()
+    /**
+     * Get all managers for this department (many-to-many)
+     */
+    public function managers()
     {
-        return $this->belongsTo(User::class, 'manager_id');
+        return $this->belongsToMany(User::class, 'department_managers', 'department_id', 'user_id')
+            ->withTimestamps();
     }
 
     public function classes()

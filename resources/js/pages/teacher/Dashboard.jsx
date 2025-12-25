@@ -19,6 +19,8 @@ export default function TeacherDashboard() {
     const [scope, setScope] = useState('today'); // today, week, month, semester
     const [leaveTypes, setLeaveTypes] = useState([]); // Added state
     const [rollCallStats, setRollCallStats] = useState([]); // Roll call stats
+    const [semesters, setSemesters] = useState([]); // All semesters for dropdown
+    const [selectedSemester, setSelectedSemester] = useState(''); // Selected semester ID (empty = current)
 
     // 详情Modal状态
     const [detailModal, setDetailModal] = useState({
@@ -65,7 +67,7 @@ export default function TeacherDashboard() {
         }
     };
 
-    // Fetch leave types on mount
+    // Fetch leave types and semesters on mount
     useEffect(() => {
         const fallbacks = [
             { id: 'sick', name: '病假' },
@@ -84,22 +86,43 @@ export default function TeacherDashboard() {
                 console.error(err);
                 setLeaveTypes(fallbacks);
             });
+
+        // Fetch semesters for dropdown
+        axios.get('/semesters')
+            .then(res => {
+                const data = res.data.data || res.data;
+                if (Array.isArray(data)) {
+                    setSemesters(data);
+                    // Auto-select current semester
+                    const currentSem = data.find(s => s.is_current);
+                    if (currentSem) {
+                        setSelectedSemester(String(currentSem.id));
+                    }
+                }
+            })
+            .catch(err => console.error('Failed to fetch semesters:', err));
     }, []);
 
-    // Fetch data whenever scope changes
+    // Fetch data whenever scope or selectedSemester changes
     useEffect(() => {
         const fetchData = async () => {
-            console.log('[Dashboard] Starting data fetch, scope:', scope);
+            console.log('[Dashboard] Starting data fetch, scope:', scope, 'semester:', selectedSemester);
             console.log('[Dashboard] API baseURL:', axios.defaults.baseURL);
             console.log('[Dashboard] Token:', localStorage.getItem('token') ? 'Present' : 'Missing');
 
             setLoading(true);
             try {
+                // Build params with optional semester_id
+                const params = { scope };
+                if (selectedSemester) {
+                    params.semester_id = selectedSemester;
+                }
+
                 // Parallel fetch: Stats (scoped) and Overview (always today for the list)
                 const [statsRes, overviewRes, rollCallStatsRes] = await Promise.all([
-                    axios.get('/attendance/stats', { params: { scope } }),
+                    axios.get('/attendance/stats', { params }),
                     axios.get('/attendance/overview'),
-                    axios.get('/roll-calls/stats', { params: { scope } }).catch(() => ({ data: [] }))
+                    axios.get('/roll-calls/stats', { params }).catch(() => ({ data: [] }))
                 ]);
 
 
@@ -129,7 +152,7 @@ export default function TeacherDashboard() {
             }
         };
         fetchData();
-    }, [scope]);
+    }, [scope, selectedSemester]);
 
     // 处理统计卡片点击
     const handleStatCardClick = async (title, status, leaveTypeId = null) => {
@@ -147,7 +170,8 @@ export default function TeacherDashboard() {
                 params: {
                     scope: scope,  // 传递当前scope
                     status: status,
-                    leave_type_id: leaveTypeId
+                    leave_type_id: leaveTypeId,
+                    semester_id: selectedSemester || undefined  // 传递选中的学期
                 }
             });
 
@@ -317,48 +341,88 @@ export default function TeacherDashboard() {
                         </div>
                         <div className="mt-4 flex md:ml-4 md:mt-0 items-center space-x-3">
                             {/* Scope Selector - Button Group Style */}
-                            <div className="inline-flex rounded-md shadow-sm" role="group">
-                                <button
-                                    type="button"
-                                    onClick={() => setScope('today')}
-                                    className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${scope === 'today'
-                                        ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                        }`}
+                            {(() => {
+                                // Check if viewing a historical (non-current) semester
+                                const selectedSem = selectedSemester ? semesters.find(s => String(s.id) === selectedSemester) : null;
+                                const isHistorical = selectedSem && !selectedSem.is_current;
+
+                                return (
+                                    <div className="inline-flex rounded-md shadow-sm" role="group">
+                                        <button
+                                            type="button"
+                                            onClick={() => !isHistorical && setScope('today')}
+                                            disabled={isHistorical}
+                                            className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${scope === 'today'
+                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                : isHistorical
+                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                }`}
+                                        >
+                                            今日数据
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => !isHistorical && setScope('week')}
+                                            disabled={isHistorical}
+                                            className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'week'
+                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                : isHistorical
+                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                }`}
+                                        >
+                                            本周数据
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => !isHistorical && setScope('month')}
+                                            disabled={isHistorical}
+                                            className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'month'
+                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                : isHistorical
+                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                }`}
+                                        >
+                                            本月数据
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setScope('semester')}
+                                            className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${scope === 'semester'
+                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                }`}
+                                        >
+                                            {isHistorical ? '学期数据' : '本学期数据'}
+                                        </button>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Semester Selector */}
+                            {semesters.length > 0 && (
+                                <select
+                                    value={selectedSemester}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setSelectedSemester(val);
+                                        // If selecting a non-current semester, force semester scope
+                                        const selected = semesters.find(s => String(s.id) === val);
+                                        if (selected && !selected.is_current) {
+                                            setScope('semester');
+                                        }
+                                    }}
+                                    className="ml-3 rounded-md border-gray-300 shadow-sm text-sm py-2 pl-3 pr-8 border bg-white focus:border-indigo-500 focus:ring-indigo-500"
                                 >
-                                    今日数据
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setScope('week')}
-                                    className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'week'
-                                        ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                        }`}
-                                >
-                                    本周数据
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setScope('month')}
-                                    className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'month'
-                                        ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                        }`}
-                                >
-                                    本月数据
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setScope('semester')}
-                                    className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${scope === 'semester'
-                                        ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                        }`}
-                                >
-                                    本学期数据
-                                </button>
-                            </div>
+                                    {semesters.map(s => (
+                                        <option key={s.id} value={s.id}>
+                                            {s.name} {s.is_current && '(当前)'}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
                         </div>
                     </div>
 
@@ -632,56 +696,13 @@ export default function TeacherDashboard() {
                                                         )}
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">详情</th>
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">次数</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="bg-white divide-y divide-gray-200">
                                                     {detailModal.students.map((student, index) => {
-                                                        // 解析详情信息
                                                         const records = student.records || [];
                                                         const recordCount = records.length;
-
-                                                        // 获取第一条记录的详细信息
-                                                        let detailText = student.detail || '-';
-                                                        let timeText = '';
-
-                                                        if (records.length > 0) {
-                                                            const firstRecord = records[0];
-                                                            let details = firstRecord.details;
-                                                            if (typeof details === 'string') {
-                                                                try { details = JSON.parse(details); } catch (e) { details = null; }
-                                                            }
-
-                                                            // 提取时间信息
-                                                            if (details) {
-                                                                if (details.time) {
-                                                                    timeText = details.time;
-                                                                } else if (details.roll_call_time) {
-                                                                    timeText = details.roll_call_time;
-                                                                }
-
-                                                                // 如果是点名记录，显示点名类型
-                                                                if (details.roll_call_type) {
-                                                                    detailText = details.roll_call_type;
-                                                                    if (timeText) {
-                                                                        detailText += ` (${timeText})`;
-                                                                    }
-                                                                } else if (details.option) {
-                                                                    // 请假选项
-                                                                    const optionMap = {
-                                                                        'morning_half': '上午',
-                                                                        'afternoon_half': '下午',
-                                                                        'full_day': '全天'
-                                                                    };
-                                                                    detailText = optionMap[details.option] || details.option;
-                                                                } else if (details.period_numbers && Array.isArray(details.period_numbers)) {
-                                                                    detailText = `第${details.period_numbers.join(',')}节`;
-                                                                } else if (details.periods && Array.isArray(details.periods)) {
-                                                                    detailText = `第${details.periods.join(',')}节`;
-                                                                }
-                                                            }
-                                                        }
 
                                                         return (
                                                             <tr
@@ -702,9 +723,6 @@ export default function TeacherDashboard() {
                                                                 </td>
                                                                 <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                                                     {student.name || '-'}
-                                                                </td>
-                                                                <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                                    {detailText}
                                                                 </td>
                                                                 <td className="px-4 py-4 whitespace-nowrap text-sm">
                                                                     <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">

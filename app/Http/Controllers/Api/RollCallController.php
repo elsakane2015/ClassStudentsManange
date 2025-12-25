@@ -188,7 +188,7 @@ class RollCallController extends Controller
 
             // Create records for each student
             foreach ($students as $student) {
-                $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime);
+                $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime, $type);
                 
                 RollCallRecord::create([
                     'roll_call_id' => $rollCall->id,
@@ -576,13 +576,13 @@ class RollCallController extends Controller
         } elseif (in_array($user->role, ['admin', 'system_admin'])) {
             $canDelete = true;
         } elseif ($user->role === 'student' && $user->student && $rollCall->created_by === $user->id) {
-            // Student can delete their own roll call if they have modify permission
+            // Student can delete their own roll call if they're an active roll call admin
             $admin = RollCallAdmin::where('student_id', $user->student->id)
                 ->where('class_id', $rollCall->class_id)
                 ->where('is_active', true)
                 ->first();
             
-            if ($admin && $admin->can_modify_records) {
+            if ($admin) {
                 $canDelete = true;
             }
         }
@@ -616,7 +616,7 @@ class RollCallController extends Controller
     /**
      * Get student leave info for a specific time
      */
-    private function getStudentLeaveInfo(Student $student, Carbon $rollCallTime): ?array
+    private function getStudentLeaveInfo(Student $student, Carbon $rollCallTime, ?RollCallType $rollCallType = null): ?array
     {
         // Find approved leave for this date (exclude roll_call source - those are absences, not leaves)
         $leaveRecords = AttendanceRecord::where('student_id', $student->id)
@@ -630,22 +630,55 @@ class RollCallController extends Controller
             ->with('leaveType')
             ->get();
 
+        $rollCallTypeName = $rollCallType?->name ?? '';
+
         foreach ($leaveRecords as $record) {
             $details = $record->details ?? [];
             $leaveTypeName = $record->leaveType?->name ?? '请假';
+            $inputConfig = $record->leaveType?->input_config ?? [];
             
-            // Check multiple possible detail formats
+            // Format 1: Check for "option" field (e.g., {"option": "evening_exercise"})
+            // This is used by leave types with duration_select input (like 生理假)
+            $optionKey = $details['option'] ?? null;
+            if ($optionKey && is_string($optionKey)) {
+                // Find the label for this option from input_config
+                $options = $inputConfig['options'] ?? [];
+                $optionLabel = null;
+                foreach ($options as $opt) {
+                    if (($opt['key'] ?? '') === $optionKey) {
+                        $optionLabel = $opt['label'] ?? $optionKey;
+                        break;
+                    }
+                }
+                
+                if ($optionLabel) {
+                    // Check if this option matches the current roll call type
+                    // e.g., 晚操 option should match 晚操点名 roll call type
+                    $normalizedOptionLabel = str_replace('操', '', $optionLabel); // 早/晚
+                    $normalizedRollCallTypeName = str_replace(['点名', '操'], '', $rollCallTypeName); // 早/晚
+                    
+                    if ($normalizedOptionLabel === $normalizedRollCallTypeName || 
+                        str_contains($rollCallTypeName, $optionLabel)) {
+                        return [
+                            'leave_type_id' => $record->leave_type_id,
+                            'detail' => $leaveTypeName . '(' . $optionLabel . ')',
+                        ];
+                    }
+                    // Option doesn't match current roll call type - skip this record
+                    continue;
+                }
+            }
             
-            // Format 1: time_slot_id directly
+            // Format 2: time_slot_id directly
             $timeSlotId = $details['time_slot_id'] ?? null;
             
-            // Format 2: input_value contains time_slot_X
+            // Format 3: input_value contains time_slot_X
             $inputValue = $details['input_value'] ?? null;
             if (!$timeSlotId && $inputValue && is_string($inputValue) && str_starts_with($inputValue, 'time_slot_')) {
                 $timeSlotId = (int) str_replace('time_slot_', '', $inputValue);
             }
             
-            // Format 3: half_day or duration label stored directly
+            // Format 4: half_day or duration label stored directly
             $halfDay = $details['half_day'] ?? $details['option_label'] ?? null;
             
             // If we have a time slot ID, check if current time falls within

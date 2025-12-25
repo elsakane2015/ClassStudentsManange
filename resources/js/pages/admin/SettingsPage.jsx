@@ -842,18 +842,45 @@ export default function SettingsPage() {
                                                     <th className="text-left">入学年份</th>
                                                     <th className="text-left">系部</th>
                                                     <th className="text-left">班主任</th>
+                                                    <th className="text-center">状态</th>
                                                     <th className="text-center pr-4 sm:pr-6">操作</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-gray-200 bg-white">
                                                 {classes.map(c => (
-                                                    <tr key={c.id}>
-                                                        <td className="text-left pl-4 sm:pl-6 font-medium text-gray-900">{c.name}</td>
+                                                    <tr key={c.id} className={c.is_graduated ? 'bg-gray-50' : ''}>
+                                                        <td className="text-left pl-4 sm:pl-6 font-medium text-gray-900">
+                                                            {c.name}
+                                                            {c.is_graduated && <span className="ml-2 text-xs text-gray-400">🔒</span>}
+                                                        </td>
                                                         <td className="text-left">{c.enrollment_year || '-'}</td>
                                                         <td className="text-left">{departments.find(d => d.id === c.department_id)?.name || '-'}</td>
                                                         <td className="text-left">{teachers.find(t => t.id === c.teacher_id) ? <span className="text-blue-600">{teachers.find(t => t.id === c.teacher_id).name}</span> : <span className="text-gray-400">未指定</span>}</td>
+                                                        <td className="text-center">
+                                                            {c.is_graduated ? (
+                                                                <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-800">已毕业</span>
+                                                            ) : (
+                                                                <span className="badge-green">在读</span>
+                                                            )}
+                                                        </td>
                                                         <td className="text-center pr-4 sm:pr-6 space-x-2">
                                                             <button onClick={() => { setEditingClass(c); setShowClassForm(true) }} className="text-indigo-600"><PencilIcon className="h-4 w-4" /></button>
+                                                            <button
+                                                                onClick={async () => {
+                                                                    const action = c.is_graduated ? '激活' : '设为毕业';
+                                                                    if (!confirm(`确定要${action}班级"${c.name}"吗？${!c.is_graduated ? '\n毕业后该班级学生将无法登录系统。' : ''}`)) return;
+                                                                    try {
+                                                                        await axios.post(`/admin/classes/${c.id}/toggle-graduated`);
+                                                                        fetchData();
+                                                                    } catch (err) {
+                                                                        alert('操作失败: ' + (err.response?.data?.error || err.message));
+                                                                    }
+                                                                }}
+                                                                className={c.is_graduated ? "text-green-600 hover:text-green-800" : "text-orange-600 hover:text-orange-800"}
+                                                                title={c.is_graduated ? "激活班级" : "设为毕业"}
+                                                            >
+                                                                {c.is_graduated ? '激活' : '毕业'}
+                                                            </button>
                                                             <button onClick={() => handleDelete('admin/classes', c.id)} className="text-red-600"><TrashIcon className="h-4 w-4" /></button>
                                                         </td>
                                                     </tr>

@@ -17,32 +17,32 @@ class AttendanceController extends Controller
 
         $user = $request->user();
         
-        // Calculate hierarchical student counts
-        $schoolTotalStudents = \App\Models\Student::count();
+        // Get non-graduated class IDs for filtering
+        $activeClassIds = \App\Models\SchoolClass::where('is_graduated', false)->pluck('id');
+        
+        // Calculate hierarchical student counts (excluding graduated classes)
+        $schoolTotalStudents = \App\Models\Student::whereIn('class_id', $activeClassIds)->count();
         $departmentTotalStudents = null;
         $classTotalStudents = null;
         
         if ($user->role === 'teacher') {
-            $classIds = $user->teacherClasses->pluck('id');
+            $classIds = $user->teacherClasses->where('is_graduated', false)->pluck('id');
             $query = \App\Models\Student::whereIn('class_id', $classIds);
             $classTotalStudents = $query->clone()->count();
             
-            // Get department total for teacher's classes
+            // Get department total for teacher's classes (excluding graduated)
             $deptIds = \App\Models\SchoolClass::whereIn('id', $classIds)->pluck('department_id')->unique();
-            $deptClassIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->pluck('id');
+            $deptClassIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->where('is_graduated', false)->pluck('id');
             $departmentTotalStudents = \App\Models\Student::whereIn('class_id', $deptClassIds)->count();
         } elseif (in_array($user->role, ['department_manager', 'manager'])) {
-            // Get classes belonging to departments managed by this user
+            // Get classes belonging to departments managed by this user (excluding graduated)
             $deptIds = $user->managedDepartments->pluck('id');
-             // Assuming Class model has department_id
-             // And we need student ids from those classes
-             // Easiest is to query students where schoolClass.department_id in $deptIds
-             // Or get all class IDs first.
-             $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->pluck('id');
+             $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->where('is_graduated', false)->pluck('id');
              $query = \App\Models\Student::whereIn('class_id', $classIds);
              $departmentTotalStudents = $query->clone()->count();
         } elseif (in_array($user->role, ['system_admin', 'school_admin', 'admin'])) {
-            $query = \App\Models\Student::query();
+            $classIds = $activeClassIds;
+            $query = \App\Models\Student::whereIn('class_id', $activeClassIds);
         } else {
              return response()->json(['error' => 'Unauthorized'], 403);
         }
@@ -57,6 +57,12 @@ class AttendanceController extends Controller
         // Pending requests are usually a backlog, so we might not filter by scope unless requested. 
         // But "Leaves" breakdown should respect scope.
         
+        // Get semester for date filtering (either specified or current)
+        $semesterId = $request->input('semester_id');
+        $semester = $semesterId 
+            ? \App\Models\Semester::find($semesterId) 
+            : \App\Models\Semester::where('is_current', true)->first();
+        
         // Date Filtering
         if ($scope === 'today') {
             $attendanceQuery->where('date', now()->format('Y-m-d'));
@@ -65,7 +71,6 @@ class AttendanceController extends Controller
         } elseif ($scope === 'month') {
             $attendanceQuery->whereMonth('date', now()->month)->whereYear('date', now()->year);
         } elseif ($scope === 'semester') {
-            $semester = \App\Models\Semester::where('is_current', true)->first();
             if ($semester) {
                 // Calculate end_date from start_date + total_weeks
                 $startDate = \Carbon\Carbon::parse($semester->start_date);
@@ -709,8 +714,9 @@ class AttendanceController extends Controller
             $absentLessonsAsDay = (int) (\App\Models\SystemSetting::where('key', 'absent_lessons_as_day')->value('value') ?? 6);
             if ($absentLessonsAsDay < 1) $absentLessonsAsDay = 1;
 
-            // Count full-day leaves (excluding period_leave/生理假 which has slug 'period_leave')
+            // Count full-day leaves (excluding non-leave types)
             // Full-day leave = status is 'leave' or 'excused', period_id is null, approved
+            // Exclude: absent(旷课), late(迟到), early_leave(早退), health_leave/period_leave(生理假)
             $fullDayLeaveDates = $query->clone()
                 ->whereIn('status', ['leave', 'excused'])
                 ->whereNull('period_id')
@@ -718,9 +724,9 @@ class AttendanceController extends Controller
                     $q->where('approval_status', 'approved')
                       ->orWhereNull('approval_status');
                 })
-                // Exclude period_leave (生理假)
+                // Exclude non-leave types
                 ->whereHas('leaveType', function($q) {
-                    $q->where('slug', '!=', 'period_leave');
+                    $q->whereNotIn('slug', ['absent', 'late', 'early_leave', 'period_leave', 'health_leave']);
                 })
                 ->distinct()
                 ->pluck('date')
@@ -1232,9 +1238,10 @@ class AttendanceController extends Controller
         $scope = $request->input('scope', 'today');
         $status = $request->input('status');
         $leaveTypeId = $request->input('leave_type_id');
+        $semesterId = $request->input('semester_id');
 
-        // Get date range based on scope
-        $dateRange = $this->getDateRangeForScope($scope);
+        // Get date range based on scope and optional semester_id
+        $dateRange = $this->getDateRangeForScope($scope, $semesterId);
 
         // Get authorized class IDs
         if ($user->role === 'teacher') {
@@ -1382,7 +1389,7 @@ class AttendanceController extends Controller
     /**
      * Get date range for a given scope
      */
-    private function getDateRangeForScope($scope)
+    private function getDateRangeForScope($scope, $semesterId = null)
     {
         $now = now();
         
@@ -1403,8 +1410,10 @@ class AttendanceController extends Controller
                     'end' => $now->copy()->endOfMonth()->format('Y-m-d')
                 ];
             case 'semester':
-                // Get current semester using is_current flag
-                $semester = \App\Models\Semester::where('is_current', true)->first();
+                // Get semester by ID or current
+                $semester = $semesterId 
+                    ? \App\Models\Semester::find($semesterId) 
+                    : \App\Models\Semester::where('is_current', true)->first();
                 
                 if ($semester) {
                     // Calculate end_date from start_date + total_weeks

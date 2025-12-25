@@ -10,6 +10,11 @@ class SchoolClass extends Model
     /** @use HasFactory<\Database\Factories\SchoolClassFactory> */
     protected $table = 'classes';
     protected $guarded = [];
+    
+    protected $casts = [
+        'is_graduated' => 'boolean',
+        'graduated_at' => 'datetime',
+    ];
 
     public function school()
     {

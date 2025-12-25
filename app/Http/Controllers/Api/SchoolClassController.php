@@ -79,4 +79,28 @@ class SchoolClassController extends Controller
         $teachers = User::where('role', 'teacher')->select('id', 'name', 'email')->get();
         return response()->json($teachers);
     }
+
+    /**
+     * Toggle graduated status of a class
+     */
+    public function toggleGraduated(Request $request, $id)
+    {
+        if (!in_array($request->user()->role, ['system_admin', 'school_admin', 'admin'])) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        
+        $schoolClass = SchoolClass::findOrFail($id);
+        
+        $schoolClass->is_graduated = !$schoolClass->is_graduated;
+        $schoolClass->graduated_at = $schoolClass->is_graduated ? now() : null;
+        $schoolClass->save();
+        
+        $status = $schoolClass->is_graduated ? '已毕业' : '在读';
+        
+        return response()->json([
+            'message' => "班级 {$schoolClass->name} 状态已更新为: {$status}",
+            'is_graduated' => $schoolClass->is_graduated,
+            'graduated_at' => $schoolClass->graduated_at,
+        ]);
+    }
 }
