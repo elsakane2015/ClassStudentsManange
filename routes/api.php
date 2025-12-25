@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\SchoolClassController;
 use App\Http\Controllers\Api\OptionsController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PermissionController;
+use App\Http\Controllers\Api\AttendanceExportController;
 
 // Public routes
 Route::post('/auth/register', [AuthController::class, 'register']);
@@ -52,6 +53,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/attendance/stats', [AttendanceController::class, 'stats']); // Teacher Dashboard Stats
     Route::get('/attendance/overview', [AttendanceController::class, 'overview']); // Helper for hierarchical view
     Route::get('/attendance/details', [AttendanceController::class, 'details']); // Get detailed student list
+    Route::get('/attendance/export', [AttendanceExportController::class, 'export']); // Export attendance to Excel
+    Route::get('/attendance/export-options', [AttendanceExportController::class, 'options']); // Get export options
     Route::get('/attendance/student-records', [AttendanceController::class, 'studentRecords']); // Get all records for a student
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/calendar', [AttendanceController::class, 'calendar']);

@@ -30,6 +30,7 @@ class PermissionSeeder extends Seeder
             ['name' => 'attendance.view_department', 'display_name' => '查看本系部考勤', 'category' => 'attendance'],
             ['name' => 'attendance.view_class', 'display_name' => '查看本班考勤', 'category' => 'attendance'],
             ['name' => 'attendance.edit', 'display_name' => '编辑考勤', 'category' => 'attendance'],
+            ['name' => 'attendance.export', 'display_name' => '导出考勤记录', 'category' => 'attendance'],
             
             // Leave Requests
             ['name' => 'leave_requests.view_all', 'display_name' => '查看所有请假', 'category' => 'leave'],
@@ -74,6 +75,7 @@ class PermissionSeeder extends Seeder
                 'permissions.manage' => ['read' => true, 'update' => true],
                 'attendance.view_all' => ['read' => true],
                 'attendance.edit' => ['update' => true],
+                'attendance.export' => ['read' => true],
                 'leave_requests.view_all' => ['read' => true],
                 'leave_requests.approve' => ['update' => true],
                 'students.view_all' => ['read' => true],
@@ -92,6 +94,7 @@ class PermissionSeeder extends Seeder
                 'users.edit' => ['update' => true],
                 'users.delete' => ['delete' => true],
                 'attendance.view_all' => ['read' => true],
+                'attendance.export' => ['read' => true],
                 'students.view_all' => ['read' => true],
                 'classes.view' => ['read' => true],
             ],
@@ -103,6 +106,7 @@ class PermissionSeeder extends Seeder
                 'users.edit' => ['update' => true],
                 'attendance.view_department' => ['read' => true],
                 'attendance.edit' => ['update' => true],
+                'attendance.export' => ['read' => true],
                 'leave_requests.view_department' => ['read' => true],
                 'leave_requests.approve' => ['update' => true],
                 'students.view_department' => ['read' => true],
@@ -110,10 +114,10 @@ class PermissionSeeder extends Seeder
                 'classes.view' => ['read' => true],
             ],
             
-            // Teacher
             'teacher' => [
                 'attendance.view_class' => ['read' => true],
                 'attendance.edit' => ['update' => true],
+                'attendance.export' => ['read' => true],
                 'leave_requests.view_class' => ['read' => true],
                 'leave_requests.approve' => ['update' => true],
                 'students.view_class' => ['read' => true],
