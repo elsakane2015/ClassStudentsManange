@@ -3,6 +3,7 @@ import Layout from '../../components/Layout';
 import axios from 'axios';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import useAuthStore from '../../store/authStore';
+import LeaveImageUploader from '../../components/LeaveImageUploader';
 
 export default function LeaveRequestForm() {
     const { user } = useAuthStore();
@@ -11,40 +12,42 @@ export default function LeaveRequestForm() {
 
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [periods, setPeriods] = useState([]);
+    const [imageSettings, setImageSettings] = useState({
+        enabled: false,
+        max_count: 3,
+        max_size_mb: 5,
+        allowed_formats: 'jpg,jpeg,png,gif,webp'
+    });
     const [formData, setFormData] = useState({
         type: '',
         start_date: searchParams.get('start') || '',
         end_date: searchParams.get('end') || '',
         half_day: '',
         reason: '',
-        details: {} // For additional input data
+        details: {},
+        images: []
     });
     const [error, setError] = useState(null);
     const [submitting, setSubmitting] = useState(false);
 
-    // Fetch leave types on mount
+    // Fetch leave types and image settings on mount
     useEffect(() => {
         const fetchLeaveTypes = async () => {
             try {
                 const response = await axios.get('/leave-types');
-                // Get student's gender from auth store
                 const studentGender = user?.student?.gender;
 
-                // Filter for active AND student-requestable types AND matching gender restriction
                 const studentTypes = response.data.filter(type => {
                     if (!type.is_active || !type.student_requestable) return false;
 
-                    // Check gender restriction
                     if (type.gender_restriction === 'all') return true;
                     if (type.gender_restriction === 'female' && studentGender === 'female') return true;
                     if (type.gender_restriction === 'male' && studentGender === 'male') return true;
 
-                    // If no match, don't show this type
                     return type.gender_restriction === 'all';
                 });
 
                 setLeaveTypes(studentTypes);
-                // Set default type to first available type
                 if (studentTypes.length > 0 && !formData.type) {
                     setFormData(prev => ({ ...prev, type: studentTypes[0].slug }));
                 }
@@ -52,7 +55,18 @@ export default function LeaveRequestForm() {
                 console.error('Failed to fetch leave types:', err);
             }
         };
+
+        const fetchImageSettings = async () => {
+            try {
+                const res = await axios.get('/leave-image/settings');
+                setImageSettings(res.data);
+            } catch (err) {
+                console.error('Failed to fetch image settings:', err);
+            }
+        };
+
         fetchLeaveTypes();
+        fetchImageSettings();
     }, [user]);
 
     // Fetch class periods for period_select types
@@ -97,7 +111,6 @@ export default function LeaveRequestForm() {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
 
-        // Reset details when type changes
         if (name === 'type') {
             setFormData(prev => ({ ...prev, [name]: value, details: {}, half_day: '' }));
         }
@@ -123,6 +136,10 @@ export default function LeaveRequestForm() {
         });
     };
 
+    const handleImagesChange = (images) => {
+        setFormData(prev => ({ ...prev, images }));
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setSubmitting(true);
@@ -132,7 +149,8 @@ export default function LeaveRequestForm() {
             await axios.post('/leave-requests', {
                 ...formData,
                 half_day: formData.half_day || null,
-                details: Object.keys(formData.details).length > 0 ? formData.details : null
+                details: Object.keys(formData.details).length > 0 ? formData.details : null,
+                images: formData.images.length > 0 ? formData.images : null
             });
             alert('请假申请提交成功！');
             navigate('/student/dashboard');
@@ -148,10 +166,8 @@ export default function LeaveRequestForm() {
         }
     };
 
-    // Get selected leave type and its configuration
     const selectedLeaveType = leaveTypes.find(type => type.slug === formData.type);
 
-    // Parse input_config
     const getInputConfig = () => {
         if (!selectedLeaveType?.input_config) return {};
         try {
@@ -167,7 +183,6 @@ export default function LeaveRequestForm() {
     const inputConfig = getInputConfig();
     const inputType = selectedLeaveType?.input_type || 'none';
 
-    // Render additional input fields based on leave type configuration
     const renderTypeSpecificInputs = () => {
         if (!selectedLeaveType || inputType === 'none') return null;
 
@@ -203,7 +218,6 @@ export default function LeaveRequestForm() {
                 );
 
             case 'period_select':
-                // Check if it has options (like morning_exercise/evening_exercise)
                 if (inputConfig.options && inputConfig.options.length > 0) {
                     return (
                         <div>
@@ -230,7 +244,6 @@ export default function LeaveRequestForm() {
                     );
                 }
 
-                // Otherwise show period checkboxes (for absent)
                 return (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">选择节次</label>
@@ -260,7 +273,6 @@ export default function LeaveRequestForm() {
                 const durationOptions = inputConfig.options || [];
                 if (durationOptions.length === 0) return null;
 
-                // Only show if same day (for date-range requests, duration doesn't make sense)
                 if (formData.start_date && formData.end_date && formData.start_date !== formData.end_date) return null;
 
                 return (
@@ -349,7 +361,6 @@ export default function LeaveRequestForm() {
                         </div>
                     </div>
 
-                    {/* Type-specific inputs based on leave type configuration */}
                     {renderTypeSpecificInputs()}
 
                     <div>
@@ -365,7 +376,16 @@ export default function LeaveRequestForm() {
                         ></textarea>
                     </div>
 
-                    {/* Attachment: Skipping for V1 */}
+                    {/* Image Upload */}
+                    {imageSettings.enabled && (
+                        <LeaveImageUploader
+                            images={formData.images}
+                            onChange={handleImagesChange}
+                            maxCount={imageSettings.max_count}
+                            maxSizeMb={imageSettings.max_size_mb}
+                            allowedFormats={imageSettings.allowed_formats}
+                        />
+                    )}
 
                     <div className="flex justify-end">
                         <button

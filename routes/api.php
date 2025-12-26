@@ -30,6 +30,7 @@ Route::match(['get', 'post'], '/wechat/callback/teacher/{teacherId}', [WechatCon
 Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
+    Route::post('/user/change-password', [AuthController::class, 'changePassword']);
 
     // Admin Settings
     Route::apiResource('semesters', SemesterController::class);
@@ -53,6 +54,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/leave-requests/{id}/approve', [LeaveRequestController::class, 'approve']);
     Route::post('/leave-requests/{id}/reject', [LeaveRequestController::class, 'reject']);
 
+    // Leave Image Upload
+    Route::get('/leave-image/settings', [\App\Http\Controllers\Api\LeaveImageController::class, 'settings']);
+    Route::put('/leave-image/settings', [\App\Http\Controllers\Api\LeaveImageController::class, 'updateSettings']);
+    Route::post('/leave-image/upload', [\App\Http\Controllers\Api\LeaveImageController::class, 'upload']);
+    Route::delete('/leave-image', [\App\Http\Controllers\Api\LeaveImageController::class, 'delete']);
+
     // Attendance
     // Attendance
     Route::get('/attendance/stats', [AttendanceController::class, 'stats']); // Teacher Dashboard Stats
@@ -61,6 +68,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/attendance/export', [AttendanceExportController::class, 'export']); // Export attendance to Excel
     Route::get('/attendance/export-options', [AttendanceExportController::class, 'options']); // Get export options
     Route::get('/attendance/student-records', [AttendanceController::class, 'studentRecords']); // Get all records for a student
+    Route::get('/attendance/calendar-summary', [AttendanceController::class, 'calendarSummary']); // Calendar summary for teacher dashboard
 
     // WeChat Push Management
     Route::get('/wechat/status', [WechatController::class, 'getWechatStatus']); // Get wechat menu visibility

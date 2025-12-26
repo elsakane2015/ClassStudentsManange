@@ -3,16 +3,86 @@ import axios from 'axios';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, addWeeks, subWeeks, differenceInCalendarWeeks, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import AttendanceUpdateModal from './AttendanceUpdateModal';
+import useAuthStore from '../store/authStore';
+
+// Status color mapping
+const statusColors = {
+    'leave': 'text-yellow-600',
+    'excused': 'text-yellow-600',
+    'absent': 'text-red-600',
+    'late': 'text-orange-500',
+    'early_leave': 'text-purple-500',
+};
+
+// Detail Modal Component
+function CalendarDetailModal({ isOpen, onClose, date, records }) {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
+                <div className="fixed inset-0 transition-opacity" onClick={onClose}>
+                    <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+                </div>
+                <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                    <div className="bg-white px-4 pt-5 pb-4 sm:p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-medium text-gray-900">
+                                {date && format(date, 'yyyy年M月d日')} 考勤记录
+                            </h3>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
+                                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div className="max-h-96 overflow-y-auto space-y-2">
+                            {records.length === 0 ? (
+                                <p className="text-gray-500 text-center py-4">暂无考勤记录</p>
+                            ) : (
+                                records.map((record, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded text-sm">
+                                        <span className={`font-medium ${statusColors[record.status] || 'text-gray-700'}`}>
+                                            {record.type}{record.option ? `(${record.option})` : ''}
+                                        </span>
+                                        <span className="text-gray-600">：</span>
+                                        <span className="text-gray-800">{record.student_no ? `${record.student_no} ` : ''}{record.student_name}</span>
+                                        <span className="text-gray-400 ml-auto">{record.time}</span>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                    <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button onClick={onClose} className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                            关闭
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 export default function AttendanceCalendar({ user }) {
+    const { hasPermission } = useAuthStore();
+    const canViewCalendarSummary = hasPermission('attendance.calendar_summary');
+
     const [viewMode, setViewMode] = useState('month'); // 'month' or 'week'
     const [currentDate, setCurrentDate] = useState(new Date());
     const [semester, setSemester] = useState(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
+    const [attendanceData, setAttendanceData] = useState({});
+    const [loadingData, setLoadingData] = useState(false);
 
     // Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedDate, setSelectedDate] = useState(null);
+
+    // Detail modal state
+    const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+    const [detailDate, setDetailDate] = useState(null);
+    const [detailRecords, setDetailRecords] = useState([]);
 
     useEffect(() => {
         // Fetch active semester to calculate "Week Number"
@@ -23,6 +93,27 @@ export default function AttendanceCalendar({ user }) {
             setSemester(current);
         });
     }, []);
+
+    // Fetch calendar attendance data when month changes (only if has permission)
+    useEffect(() => {
+        if (isCollapsed || !canViewCalendarSummary) return;
+
+        const fetchCalendarData = async () => {
+            setLoadingData(true);
+            try {
+                const month = format(currentDate, 'yyyy-MM');
+                const res = await axios.get('/attendance/calendar-summary', { params: { month } });
+                setAttendanceData(res.data || {});
+            } catch (error) {
+                console.error('Failed to fetch calendar data:', error);
+                setAttendanceData({});
+            } finally {
+                setLoadingData(false);
+            }
+        };
+
+        fetchCalendarData();
+    }, [currentDate, isCollapsed, canViewCalendarSummary]);
 
     const getSchoolWeekCheck = (date) => {
         if (!semester) return '';
@@ -70,6 +161,13 @@ export default function AttendanceCalendar({ user }) {
         setIsModalOpen(true);
     };
 
+    const handleShowMore = (day, records, e) => {
+        e.stopPropagation();
+        setDetailDate(day);
+        setDetailRecords(records);
+        setIsDetailModalOpen(true);
+    };
+
     const next = () => {
         if (viewMode === 'month') setCurrentDate(addMonths(currentDate, 1));
         else setCurrentDate(addWeeks(currentDate, 1));
@@ -97,6 +195,42 @@ export default function AttendanceCalendar({ user }) {
                     <button onClick={() => setViewMode('month')} className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${viewMode === 'month' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>月视图</button>
                     <button onClick={() => setViewMode('week')} className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${viewMode === 'week' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>周视图</button>
                 </div>
+            </div>
+        );
+    };
+
+    // Render attendance records in a cell
+    const renderCellRecords = (day) => {
+        if (!canViewCalendarSummary) return null;
+
+        const dateKey = format(day, 'yyyy-MM-dd');
+        const records = attendanceData[dateKey] || [];
+
+        if (records.length === 0) return null;
+
+        const maxDisplay = 3;
+        const displayRecords = records.slice(0, maxDisplay);
+        const remaining = records.length - maxDisplay;
+
+        return (
+            <div className="mt-1 space-y-0.5">
+                {displayRecords.map((record, idx) => (
+                    <div
+                        key={idx}
+                        className={`text-[10px] leading-tight truncate ${statusColors[record.status] || 'text-gray-600'}`}
+                        title={`${record.type}${record.option ? `(${record.option})` : ''}: ${record.student_name} ${record.time}`}
+                    >
+                        {record.type}{record.option ? `(${record.option})` : ''}: {record.student_name}
+                    </div>
+                ))}
+                {remaining > 0 && (
+                    <button
+                        onClick={(e) => handleShowMore(day, records, e)}
+                        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium"
+                    >
+                        更多 (+{remaining})
+                    </button>
+                )}
             </div>
         );
     };
@@ -157,17 +291,20 @@ export default function AttendanceCalendar({ user }) {
                                 const schoolWeek = getSchoolWeekCheck(monday);
 
                                 return (
-                                    <div key={weekIdx} className="grid grid-cols-[auto_repeat(7,1fr)] min-h-[6rem]">
+                                    <div key={weekIdx} className="grid grid-cols-[auto_repeat(7,1fr)] min-h-[5rem]">
                                         {/* Sidebar Week Number */}
                                         <div className="w-16 flex items-center justify-center p-2 bg-gray-50 border-r border-b border-gray-100 text-sm font-bold text-gray-400">
                                             {schoolWeek}
                                         </div>
                                         {weekDays.map(day => {
                                             const holiday = isHoliday(day);
+                                            const dateKey = format(day, 'yyyy-MM-dd');
+                                            const hasRecords = attendanceData[dateKey]?.length > 0;
+
                                             return (
                                                 <div
                                                     key={day.toISOString()}
-                                                    className={`relative border-b border-r border-gray-100 p-2 cursor-pointer transition-colors hover:bg-indigo-50 ${!isSameMonth(day, currentDate) ? 'bg-gray-50/50 text-gray-400' : holiday ? 'bg-red-100 text-red-600' : 'bg-white'}`}
+                                                    className={`relative border-b border-r border-gray-100 p-1 cursor-pointer transition-colors hover:bg-indigo-50 overflow-hidden ${!isSameMonth(day, currentDate) ? 'bg-gray-50/50 text-gray-400' : holiday ? 'bg-red-100 text-red-600' : 'bg-white'}`}
                                                     onClick={() => handleDateClick(day)}
                                                     title={holiday ? '节假日' : ''}
                                                 >
@@ -177,7 +314,7 @@ export default function AttendanceCalendar({ user }) {
                                                         </span>
                                                         {holiday && <span className="text-xs text-red-400">休</span>}
                                                     </div>
-                                                    {/* Optional: Show dot or status summary if we had that data loaded */}
+                                                    {renderCellRecords(day)}
                                                 </div>
                                             );
                                         })}
@@ -197,6 +334,13 @@ export default function AttendanceCalendar({ user }) {
                     user={user}
                 />
             )}
+
+            <CalendarDetailModal
+                isOpen={isDetailModalOpen}
+                onClose={() => setIsDetailModalOpen(false)}
+                date={detailDate}
+                records={detailRecords}
+            />
         </div>
     );
 }

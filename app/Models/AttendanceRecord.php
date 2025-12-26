@@ -14,6 +14,7 @@ class AttendanceRecord extends Model
         'date' => 'date',
         'informed_parent' => 'boolean',
         'details' => 'array',
+        'images' => 'array',
         'is_self_applied' => 'boolean',
         'approved_at' => 'datetime',
     ];

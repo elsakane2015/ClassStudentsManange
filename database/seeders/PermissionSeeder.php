@@ -31,6 +31,7 @@ class PermissionSeeder extends Seeder
             ['name' => 'attendance.view_class', 'display_name' => '查看本班考勤', 'category' => 'attendance'],
             ['name' => 'attendance.edit', 'display_name' => '编辑考勤', 'category' => 'attendance'],
             ['name' => 'attendance.export', 'display_name' => '导出考勤记录', 'category' => 'attendance'],
+            ['name' => 'attendance.calendar_summary', 'display_name' => '查看日历考勤摘要', 'category' => 'attendance'],
             
             // Leave Requests
             ['name' => 'leave_requests.view_all', 'display_name' => '查看所有请假', 'category' => 'leave'],
@@ -44,6 +45,9 @@ class PermissionSeeder extends Seeder
             ['name' => 'students.view_class', 'display_name' => '查看本班学生', 'category' => 'student'],
             ['name' => 'students.edit', 'display_name' => '编辑学生信息', 'category' => 'student'],
             ['name' => 'students.assign_manager', 'display_name' => '指定学生管理员', 'category' => 'student'],
+            
+            // Roll Call Management
+            ['name' => 'roll_calls.manage', 'display_name' => '管理点名', 'category' => 'roll_call'],
             
             // Class Management
             ['name' => 'classes.view', 'display_name' => '查看班级', 'category' => 'class'],
@@ -107,6 +111,8 @@ class PermissionSeeder extends Seeder
                 'attendance.view_department' => ['read' => true],
                 'attendance.edit' => ['update' => true],
                 'attendance.export' => ['read' => true],
+                'attendance.calendar_summary' => ['read' => true],
+                'roll_calls.manage' => ['read' => true, 'create' => true, 'update' => true],
                 'leave_requests.view_department' => ['read' => true],
                 'leave_requests.approve' => ['update' => true],
                 'students.view_department' => ['read' => true],
@@ -118,6 +124,8 @@ class PermissionSeeder extends Seeder
                 'attendance.view_class' => ['read' => true],
                 'attendance.edit' => ['update' => true],
                 'attendance.export' => ['read' => true],
+                'attendance.calendar_summary' => ['read' => true],
+                'roll_calls.manage' => ['read' => true, 'create' => true, 'update' => true],
                 'leave_requests.view_class' => ['read' => true],
                 'leave_requests.approve' => ['update' => true],
                 'students.view_class' => ['read' => true],

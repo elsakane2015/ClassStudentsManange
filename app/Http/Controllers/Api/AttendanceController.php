@@ -92,7 +92,8 @@ class AttendanceController extends Controller
         if ($user->role === 'teacher' || $user->role === 'manager') {
              $pendingQuery->whereIn('class_id', $classIds);
         }
-        $pendingRequests = $pendingQuery->distinct('student_id', 'date', 'period_id')->count();
+        // Count unique pending requests (by student_id + date combination)
+        $pendingRequests = $pendingQuery->selectRaw('COUNT(DISTINCT student_id, date) as count')->value('count') ?? 0;
 
         // Efficient breakdown query
         $attendanceStats = $attendanceQuery->clone()
@@ -494,6 +495,125 @@ class AttendanceController extends Controller
         }
 
         return response()->json($query->get());
+    }
+
+    /**
+     * Get calendar summary for teacher dashboard
+     * Returns attendance records grouped by date for calendar display
+     */
+    public function calendarSummary(Request $request)
+    {
+        $user = $request->user();
+        
+        // Only teachers and admins can access
+        if (!in_array($user->role, ['teacher', 'system_admin', 'school_admin', 'admin', 'department_manager', 'manager'])) {
+            return response()->json(['error' => '无权限'], 403);
+        }
+        
+        $month = $request->input('month', now()->format('Y-m'));
+        
+        // Parse month to get date range
+        try {
+            $startDate = \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+            $endDate = $startDate->copy()->endOfMonth();
+        } catch (\Exception $e) {
+            return response()->json(['error' => '无效的月份格式'], 400);
+        }
+        
+        // Get class IDs based on role
+        if ($user->role === 'teacher') {
+            $classIds = $user->teacherClasses->where('is_graduated', false)->pluck('id');
+        } elseif (in_array($user->role, ['department_manager', 'manager'])) {
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)
+                ->where('is_graduated', false)->pluck('id');
+        } else {
+            $classIds = \App\Models\SchoolClass::where('is_graduated', false)->pluck('id');
+        }
+        
+        if ($classIds->isEmpty()) {
+            return response()->json([]);
+        }
+        
+        // Fetch attendance records for the month
+        $records = AttendanceRecord::whereIn('class_id', $classIds)
+            ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
+            ->whereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave'])
+            ->with(['student.user', 'leaveType', 'period'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+        
+        // Group by date and format for calendar display
+        $result = [];
+        $leaveTypes = \App\Models\LeaveType::where('is_active', true)->get()->keyBy('id');
+        
+        foreach ($records as $record) {
+            // Ensure date is formatted as string for array key
+            $dateKey = $record->date instanceof \Carbon\Carbon 
+                ? $record->date->format('Y-m-d') 
+                : (is_string($record->date) ? $record->date : (string)$record->date);
+            
+            if (!isset($result[$dateKey])) {
+                $result[$dateKey] = [];
+            }
+            
+            // Get type label
+            $typeLabel = '未知';
+            if ($record->status === 'late') {
+                $typeLabel = '迟到';
+            } elseif ($record->status === 'early_leave') {
+                $typeLabel = '早退';
+            } elseif ($record->status === 'absent') {
+                $typeLabel = '旷课';
+            } elseif ($record->leaveType) {
+                $typeLabel = $record->leaveType->name;
+            } elseif ($record->leave_type_id && isset($leaveTypes[$record->leave_type_id])) {
+                $typeLabel = $leaveTypes[$record->leave_type_id]->name;
+            }
+            
+            // Get time option label
+            $optionLabel = '';
+            $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+            
+            if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
+                $optionLabel = $details['roll_call_type'];
+            } elseif (isset($details['option']) && $record->leaveType && $record->leaveType->input_config) {
+                $config = is_string($record->leaveType->input_config) 
+                    ? json_decode($record->leaveType->input_config, true) 
+                    : $record->leaveType->input_config;
+                
+                if (isset($config['options'])) {
+                    foreach ($config['options'] as $opt) {
+                        $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
+                        $optLabel = is_array($opt) ? ($opt['label'] ?? $optKey) : $optKey;
+                        if ($optKey === $details['option']) {
+                            $optionLabel = $optLabel;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Format time (with correct timezone)
+            $recordTime = '';
+            if ($record->source_type === 'roll_call' && isset($details['roll_call_time'])) {
+                $recordTime = $details['roll_call_time'];
+            } elseif ($record->created_at) {
+                $recordTime = $record->created_at->setTimezone('Asia/Shanghai')->format('H:i');
+            }
+            
+            $result[$dateKey][] = [
+                'id' => $record->id,
+                'type' => $typeLabel,
+                'option' => $optionLabel,
+                'student_name' => $record->student?->user?->name ?? '未知学生',
+                'student_no' => $record->student?->student_no ?? '',
+                'time' => $recordTime,
+                'status' => $record->status,
+            ];
+        }
+        
+        return response()->json($result);
     }
     
     public function calendar(Request $request) 

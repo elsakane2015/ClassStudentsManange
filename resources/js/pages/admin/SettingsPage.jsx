@@ -5,6 +5,7 @@ import { format, addWeeks, startOfWeek, endOfWeek, eachDayOfInterval, isSameMont
 import { zhCN } from 'date-fns/locale';
 import { PlusIcon, TrashIcon, PencilIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import WechatSettings from './WechatSettings';
+import LeaveImageSettings from './LeaveImageSettings';
 
 // Calendar Component
 import { differenceInCalendarWeeks } from 'date-fns'; // Ensure this is imported
@@ -639,6 +640,7 @@ export default function SettingsPage() {
                                 <NavButton id="departments" label="系部管理" />
                                 <NavButton id="classes" label="班级管理" />
                                 <NavButton id="leaveTypes" label="请假类型" />
+                                <NavButton id="leaveImages" label="请假图片" />
                                 <NavButton id="timeSlots" label="时段管理" />
                                 <NavButton id="attendance" label="考勤规则" />
                                 <NavButton id="wechat" label="微信推送" />
@@ -1103,6 +1105,11 @@ export default function SettingsPage() {
                                         </div>
                                     </form>
                                 </div>
+                            )}
+
+                            {/* LEAVE IMAGE SETTINGS */}
+                            {activeTab === 'leaveImages' && (
+                                <LeaveImageSettings />
                             )}
 
                             {/* WECHAT PUSH */}

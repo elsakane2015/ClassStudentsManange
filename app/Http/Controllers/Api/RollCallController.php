@@ -25,7 +25,7 @@ class RollCallController extends Controller
         $classId = $request->query('class_id');
         $status = $request->query('status');
         $typeId = $request->query('type_id');
-        $scope = $request->query('scope', 'today'); // today, month, semester
+        $scope = $request->query('scope', 'today'); // today, week, month, semester
         
         $query = RollCall::with(['rollCallType', 'creator', 'class']);
 
@@ -33,10 +33,22 @@ class RollCallController extends Controller
         if ($user->role === 'teacher') {
             $classIds = $user->teacherClasses->pluck('id');
             $query->whereIn('class_id', $classId ? [$classId] : $classIds);
+        } elseif ($user->role === 'department_manager') {
+            // Department manager sees all classes in their departments
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)
+                ->where('is_graduated', false)
+                ->pluck('id');
+            $query->whereIn('class_id', $classId ? [$classId] : $classIds);
         } elseif ($user->role === 'student' && $user->student) {
             // Roll call admin only sees their own created
             $query->where('created_by', $user->id);
-        } elseif (!in_array($user->role, ['admin', 'system_admin'])) {
+        } elseif (in_array($user->role, ['admin', 'system_admin', 'school_admin'])) {
+            // Admin can see all, filter by class_id if provided
+            if ($classId) {
+                $query->where('class_id', $classId);
+            }
+        } else {
             return response()->json([]);
         }
 
@@ -52,6 +64,11 @@ class RollCallController extends Controller
         $now = Carbon::now();
         if ($scope === 'today') {
             $query->whereDate('roll_call_time', $now->toDateString());
+        } elseif ($scope === 'week') {
+            $query->whereBetween('roll_call_time', [
+                $now->copy()->startOfWeek(),
+                $now->copy()->endOfWeek()
+            ]);
         } elseif ($scope === 'month') {
             $query->whereMonth('roll_call_time', $now->month)
                   ->whereYear('roll_call_time', $now->year);
@@ -92,11 +109,28 @@ class RollCallController extends Controller
         $classId = $request->query('class_id');
         $scope = $request->query('scope', 'today');
         
-        if ($user->role !== 'teacher') {
+        // Get class IDs based on user role
+        $classIds = [];
+        
+        if ($user->role === 'teacher') {
+            $classIds = $classId ? [$classId] : $user->teacherClasses->pluck('id')->toArray();
+        } elseif ($user->role === 'department_manager') {
+            // Department manager sees all classes in their departments
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)
+                ->where('is_graduated', false)
+                ->pluck('id')->toArray();
+        } elseif (in_array($user->role, ['system_admin', 'school_admin', 'admin'])) {
+            // Admin sees all classes
+            $classIds = \App\Models\SchoolClass::where('is_graduated', false)
+                ->pluck('id')->toArray();
+        } else {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
-
-        $classIds = $classId ? [$classId] : $user->teacherClasses->pluck('id')->toArray();
+        
+        if (empty($classIds)) {
+            return response()->json([]);
+        }
         
         $query = RollCall::whereIn('class_id', $classIds)
             ->where('status', 'completed');
@@ -105,6 +139,11 @@ class RollCallController extends Controller
         $now = Carbon::now();
         if ($scope === 'today') {
             $query->whereDate('roll_call_time', $now->toDateString());
+        } elseif ($scope === 'week') {
+            $query->whereBetween('roll_call_time', [
+                $now->copy()->startOfWeek(),
+                $now->copy()->endOfWeek()
+            ]);
         } elseif ($scope === 'month') {
             $query->whereMonth('roll_call_time', $now->month)
                   ->whereYear('roll_call_time', $now->year);

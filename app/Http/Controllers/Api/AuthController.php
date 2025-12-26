@@ -104,4 +104,33 @@ class AuthController extends Controller
             'permissions' => $user->getPermissions()
         ]);
     }
+
+    /**
+     * Change password for authenticated user
+     */
+    public function changePassword(Request $request)
+    {
+        $request->validate([
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|min:6|confirmed',
+        ], [
+            'current_password.required' => '请输入当前密码',
+            'new_password.required' => '请输入新密码',
+            'new_password.min' => '新密码至少需要6位',
+            'new_password.confirmed' => '两次输入的新密码不一致',
+        ]);
+
+        $user = $request->user();
+
+        // Verify current password
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json(['error' => '当前密码错误'], 422);
+        }
+
+        // Update password
+        $user->password = Hash::make($request->new_password);
+        $user->save();
+
+        return response()->json(['message' => '密码修改成功']);
+    }
 }

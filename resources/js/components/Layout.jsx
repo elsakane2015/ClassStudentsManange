@@ -1,11 +1,12 @@
 import React, { Fragment, useState, useEffect } from 'react';
 import { Disclosure, Menu, Transition } from '@headlessui/react';
-import { Bars3Icon, XMarkIcon, BellIcon } from '@heroicons/react/24/outline';
+import { Bars3Icon, XMarkIcon, BellIcon, KeyIcon, ArrowRightOnRectangleIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import { authService } from '../services/auth';
 import clsx from 'clsx';
 import axios from 'axios';
+import ChangePasswordModal from './ChangePasswordModal';
 
 function classNames(...classes) {
     return classes.filter(Boolean).join(' ');
@@ -18,6 +19,8 @@ export default function Layout({ children }) {
 
     // WeChat menu visibility state
     const [showWechatMenu, setShowWechatMenu] = useState(false);
+    // Change password modal state
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
 
     useEffect(() => {
         // Fetch wechat status only for teachers
@@ -103,13 +106,53 @@ export default function Layout({ children }) {
                                 </div>
                                 <div className="hidden md:block">
                                     <div className="ml-4 flex items-center md:ml-6">
-                                        <span className="text-indigo-200 text-sm mr-4">你好, {user?.name}</span>
-                                        <button
-                                            onClick={handleLogout}
-                                            className="text-white text-sm hover:text-indigo-200"
-                                        >
-                                            退出登录
-                                        </button>
+                                        {/* User Dropdown Menu */}
+                                        <Menu as="div" className="relative">
+                                            <Menu.Button className="flex items-center gap-1 text-indigo-200 hover:text-white text-sm transition-colors">
+                                                <span>你好, {user?.name}</span>
+                                                <ChevronDownIcon className="h-4 w-4" />
+                                            </Menu.Button>
+                                            <Transition
+                                                as={Fragment}
+                                                enter="transition ease-out duration-100"
+                                                enterFrom="transform opacity-0 scale-95"
+                                                enterTo="transform opacity-100 scale-100"
+                                                leave="transition ease-in duration-75"
+                                                leaveFrom="transform opacity-100 scale-100"
+                                                leaveTo="transform opacity-0 scale-95"
+                                            >
+                                                <Menu.Items className="absolute right-0 z-10 mt-2 w-40 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                                                    <Menu.Item>
+                                                        {({ active }) => (
+                                                            <button
+                                                                onClick={() => setShowPasswordModal(true)}
+                                                                className={classNames(
+                                                                    active ? 'bg-gray-100' : '',
+                                                                    'flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700'
+                                                                )}
+                                                            >
+                                                                <KeyIcon className="h-4 w-4" />
+                                                                修改密码
+                                                            </button>
+                                                        )}
+                                                    </Menu.Item>
+                                                    <Menu.Item>
+                                                        {({ active }) => (
+                                                            <button
+                                                                onClick={handleLogout}
+                                                                className={classNames(
+                                                                    active ? 'bg-gray-100' : '',
+                                                                    'flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700'
+                                                                )}
+                                                            >
+                                                                <ArrowRightOnRectangleIcon className="h-4 w-4" />
+                                                                退出登录
+                                                            </button>
+                                                        )}
+                                                    </Menu.Item>
+                                                </Menu.Items>
+                                            </Transition>
+                                        </Menu>
                                     </div>
                                 </div>
                                 <div className="-mr-2 flex md:hidden">
@@ -144,9 +187,17 @@ export default function Layout({ children }) {
                                     </Link>
                                 ))}
                                 <button
-                                    onClick={handleLogout}
-                                    className="block w-full text-left rounded-md px-3 py-2 text-base font-medium text-white hover:bg-indigo-500 hover:bg-opacity-75"
+                                    onClick={() => setShowPasswordModal(true)}
+                                    className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-base font-medium text-white hover:bg-indigo-500 hover:bg-opacity-75"
                                 >
+                                    <KeyIcon className="h-5 w-5" />
+                                    修改密码
+                                </button>
+                                <button
+                                    onClick={handleLogout}
+                                    className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-base font-medium text-white hover:bg-indigo-500 hover:bg-opacity-75"
+                                >
+                                    <ArrowRightOnRectangleIcon className="h-5 w-5" />
                                     退出登录
                                 </button>
                             </div>
@@ -167,6 +218,12 @@ export default function Layout({ children }) {
                     {children}
                 </div>
             </main>
+
+            {/* Change Password Modal */}
+            <ChangePasswordModal
+                isOpen={showPasswordModal}
+                onClose={() => setShowPasswordModal(false)}
+            />
         </div>
     );
 }

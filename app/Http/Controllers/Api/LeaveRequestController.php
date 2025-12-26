@@ -83,6 +83,7 @@ class LeaveRequestController extends Controller
                 'half_day' => $first->details['option'] ?? null,
                 'half_day_label' => $this->getOptionLabel($first),
                 'reason' => $first->reason,
+                'images' => $first->images,
                 'status' => $first->approval_status ?? 'approved',
                 'approval_status' => $first->approval_status,
                 'created_at' => $first->created_at,
@@ -120,9 +121,12 @@ class LeaveRequestController extends Controller
             'half_day' => 'nullable|in:am,pm',
             'sessions' => 'nullable|array',
             'reason' => 'nullable|string',
+            'images' => 'nullable|array',
+            'images.*' => 'string',
         ]);
         
         $student = $user->student;
+        $images = $request->images ?? [];
         
         // Get leave type
         $leaveType = \App\Models\LeaveType::where('slug', $request->type)
@@ -184,6 +188,7 @@ class LeaveRequestController extends Controller
                             'status' => 'leave',
                             'leave_type_id' => $leaveType?->id,
                             'details' => !empty($details) ? $details : null,
+                            'images' => !empty($images) ? $images : null,
                             'is_self_applied' => true,
                             'approval_status' => 'pending',
                             'reason' => $request->reason,
@@ -201,6 +206,7 @@ class LeaveRequestController extends Controller
                         'status' => 'leave',
                         'leave_type_id' => $leaveType?->id,
                         'details' => !empty($details) ? $details : null,
+                        'images' => !empty($images) ? $images : null,
                         'is_self_applied' => true,
                         'approval_status' => 'pending',
                         'reason' => $request->reason,

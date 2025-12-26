@@ -129,7 +129,9 @@ export default function RollCallOperationPage() {
 
     const filteredRecords = records.filter(r => {
         const name = r.student?.user?.name || r.student?.name || '';
-        return name.toLowerCase().includes(searchTerm.toLowerCase());
+        const studentNo = r.student?.student_no || '';
+        const searchLower = searchTerm.toLowerCase();
+        return name.toLowerCase().includes(searchLower) || studentNo.toLowerCase().includes(searchLower);
     });
 
     // Stats
@@ -245,6 +247,8 @@ export default function RollCallOperationPage() {
                     <div className="divide-y divide-gray-200">
                         {filteredRecords.map(record => {
                             const studentName = record.student?.user?.name || record.student?.name || '未知学生';
+                            const studentNo = record.student?.student_no || '';
+                            const displayName = studentNo ? `${studentNo} ${studentName}` : studentName;
                             const isPresent = record.status === 'present';
                             const isOnLeave = record.status === 'on_leave';
                             const isAbsent = record.status === 'absent';
@@ -289,7 +293,7 @@ export default function RollCallOperationPage() {
                                             {studentName.charAt(0)}
                                         </div>
                                         <div>
-                                            <div className="font-medium text-gray-900">{studentName}</div>
+                                            <div className="font-medium text-gray-900">{displayName}</div>
                                             {isOnLeave && record.leave_detail && (
                                                 <div className="text-xs text-blue-600">{record.leave_detail}</div>
                                             )}

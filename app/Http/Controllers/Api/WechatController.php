@@ -365,60 +365,69 @@ class WechatController extends Controller
      */
     public function getManagerBindStatus(Request $request)
     {
-        $user = $request->user();
-        
-        // 检查是否为学生管理员（班级管理员或学生管理员）
-        $student = Student::where('user_id', $user->id)->first();
-        if (!$student || (!$student->is_class_admin && !$student->is_manager)) {
-            return response()->json(['enabled' => false, 'message' => '非班级管理员']);
-        }
+        try {
+            $user = $request->user();
+            
+            // 检查是否为学生管理员（班级管理员或学生管理员）
+            $student = Student::where('user_id', $user->id)->first();
+            if (!$student) {
+                return response()->json(['enabled' => false, 'message' => '非学生用户']);
+            }
+            
+            if (!$student->is_class_admin && !$student->is_manager) {
+                return response()->json(['enabled' => false, 'message' => '非班级管理员']);
+            }
 
-        // 检查权限
-        $managerBindEnabled = SystemSetting::get('wechat_manager_bind_enabled', '0') === '1';
-        if (!$managerBindEnabled) {
-            return response()->json(['enabled' => false, 'message' => '班级管理员绑定功能未开启']);
-        }
+            // 检查权限
+            $managerBindEnabled = SystemSetting::get('wechat_manager_bind_enabled', '0') === '1';
+            if (!$managerBindEnabled) {
+                return response()->json(['enabled' => false, 'message' => '班级管理员绑定功能未开启']);
+            }
 
-        // 获取班主任
-        $teacherClass = $student->schoolClass;
-        if (!$teacherClass) {
-            return response()->json(['enabled' => false, 'message' => '未找到班级信息']);
-        }
+            // 获取班主任
+            $teacherClass = $student->schoolClass;
+            if (!$teacherClass) {
+                return response()->json(['enabled' => false, 'message' => '未找到班级信息']);
+            }
 
-        $teacher = $teacherClass->teachers->first();
-        if (!$teacher) {
-            return response()->json(['enabled' => false, 'message' => '班级未分配班主任']);
-        }
+            $teacher = $teacherClass->teacher;
+            if (!$teacher) {
+                return response()->json(['enabled' => false, 'message' => '班级未分配班主任']);
+            }
 
-        // 获取班主任的公众号配置
-        $config = WechatConfig::where('user_id', $teacher->id)
-            ->where('use_system', false)
-            ->where('is_verified', true)
-            ->first();
+            // 获取班主任的公众号配置
+            $config = WechatConfig::where('user_id', $teacher->id)
+                ->where('use_system', false)
+                ->where('is_verified', true)
+                ->first();
 
-        if (!$config) {
+            if (!$config) {
+                return response()->json([
+                    'enabled' => true,
+                    'can_bind' => false,
+                    'message' => '请提醒班主任配置自己的测试公众号',
+                ]);
+            }
+
+            // 检查我的绑定状态
+            $myBinding = WechatBinding::where('user_id', $user->id)
+                ->where('config_id', $config->id)
+                ->first();
+
             return response()->json([
                 'enabled' => true,
-                'can_bind' => false,
-                'message' => '请提醒班主任配置自己的测试公众号',
+                'can_bind' => true,
+                'teacher_name' => $teacher->name,
+                'config_id' => $config->id,
+                'my_binding' => $myBinding ? [
+                    'nickname' => $myBinding->nickname,
+                    'bound_at' => $myBinding->created_at->format('Y-m-d H:i'),
+                ] : null,
             ]);
+        } catch (\Exception $e) {
+            \Log::error('getManagerBindStatus error', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return response()->json(['enabled' => false, 'message' => '获取状态失败']);
         }
-
-        // 检查我的绑定状态
-        $myBinding = WechatBinding::where('user_id', $user->id)
-            ->where('config_id', $config->id)
-            ->first();
-
-        return response()->json([
-            'enabled' => true,
-            'can_bind' => true,
-            'teacher_name' => $teacher->name,
-            'config_id' => $config->id,
-            'my_binding' => $myBinding ? [
-                'nickname' => $myBinding->nickname,
-                'bound_at' => $myBinding->created_at->format('Y-m-d H:i'),
-            ] : null,
-        ]);
     }
 
     /**

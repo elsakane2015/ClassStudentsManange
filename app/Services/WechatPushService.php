@@ -34,44 +34,42 @@ class WechatPushService
         }
 
         // 获取班主任
-        $teachers = $class->teachers;
-        if ($teachers->isEmpty()) {
+        $teacher = $class->teacher;
+        if (!$teacher) {
             return ['error' => '班级未分配班主任'];
         }
 
-        foreach ($teachers as $teacher) {
-            // 获取班主任的公众号配置
-            $config = WechatConfig::where('user_id', $teacher->id)
-                ->where('is_verified', true)
-                ->first();
+        // 获取班主任的公众号配置
+        $config = WechatConfig::where('user_id', $teacher->id)
+            ->where('is_verified', true)
+            ->first();
 
-            if (!$config) {
-                continue;
-            }
+        if (!$config) {
+            return ['error' => '班主任未配置公众号'];
+        }
 
-            // 确定模板ID
-            $templateId = $config->use_system
-                ? SystemSetting::get('wechat_system_template_id')
-                : $config->template_id;
+        // 确定模板ID
+        $templateId = $config->use_system
+            ? SystemSetting::get('wechat_system_template_id')
+            : $config->template_id;
 
-            if (!$templateId) {
-                continue;
-            }
+        if (!$templateId) {
+            return ['error' => '未配置模板ID'];
+        }
 
-            // 获取需要推送的用户
-            $bindingsToNotify = WechatBinding::where('config_id', $config->id)->get();
+        // 获取需要推送的用户
+        $bindingsToNotify = WechatBinding::where('config_id', $config->id)->get();
 
-            foreach ($bindingsToNotify as $binding) {
-                $result = $this->sendTemplateMessage(
-                    $config,
-                    $binding,
-                    $templateId,
-                    $this->buildLeaveRequestData($attendanceRecord, $student, $class),
-                    'attendance_record',
-                    $attendanceRecord->id
-                );
-                $results[] = $result;
-            }
+        foreach ($bindingsToNotify as $binding) {
+            $result = $this->sendTemplateMessage(
+                $config,
+                $binding,
+                $templateId,
+                $this->buildLeaveRequestData($attendanceRecord, $student, $class),
+                'attendance_record',
+                $attendanceRecord->id
+            );
+            $results[] = $result;
         }
 
         return $results;
