@@ -1,10 +1,11 @@
-import React, { Fragment } from 'react';
+import React, { Fragment, useState, useEffect } from 'react';
 import { Disclosure, Menu, Transition } from '@headlessui/react';
 import { Bars3Icon, XMarkIcon, BellIcon } from '@heroicons/react/24/outline';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import { authService } from '../services/auth';
 import clsx from 'clsx';
+import axios from 'axios';
 
 function classNames(...classes) {
     return classes.filter(Boolean).join(' ');
@@ -14,6 +15,22 @@ export default function Layout({ children }) {
     const { user, logout, hasPermission } = useAuthStore();
     const location = useLocation();
     const navigate = useNavigate();
+
+    // WeChat menu visibility state
+    const [showWechatMenu, setShowWechatMenu] = useState(false);
+
+    useEffect(() => {
+        // Fetch wechat status only for teachers
+        if (user?.role === 'teacher') {
+            axios.get('/wechat/status')
+                .then(res => {
+                    setShowWechatMenu(res.data?.show_teacher_menu || false);
+                })
+                .catch(() => {
+                    setShowWechatMenu(false);
+                });
+        }
+    }, [user?.role]);
 
     const handleLogout = async () => {
         try {
@@ -48,6 +65,7 @@ export default function Layout({ children }) {
             ...(canApproveLeave ? [{ name: '请假审批', href: '/teacher/approvals' }] : []),
             { name: '学生管理', href: '/teacher/students' },
             ...(canManageRollCall ? [{ name: '点名', href: '/roll-call' }] : []),
+            ...(showWechatMenu ? [{ name: '微信推送', href: '/teacher/wechat' }] : []),
             ...(['system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user?.role) ? [{ name: '人员管理', href: '/admin/staff' }] : []),
             ...(['system_admin', 'school_admin', 'admin'].includes(user?.role) ? [{ name: '系统设置', href: '/admin/settings' }] : []),
             ...(['system_admin'].includes(user?.role) ? [{ name: '权限管理', href: '/admin/permissions' }] : [])

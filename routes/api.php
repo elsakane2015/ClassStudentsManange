@@ -15,11 +15,16 @@ use App\Http\Controllers\Api\OptionsController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\AttendanceExportController;
+use App\Http\Controllers\Api\WechatController;
 
 // Public routes
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::get('/attendance/auto-mark', [AttendanceController::class, 'triggerAutoMark']); // Trigger auto-mark manually (debug)
+
+// WeChat callback routes (no auth required)
+Route::match(['get', 'post'], '/wechat/callback/system', [WechatController::class, 'callbackSystem']);
+Route::match(['get', 'post'], '/wechat/callback/teacher/{teacherId}', [WechatController::class, 'callbackTeacher']);
 
 // Protected routes
 Route::middleware(['auth:sanctum'])->group(function () {
@@ -56,6 +61,21 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/attendance/export', [AttendanceExportController::class, 'export']); // Export attendance to Excel
     Route::get('/attendance/export-options', [AttendanceExportController::class, 'options']); // Get export options
     Route::get('/attendance/student-records', [AttendanceController::class, 'studentRecords']); // Get all records for a student
+
+    // WeChat Push Management
+    Route::get('/wechat/status', [WechatController::class, 'getWechatStatus']); // Get wechat menu visibility
+    Route::get('/wechat/settings', [WechatController::class, 'getSettings']); // Admin: get settings
+    Route::post('/wechat/settings', [WechatController::class, 'saveSettings']); // Admin: save settings
+    Route::get('/wechat/teacher-configs', [WechatController::class, 'getTeacherConfigs']); // Admin: get teacher config list
+    Route::get('/wechat/binding-list', [WechatController::class, 'getBindingList']); // Admin: get all bindings
+    Route::delete('/wechat/admin-unbind/{id}', [WechatController::class, 'adminUnbind']); // Admin: unbind user
+    Route::get('/wechat/teacher-config', [WechatController::class, 'getTeacherConfig']); // Teacher: get my config
+    Route::post('/wechat/teacher-config', [WechatController::class, 'saveTeacherConfig']); // Teacher: save my config
+    Route::post('/wechat/verify-config', [WechatController::class, 'verifyTeacherConfig']); // Teacher: verify config
+    Route::delete('/wechat/teacher-unbind/{bindingId}', [WechatController::class, 'teacherUnbind']); // Teacher: unbind user
+    Route::get('/wechat/manager-status', [WechatController::class, 'getManagerBindStatus']); // Manager: get bind status
+    Route::delete('/wechat/manager-unbind', [WechatController::class, 'managerUnbind']); // Manager: unbind self
+    Route::get('/wechat/qrcode', [WechatController::class, 'getBindQrcode']); // Get bind QR code
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/calendar', [AttendanceController::class, 'calendar']);
     Route::get('/student/stats', [AttendanceController::class, 'studentStats']); // Student's own stats

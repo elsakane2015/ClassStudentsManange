@@ -6,6 +6,7 @@ import { format } from 'date-fns';
 import useAuthStore from '../../store/authStore';
 import AttendanceUpdateModal from '../../components/AttendanceUpdateModal';
 import StudentCalendar from '../../components/StudentCalendar';
+import WechatBindCard from '../../components/WechatBindCard';
 
 export default function StudentDashboard() {
     const navigate = useNavigate();
@@ -348,6 +349,8 @@ export default function StudentDashboard() {
                             <div className="text-2xl font-bold">{stat.value}</div>
                         </div>
                     ))}
+                    {/* WeChat Bind Card for Class Admins */}
+                    {isClassAdmin && <WechatBindCard />}
                 </div>
 
                 {/* Content Area: Calendar + Sidebar */}

@@ -4,6 +4,7 @@ import axios from 'axios';
 import { format, addWeeks, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, startOfMonth, endOfMonth, parseISO, addDays, getDay } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { PlusIcon, TrashIcon, PencilIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import WechatSettings from './WechatSettings';
 
 // Calendar Component
 import { differenceInCalendarWeeks } from 'date-fns'; // Ensure this is imported
@@ -640,6 +641,7 @@ export default function SettingsPage() {
                                 <NavButton id="leaveTypes" label="请假类型" />
                                 <NavButton id="timeSlots" label="时段管理" />
                                 <NavButton id="attendance" label="考勤规则" />
+                                <NavButton id="wechat" label="微信推送" />
                             </nav>
                         </div>
 
@@ -1101,6 +1103,11 @@ export default function SettingsPage() {
                                         </div>
                                     </form>
                                 </div>
+                            )}
+
+                            {/* WECHAT PUSH */}
+                            {activeTab === 'wechat' && (
+                                <WechatSettings />
                             )}
                         </div>
                     </div>

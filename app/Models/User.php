@@ -157,4 +157,14 @@ class User extends Authenticatable
 
         return false;
     }
+
+    public function wechatConfig()
+    {
+        return $this->hasOne(WechatConfig::class);
+    }
+
+    public function wechatBinding()
+    {
+        return $this->hasOne(WechatBinding::class);
+    }
 }

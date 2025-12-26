@@ -19,6 +19,7 @@ import RollCallPage from './pages/teacher/RollCallPage';
 import RollCallOperationPage from './pages/teacher/RollCallOperationPage';
 import RollCallHistoryPage from './pages/teacher/RollCallHistoryPage';
 import RollCallAdminsPage from './pages/teacher/RollCallAdminsPage';
+import WechatPushPage from './pages/teacher/WechatPushPage';
 import SettingsPage from './pages/admin/SettingsPage';
 import StaffPage from './pages/admin/StaffPage';
 import PermissionsPage from './pages/admin/PermissionsPage';
@@ -88,6 +89,9 @@ function App() {
             <Route path="/roll-call/:id" element={<RequireAuth><RollCallOperationPage /></RequireAuth>} />
             <Route path="/roll-call/history" element={<RequireAuth><RollCallHistoryPage /></RequireAuth>} />
             <Route path="/roll-call/admins" element={<RequireAuth><RollCallAdminsPage /></RequireAuth>} />
+
+            {/* WeChat Push */}
+            <Route path="/teacher/wechat" element={<RequireAuth><WechatPushPage /></RequireAuth>} />
 
             <Route path="/admin/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
             <Route path="/admin/staff" element={<RequireAuth><StaffPage /></RequireAuth>} />

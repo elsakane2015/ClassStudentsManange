@@ -11,6 +11,7 @@
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "maatwebsite/excel": "^3.1",
+        "overtrue/laravel-wechat": "^7.4",
         "phpoffice/phpspreadsheet": "^1.30"
     },
     "require-dev": {

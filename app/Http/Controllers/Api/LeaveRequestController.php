@@ -218,6 +218,17 @@ class LeaveRequestController extends Controller
 
         // Return first record as the "request" representation
         $firstRecord = $createdRecords[0] ?? null;
+
+        // Trigger WeChat push notification
+        if ($firstRecord) {
+            try {
+                $pushService = app(\App\Services\WechatPushService::class);
+                $pushService->sendLeaveRequestNotification($firstRecord);
+            } catch (\Exception $e) {
+                // Log but don't fail the request
+                \Log::warning('WeChat push failed', ['error' => $e->getMessage()]);
+            }
+        }
         
         return response()->json([
             'id' => $firstRecord?->id,
