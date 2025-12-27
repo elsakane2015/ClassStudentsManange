@@ -8,8 +8,14 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // 为早操和晚操创建class_period记录
-        $schoolId = 1; // 假设school_id为1
+        // 获取第一个学校，如果不存在则跳过
+        $school = \App\Models\School::first();
+        if (!$school) {
+            // 学校不存在时跳过，等管理员在系统中添加
+            return;
+        }
+        
+        $schoolId = $school->id;
         
         // 检查是否已存在
         $morningExercise = \App\Models\ClassPeriod::where('name', '早操')->first();
