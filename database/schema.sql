@@ -1,7 +1,3 @@
-time="2025-12-27T10:51:10+08:00" level=warning msg="The \"WWWGROUP\" variable is not set. Defaulting to a blank string."
-time="2025-12-27T10:51:10+08:00" level=warning msg="The \"WWWUSER\" variable is not set. Defaulting to a blank string."
-mysqldump: [Warning] Using a password on the command line interface can be insecure.
-mysqldump: Error: 'Access denied; you need (at least one of) the PROCESS privilege(s) for this operation' when trying to dump tablespaces
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
