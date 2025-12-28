@@ -12,7 +12,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        //
+        // Redirect to install wizard if not installed
+        $middleware->web(append: [
+            \App\Http\Middleware\CheckInstalled::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //
