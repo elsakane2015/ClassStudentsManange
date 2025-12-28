@@ -90,7 +90,7 @@ class WechatPushService
             'keyword3' => ['value' => $leaveType->name ?? '未知'],
             'keyword4' => ['value' => $timeText],
             'keyword5' => ['value' => $record->reason ?? '无'],
-            'keyword6' => ['value' => $record->created_at->format('Y-m-d H:i')],
+            'keyword6' => ['value' => $record->created_at->setTimezone('Asia/Shanghai')->format('Y-m-d H:i')],
             'remark' => ['value' => '请及时登录系统审批'],
         ];
     }

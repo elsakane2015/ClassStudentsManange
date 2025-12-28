@@ -24,6 +24,7 @@ export default function TeacherDashboard() {
     const [semesters, setSemesters] = useState([]); // All semesters for dropdown
     const [selectedSemester, setSelectedSemester] = useState(''); // Selected semester ID (empty = current)
     const [exportModalOpen, setExportModalOpen] = useState(false); // Export modal state
+    const [statsExpanded, setStatsExpanded] = useState(true); // Stats section collapsed state
 
     // 详情Modal状态
     const [detailModal, setDetailModal] = useState({
@@ -336,215 +337,232 @@ export default function TeacherDashboard() {
         <Layout>
             {loading && !stats.total_students ? <div className="p-8 text-center text-gray-500">加载中...</div> : (
                 <>
-                    <div className="md:flex md:items-center md:justify-between mb-8">
-                        <div className="min-w-0 flex-1">
-                            <h2 className="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
-                                概览
-                            </h2>
-                        </div>
-                        <div className="mt-4 flex md:ml-4 md:mt-0 items-center space-x-3">
-                            {/* Scope Selector - Button Group Style */}
-                            {(() => {
-                                // Check if viewing a historical (non-current) semester
-                                const selectedSem = selectedSemester ? semesters.find(s => String(s.id) === selectedSemester) : null;
-                                const isHistorical = selectedSem && !selectedSem.is_current;
-
-                                return (
-                                    <div className="inline-flex rounded-md shadow-sm" role="group">
-                                        <button
-                                            type="button"
-                                            onClick={() => !isHistorical && setScope('today')}
-                                            disabled={isHistorical}
-                                            className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${scope === 'today'
-                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                                : isHistorical
-                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                                }`}
-                                        >
-                                            今日数据
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => !isHistorical && setScope('week')}
-                                            disabled={isHistorical}
-                                            className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'week'
-                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                                : isHistorical
-                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                                }`}
-                                        >
-                                            本周数据
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => !isHistorical && setScope('month')}
-                                            disabled={isHistorical}
-                                            className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'month'
-                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                                : isHistorical
-                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                                }`}
-                                        >
-                                            本月数据
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setScope('semester')}
-                                            className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${scope === 'semester'
-                                                ? 'bg-indigo-600 text-white border-indigo-600 z-10'
-                                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                                }`}
-                                        >
-                                            {isHistorical ? '学期数据' : '本学期数据'}
-                                        </button>
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Semester Selector */}
-                            {semesters.length > 0 && (
-                                <select
-                                    value={selectedSemester}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        setSelectedSemester(val);
-                                        // If selecting a non-current semester, force semester scope
-                                        const selected = semesters.find(s => String(s.id) === val);
-                                        if (selected && !selected.is_current) {
-                                            setScope('semester');
-                                        }
-                                    }}
-                                    className="ml-3 rounded-md border-gray-300 shadow-sm text-sm py-2 pl-3 pr-8 border bg-white focus:border-indigo-500 focus:ring-indigo-500"
+                    {/* 概览 - Collapsible (matching calendar style) */}
+                    <div className="bg-white rounded-lg shadow mb-8">
+                        <div
+                            className="flex justify-between items-center p-4 cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100"
+                            onClick={() => setStatsExpanded(!statsExpanded)}
+                        >
+                            <div className="flex items-center space-x-2">
+                                <svg
+                                    className={`w-5 h-5 text-gray-500 transition-transform ${statsExpanded ? 'rotate-90' : ''}`}
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
                                 >
-                                    {semesters.map(s => (
-                                        <option key={s.id} value={s.id}>
-                                            {s.name} {s.is_current && '(当前)'}
-                                        </option>
-                                    ))}
-                                </select>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Stats Grid */}
-                    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-                        {/* 1. Student Total - 分层显示 */}
-                        <StatCard
-                            title="学生总数"
-                            value={
-                                // 班主任: 班级/系部/全校
-                                stats.class_total_students !== null && stats.class_total_students !== undefined
-                                    ? `${stats.class_total_students}/${stats.department_total_students}/${stats.school_total_students}`
-                                    // 系部管理员: 系部/全校
-                                    : stats.department_total_students !== null && stats.department_total_students !== undefined
-                                        ? `${stats.department_total_students}/${stats.school_total_students}`
-                                        // 系统管理员: 全校
-                                        : stats.school_total_students || stats.total_students
-                            }
-                            subtitle={
-                                stats.class_total_students !== null && stats.class_total_students !== undefined
-                                    ? '班级/系部/全校'
-                                    : stats.department_total_students !== null && stats.department_total_students !== undefined
-                                        ? '系部/全校'
-                                        : null
-                            }
-                            icon={
-                                <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                                 </svg>
-                            }
-                            color="bg-indigo-500"
-                        />
+                                <h3 className="text-lg font-semibold text-gray-800">概览</h3>
+                            </div>
+                            <div className="flex items-center space-x-3" onClick={(e) => e.stopPropagation()}>
+                                {/* Scope Selector - Button Group Style */}
+                                {(() => {
+                                    // Check if viewing a historical (non-current) semester
+                                    const selectedSem = selectedSemester ? semesters.find(s => String(s.id) === selectedSemester) : null;
+                                    const isHistorical = selectedSem && !selectedSem.is_current;
 
-                        {/* 2. Pending Requests - 仅有审批权限的用户显示 */}
-                        {canApproveLeave && (
-                            <StatCard
-                                title="待审批"
-                                value={stats.pending_requests}
-                                icon={
-                                    <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                }
-                                color="bg-yellow-500"
-                                onClick={() => navigate('/teacher/approvals')}
-                            />
-                        )}
+                                    return (
+                                        <div className="inline-flex rounded-md shadow-sm" role="group">
+                                            <button
+                                                type="button"
+                                                onClick={() => !isHistorical && setScope('today')}
+                                                disabled={isHistorical}
+                                                className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${scope === 'today'
+                                                    ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                    : isHistorical
+                                                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                今日数据
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => !isHistorical && setScope('week')}
+                                                disabled={isHistorical}
+                                                className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'week'
+                                                    ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                    : isHistorical
+                                                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                本周数据
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => !isHistorical && setScope('month')}
+                                                disabled={isHistorical}
+                                                className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'month'
+                                                    ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                    : isHistorical
+                                                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                本月数据
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setScope('semester')}
+                                                className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${scope === 'semester'
+                                                    ? 'bg-indigo-600 text-white border-indigo-600 z-10'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                {isHistorical ? '学期数据' : '本学期数据'}
+                                            </button>
+                                        </div>
+                                    );
+                                })()}
 
-                        {/* Dynamic Leave Types (including Absent, Late, Early Leave if they are configured as leave types) */}
-                        {leaveTypes.map(type => {
-                            const count = stats.details?.leaves?.[type.name] || '0人/0次';
-                            // Map icons and colors based on name/slug if possible, or generic
-                            let color = 'bg-blue-400'; // Default for generic leave
-                            let iconPath = "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"; // Generic document icon
+                                {/* Semester Selector */}
+                                {semesters.length > 0 && (
+                                    <select
+                                        value={selectedSemester}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setSelectedSemester(val);
+                                            // If selecting a non-current semester, force semester scope
+                                            const selected = semesters.find(s => String(s.id) === val);
+                                            if (selected && !selected.is_current) {
+                                                setScope('semester');
+                                            }
+                                        }}
+                                        className="rounded-md border-gray-300 shadow-sm text-sm py-2 pl-3 pr-8 border bg-white focus:border-indigo-500 focus:ring-indigo-500"
+                                    >
+                                        {semesters.map(s => (
+                                            <option key={s.id} value={s.id}>
+                                                {s.name} {s.is_current && '(当前)'}
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
+                            </div>
+                        </div>
 
-                            if (type.name.includes('迟到')) {
-                                color = 'bg-yellow-500';
-                                iconPath = "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"; // Clock icon
-                            } else if (type.name.includes('早退')) {
-                                color = 'bg-orange-500';
-                                iconPath = "M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"; // Arrow left icon
-                            } else if (type.name.includes('缺勤') || type.name.includes('旷课')) {
-                                color = 'bg-red-500';
-                                iconPath = "M6 18L18 6M6 6l12 12"; // X icon
-                            } else if (type.name.includes('出勤')) { // If 'present' is also a leave type, though unlikely
-                                color = 'bg-green-500';
-                                iconPath = "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"; // Checkmark icon
-                            }
+                        {/* Stats Cards - Collapsible Content */}
+                        {statsExpanded && (
+                            <div className="p-4">
+                                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                                    {/* 1. Student Total - 分层显示 */}
+                                    <StatCard
+                                        title="学生总数"
+                                        value={
+                                            // 班主任: 班级/系部/全校
+                                            stats.class_total_students !== null && stats.class_total_students !== undefined
+                                                ? `${stats.class_total_students}/${stats.department_total_students}/${stats.school_total_students}`
+                                                // 系部管理员: 系部/全校
+                                                : stats.department_total_students !== null && stats.department_total_students !== undefined
+                                                    ? `${stats.department_total_students}/${stats.school_total_students}`
+                                                    // 系统管理员: 全校
+                                                    : stats.school_total_students || stats.total_students
+                                        }
+                                        subtitle={
+                                            stats.class_total_students !== null && stats.class_total_students !== undefined
+                                                ? '班级/系部/全校'
+                                                : stats.department_total_students !== null && stats.department_total_students !== undefined
+                                                    ? '系部/全校'
+                                                    : null
+                                        }
+                                        icon={
+                                            <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                            </svg>
+                                        }
+                                        color="bg-indigo-500"
+                                    />
 
-                            // 确定状态类型
-                            let statusType = 'leave';
-                            if (type.name.includes('迟到')) {
-                                statusType = 'late';
-                            } else if (type.name.includes('早退')) {
-                                statusType = 'early_leave';
-                            } else if (type.name.includes('缺勤') || type.name.includes('旷课')) {
-                                statusType = 'absent';
-                            }
+                                    {/* 2. Pending Requests - 仅有审批权限的用户显示 */}
+                                    {canApproveLeave && (
+                                        <StatCard
+                                            title="待审批"
+                                            value={stats.pending_requests}
+                                            icon={
+                                                <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                            }
+                                            color="bg-yellow-500"
+                                            onClick={() => navigate('/teacher/approvals')}
+                                        />
+                                    )}
 
-                            return (
-                                <StatCard
-                                    key={type.id}
-                                    title={`${scopeLabels[scope]}${type.name}`}
-                                    value={count}
-                                    icon={
-                                        <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={iconPath} />
-                                        </svg>
-                                    }
-                                    color={color}
-                                    onClick={(count && (typeof count === 'number' ? count > 0 : true)) ? () => handleStatCardClick(
-                                        `${scopeLabels[scope]}${type.name}`,
-                                        statusType,
-                                        statusType === 'leave' ? type.id : null
-                                    ) : null}
-                                />
-                            );
-                        })}
+                                    {/* Dynamic Leave Types (including Absent, Late, Early Leave if they are configured as leave types) */}
+                                    {leaveTypes.map(type => {
+                                        const count = stats.details?.leaves?.[type.name] || '0人/0次';
+                                        // Map icons and colors based on name/slug if possible, or generic
+                                        let color = 'bg-blue-400'; // Default for generic leave
+                                        let iconPath = "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"; // Generic document icon
 
-                        {/* 导出考勤卡片 */}
-                        {canExportAttendance && (
-                            <StatCard
-                                title="导出考勤"
-                                value={
-                                    <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                    </svg>
-                                }
-                                icon={
-                                    <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                }
-                                color="bg-emerald-500"
-                                subtitle="导出Excel"
-                                onClick={() => setExportModalOpen(true)}
-                            />
+                                        if (type.name.includes('迟到')) {
+                                            color = 'bg-yellow-500';
+                                            iconPath = "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"; // Clock icon
+                                        } else if (type.name.includes('早退')) {
+                                            color = 'bg-orange-500';
+                                            iconPath = "M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"; // Arrow left icon
+                                        } else if (type.name.includes('缺勤') || type.name.includes('旷课')) {
+                                            color = 'bg-red-500';
+                                            iconPath = "M6 18L18 6M6 6l12 12"; // X icon
+                                        } else if (type.name.includes('出勤')) { // If 'present' is also a leave type, though unlikely
+                                            color = 'bg-green-500';
+                                            iconPath = "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"; // Checkmark icon
+                                        }
+
+                                        // 确定状态类型
+                                        let statusType = 'leave';
+                                        if (type.name.includes('迟到')) {
+                                            statusType = 'late';
+                                        } else if (type.name.includes('早退')) {
+                                            statusType = 'early_leave';
+                                        } else if (type.name.includes('缺勤') || type.name.includes('旷课')) {
+                                            statusType = 'absent';
+                                        }
+
+                                        return (
+                                            <StatCard
+                                                key={type.id}
+                                                title={`${scopeLabels[scope]}${type.name}`}
+                                                value={count}
+                                                icon={
+                                                    <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={iconPath} />
+                                                    </svg>
+                                                }
+                                                color={color}
+                                                onClick={(count && (typeof count === 'number' ? count > 0 : true)) ? () => handleStatCardClick(
+                                                    `${scopeLabels[scope]}${type.name}`,
+                                                    statusType,
+                                                    statusType === 'leave' ? type.id : null
+                                                ) : null}
+                                            />
+                                        );
+                                    })}
+
+                                    {/* 导出考勤卡片 */}
+                                    {canExportAttendance && (
+                                        <StatCard
+                                            title="导出考勤"
+                                            value={
+                                                <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                                </svg>
+                                            }
+                                            icon={
+                                                <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                </svg>
+                                            }
+                                            color="bg-emerald-500"
+                                            subtitle="导出Excel"
+                                            onClick={() => setExportModalOpen(true)}
+                                        />
+                                    )}
+                                </div>
+                            </div>
                         )}
                     </div>
+
 
                     {/* Roll Call Stats Section - 仅有点名权限的用户显示 */}
                     {canManageRollCall && rollCallStats.length > 0 && (

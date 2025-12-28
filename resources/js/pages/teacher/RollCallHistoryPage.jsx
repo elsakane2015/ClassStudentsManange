@@ -285,75 +285,78 @@ export default function RollCallHistoryPage() {
                         </div>
                     ) : (
                         <>
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50">
-                                    <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">活动</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">班级</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">时间</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">点名员</th>
-                                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">出勤</th>
-                                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">状态</th>
-                                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                    {rollCalls.map(rc => (
-                                        <tr key={rc.id} className="hover:bg-gray-50">
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="font-medium text-gray-900">{rc.roll_call_type?.name}</div>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {rc.class?.name}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {format(new Date(rc.roll_call_time), 'MM-dd HH:mm')}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {rc.creator?.name || '-'}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-center">
-                                                <button
-                                                    onClick={() => showAbsentList(rc)}
-                                                    className="hover:bg-gray-100 px-2 py-1 rounded transition-colors cursor-pointer"
-                                                    title="点击查看缺勤名单"
-                                                >
-                                                    <span className="text-green-600">{rc.present_count}</span>
-                                                    <span className="text-gray-400 mx-1">/</span>
-                                                    <span className="text-gray-600">{rc.total_students}</span>
-                                                    {rc.on_leave_count > 0 && (
-                                                        <span className="text-blue-500 ml-1">(请假{rc.on_leave_count})</span>
-                                                    )}
-                                                </button>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-center">
-                                                {getStatusBadge(rc.status)}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-center">
-                                                <div className="flex items-center justify-center gap-2">
-                                                    <Link
-                                                        to={`/roll-call/${rc.id}`}
-                                                        className="text-indigo-600 hover:text-indigo-800"
-                                                        title="查看详情"
-                                                    >
-                                                        <EyeIcon className="h-5 w-5" />
-                                                    </Link>
-                                                    {/* Show delete button for teachers/admins, or for roll call admin who created it */}
-                                                    {(user?.role === 'teacher' || ['admin', 'system_admin', 'department_manager', 'school_admin'].includes(user?.role) || (user?.student?.is_roll_call_admin && rc.created_by === user?.id)) && (
-                                                        <button
-                                                            onClick={() => deleteRollCall(rc.id, rc.roll_call_type?.name)}
-                                                            className="text-red-500 hover:text-red-700"
-                                                            title="删除点名"
-                                                        >
-                                                            <TrashIcon className="h-5 w-5" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">活动</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">班级</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">时间</th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">点名员</th>
+                                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">出勤</th>
+                                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">状态</th>
+                                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {rollCalls.map(rc => (
+                                            <tr key={rc.id} className="hover:bg-gray-50">
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <div className="font-medium text-gray-900">{rc.roll_call_type?.name}</div>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    {rc.class?.name}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    {format(new Date(rc.roll_call_time), 'MM-dd HH:mm')}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    {rc.creator?.name || '-'}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-center">
+                                                    <button
+                                                        onClick={() => showAbsentList(rc)}
+                                                        className="hover:bg-gray-100 px-2 py-1 rounded transition-colors cursor-pointer"
+                                                        title="点击查看缺勤名单"
+                                                    >
+                                                        <span className="text-green-600">{rc.present_count}</span>
+                                                        <span className="text-gray-400 mx-1">/</span>
+                                                        <span className="text-gray-600">{rc.total_students}</span>
+                                                        {rc.on_leave_count > 0 && (
+                                                            <span className="text-blue-500 ml-1">(请假{rc.on_leave_count})</span>
+                                                        )}
+                                                    </button>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-center">
+                                                    {getStatusBadge(rc.status)}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-center">
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <Link
+                                                            to={`/roll-call/${rc.id}`}
+                                                            className="text-indigo-600 hover:text-indigo-800"
+                                                            title="查看详情"
+                                                        >
+                                                            <EyeIcon className="h-5 w-5" />
+                                                        </Link>
+                                                        {/* Show delete button for teachers/admins, or for roll call admin who created it */}
+                                                        {(user?.role === 'teacher' || ['admin', 'system_admin', 'department_manager', 'school_admin'].includes(user?.role) || (user?.student?.is_roll_call_admin && rc.created_by === user?.id)) && (
+                                                            <button
+                                                                onClick={() => deleteRollCall(rc.id, rc.roll_call_type?.name)}
+                                                                className="text-red-500 hover:text-red-700"
+                                                                title="删除点名"
+                                                            >
+                                                                <TrashIcon className="h-5 w-5" />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
 
                             {/* Pagination */}
                             {pagination.last_page > 1 && (

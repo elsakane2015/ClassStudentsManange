@@ -16,11 +16,21 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\AttendanceExportController;
 use App\Http\Controllers\Api\WechatController;
+use App\Http\Controllers\InstallController;
+
+// Installation routes (no auth required)
+Route::prefix('install')->group(function () {
+    Route::get('/check', [InstallController::class, 'checkInstalled']);
+    Route::get('/requirements', [InstallController::class, 'checkRequirements']);
+    Route::post('/test-database', [InstallController::class, 'testDatabase']);
+    Route::post('/run', [InstallController::class, 'install']);
+});
 
 // Public routes
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login', [AuthController::class, 'login']);
 Route::get('/attendance/auto-mark', [AttendanceController::class, 'triggerAutoMark']); // Trigger auto-mark manually (debug)
+
 
 // WeChat callback routes (no auth required)
 Route::match(['get', 'post'], '/wechat/callback/system', [WechatController::class, 'callbackSystem']);

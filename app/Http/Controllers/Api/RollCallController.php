@@ -362,7 +362,7 @@ class RollCallController extends Controller
     }
 
     /**
-     * Complete a roll call
+     * Complete a roll call (with batch records submission)
      */
     public function complete(Request $request, RollCall $rollCall)
     {
@@ -384,8 +384,34 @@ class RollCallController extends Controller
             }
         }
 
+        // Validate records if provided (new batch mode)
+        $validated = $request->validate([
+            'records' => 'nullable|array',
+            'records.*.student_id' => 'required_with:records|exists:students,id',
+            'records.*.status' => 'required_with:records|in:present,pending,on_leave,absent',
+            'records.*.marked_at' => 'nullable|date',
+        ]);
+
         DB::beginTransaction();
         try {
+            // If records are provided, update them first (batch mode from client)
+            if (!empty($validated['records'])) {
+                foreach ($validated['records'] as $recordData) {
+                    $record = RollCallRecord::where('roll_call_id', $rollCall->id)
+                        ->where('student_id', $recordData['student_id'])
+                        ->first();
+
+                    if ($record && $record->status !== 'on_leave') {
+                        // Only update if not on_leave (preserve leave status)
+                        $record->update([
+                            'status' => $recordData['status'],
+                            'marked_at' => $recordData['marked_at'] ? Carbon::parse($recordData['marked_at']) : null,
+                            'marked_by' => $recordData['status'] === 'present' ? $user->id : null,
+                        ]);
+                    }
+                }
+            }
+
             // Mark all pending as absent
             RollCallRecord::where('roll_call_id', $rollCall->id)
                 ->where('status', 'pending')
@@ -443,6 +469,7 @@ class RollCallController extends Controller
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
+
 
     /**
      * Cancel a roll call (teacher or roll call admin with modify permission)

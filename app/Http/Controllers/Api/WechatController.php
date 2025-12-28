@@ -661,8 +661,21 @@ class WechatController extends Controller
 
                 $nickname = $userInfo['nickname'] ?? null;
                 $headimgurl = $userInfo['headimgurl'] ?? null;
+                
+                // Log the response for debugging
+                Log::info('WeChat user info response', [
+                    'openid' => $openid,
+                    'subscribe' => $userInfo['subscribe'] ?? 'unknown',
+                    'nickname' => $nickname,
+                ]);
             } catch (\Exception $e) {
                 Log::warning('Get WeChat user info failed', ['error' => $e->getMessage()]);
+            }
+
+            // Fallback: use user name or openid prefix if nickname not available
+            if (empty($nickname)) {
+                $user = \App\Models\User::find($userId);
+                $nickname = $user?->name ?: ('微信用户_' . substr($openid, -6));
             }
 
             // 删除旧绑定
@@ -676,6 +689,7 @@ class WechatController extends Controller
                 'nickname' => $nickname,
                 'headimgurl' => $headimgurl,
             ]);
+
 
             Log::info('WeChat binding created', [
                 'user_id' => $userId,

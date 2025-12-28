@@ -38,27 +38,16 @@ export default function RollCallOperationPage() {
         }
     };
 
-    const toggleStudent = async (studentId, isPresent) => {
-        setSaving(true);
-        try {
-            await axios.post(`/roll-calls/${id}/mark`, {
-                student_ids: [studentId],
-                is_present: isPresent,
-            });
-            // Update local state
-            setRecords(prev => prev.map(r =>
-                r.student_id === studentId
-                    ? { ...r, status: isPresent ? 'present' : 'pending', marked_at: isPresent ? new Date().toISOString() : null }
-                    : r
-            ));
-        } catch (err) {
-            alert('标记失败: ' + (err.response?.data?.error || err.message));
-        } finally {
-            setSaving(false);
-        }
+    // Toggle student - only update local state (no network request)
+    const toggleStudent = (studentId, isPresent) => {
+        setRecords(prev => prev.map(r =>
+            r.student_id === studentId
+                ? { ...r, status: isPresent ? 'present' : 'pending', marked_at: isPresent ? new Date().toISOString() : null }
+                : r
+        ));
     };
 
-    // Update record status for completed roll calls
+    // Update record status for completed roll calls (this still needs to save immediately)
     const updateRecordStatus = async (recordId, newStatus) => {
         setSaving(true);
         try {
@@ -79,35 +68,35 @@ export default function RollCallOperationPage() {
         }
     };
 
-    const markAllPresent = async () => {
-        const pendingStudentIds = records
-            .filter(r => r.status === 'pending')
-            .map(r => r.student_id);
-
-        if (pendingStudentIds.length === 0) return;
-
-        setSaving(true);
-        try {
-            await axios.post(`/roll-calls/${id}/mark`, {
-                student_ids: pendingStudentIds,
-                is_present: true,
-            });
-            setRecords(prev => prev.map(r =>
-                r.status === 'pending'
-                    ? { ...r, status: 'present', marked_at: new Date().toISOString() }
-                    : r
-            ));
-        } catch (err) {
-            alert('批量标记失败: ' + (err.response?.data?.error || err.message));
-        } finally {
-            setSaving(false);
-        }
+    // Mark all pending students as present - only update local state
+    const markAllPresent = () => {
+        setRecords(prev => prev.map(r =>
+            r.status === 'pending'
+                ? { ...r, status: 'present', marked_at: new Date().toISOString() }
+                : r
+        ));
     };
 
+    // Complete roll call - submit all records to backend
     const completeRollCall = async () => {
+        // Check network connectivity
+        if (!navigator.onLine) {
+            alert('网络连接已断开，请连接网络后再试');
+            return;
+        }
+
         setSaving(true);
         try {
-            await axios.post(`/roll-calls/${id}/complete`);
+            // Prepare records data for submission
+            const recordsData = records.map(r => ({
+                student_id: r.student_id,
+                status: r.status,
+                marked_at: r.marked_at,
+            }));
+
+            await axios.post(`/roll-calls/${id}/complete`, {
+                records: recordsData
+            });
             navigate('/roll-call');
         } catch (err) {
             alert('完成失败: ' + (err.response?.data?.error || err.message));
@@ -115,6 +104,7 @@ export default function RollCallOperationPage() {
             setSaving(false);
         }
     };
+
 
     const cancelRollCall = async () => {
         if (!confirm('确定要取消这次点名吗？')) return;

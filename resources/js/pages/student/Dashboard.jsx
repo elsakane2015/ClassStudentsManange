@@ -20,6 +20,7 @@ export default function StudentDashboard() {
     const [loading, setLoading] = useState(true);
     const [scope, setScope] = useState('month'); // today, month, semester
     const [detailModal, setDetailModal] = useState({ isOpen: false, title: '', records: [] });
+    const [statsExpanded, setStatsExpanded] = useState(true); // Stats section collapsed state
 
     useEffect(() => {
         const init = async () => {
@@ -289,69 +290,91 @@ export default function StudentDashboard() {
     return (
         <Layout>
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                {/* Header with Scope Selector */}
-                <div className="lg:col-span-4 flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold">我的记录</h2>
-                    {/* Scope Selector */}
-                    <div className="inline-flex rounded-md shadow-sm" role="group">
-                        <button
-                            type="button"
-                            onClick={() => setScope('today')}
-                            className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${scope === 'today'
-                                ? 'bg-indigo-600 text-white border-indigo-600'
-                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                }`}
-                        >
-                            今日
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setScope('month')}
-                            className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'month'
-                                ? 'bg-indigo-600 text-white border-indigo-600'
-                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                }`}
-                        >
-                            本月
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setScope('semester')}
-                            className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${scope === 'semester'
-                                ? 'bg-indigo-600 text-white border-indigo-600'
-                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                }`}
-                        >
-                            本学期
-                        </button>
+                {/* Header with Scope Selector - Collapsible (matching calendar style) */}
+                <div className="lg:col-span-4 bg-white rounded-lg shadow">
+                    <div
+                        className="flex justify-between items-center p-4 cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100"
+                        onClick={() => setStatsExpanded(!statsExpanded)}
+                    >
+                        <div className="flex items-center space-x-2">
+                            <svg
+                                className={`w-5 h-5 text-gray-500 transition-transform ${statsExpanded ? 'rotate-90' : ''}`}
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                            <h3 className="text-lg font-semibold text-gray-800">我的记录</h3>
+                        </div>
+                        <div className="flex items-center space-x-4">
+                            {/* Scope Selector */}
+                            <div className="inline-flex rounded-md shadow-sm" role="group" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                    type="button"
+                                    onClick={() => setScope('today')}
+                                    className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${scope === 'today'
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    今日
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setScope('month')}
+                                    className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'month'
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    本月
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setScope('semester')}
+                                    className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${scope === 'semester'
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    本学期
+                                </button>
+                            </div>
+                        </div>
                     </div>
+
+                    {/* Stats Cards - Collapsible Content */}
+                    {statsExpanded && (
+                        <div className="p-4">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {/* Pending Requests Card for Class Admin */}
+                                {isClassAdmin && stats.pending_requests !== undefined && (
+                                    <Link
+                                        to="/teacher/approvals"
+                                        className="bg-gray-50 p-4 rounded-lg border-l-4 border-amber-500 hover:bg-gray-100 transition cursor-pointer"
+                                    >
+                                        <div className="text-gray-500 text-sm">待审批请假</div>
+                                        <div className="text-2xl font-bold text-amber-600">{stats.pending_requests}</div>
+                                    </Link>
+                                )}
+                                {statsEntries.map(stat => (
+                                    <div
+                                        key={stat.key}
+                                        className={`bg-gray-50 p-4 rounded-lg border-l-4 border-${stat.color}-500 hover:bg-gray-100 transition cursor-pointer`}
+                                        onClick={() => handleCardClick(stat.key, stat.name)}
+                                    >
+                                        <div className="text-gray-500 text-sm">{stat.name}</div>
+                                        <div className="text-2xl font-bold">{stat.value}</div>
+                                    </div>
+                                ))}
+                                {/* WeChat Bind Card for Class Admins */}
+                                {isClassAdmin && <WechatBindCard />}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                {/* Stats Cards */}
-                <div className="lg:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* Pending Requests Card for Class Admin */}
-                    {isClassAdmin && stats.pending_requests !== undefined && (
-                        <Link
-                            to="/teacher/approvals"
-                            className="bg-white p-4 rounded-lg shadow border-l-4 border-amber-500 hover:shadow-md transition cursor-pointer"
-                        >
-                            <div className="text-gray-500 text-sm">待审批请假</div>
-                            <div className="text-2xl font-bold text-amber-600">{stats.pending_requests}</div>
-                        </Link>
-                    )}
-                    {statsEntries.map(stat => (
-                        <div
-                            key={stat.key}
-                            className={`bg-white p-4 rounded-lg shadow border-l-4 border-${stat.color}-500 hover:shadow-md transition cursor-pointer`}
-                            onClick={() => handleCardClick(stat.key, stat.name)}
-                        >
-                            <div className="text-gray-500 text-sm">{stat.name}</div>
-                            <div className="text-2xl font-bold">{stat.value}</div>
-                        </div>
-                    ))}
-                    {/* WeChat Bind Card for Class Admins */}
-                    {isClassAdmin && <WechatBindCard />}
-                </div>
 
                 {/* Content Area: Calendar + Sidebar */}
                 <div className="lg:col-span-4 flex flex-col lg:flex-row gap-6">
@@ -371,74 +394,78 @@ export default function StudentDashboard() {
             </div>
 
             {/* Attendance Modal - Using teacher's AttendanceUpdateModal */}
-            {showAttendanceModal && (
-                <AttendanceUpdateModal
-                    isOpen={showAttendanceModal}
-                    onClose={() => setShowAttendanceModal(false)}
-                    date={selectedAttendanceDate}
-                    user={user}
-                />
-            )}
+            {
+                showAttendanceModal && (
+                    <AttendanceUpdateModal
+                        isOpen={showAttendanceModal}
+                        onClose={() => setShowAttendanceModal(false)}
+                        date={selectedAttendanceDate}
+                        user={user}
+                    />
+                )
+            }
 
             {/* Detail Modal */}
-            {detailModal.isOpen && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-lg font-bold">{detailModal.title}</h3>
-                            <button
-                                onClick={() => setDetailModal({ isOpen: false, title: '', records: [], message: '' })}
-                                className="text-gray-500 hover:text-gray-700"
-                            >
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        </div>
-
-                        {detailModal.message && (
-                            <p className="text-gray-600 mb-3">{detailModal.message}</p>
-                        )}
-
-                        {detailModal.records.length === 0 && !detailModal.message ? (
-                            <p className="text-gray-500 text-center py-4">暂无记录</p>
-                        ) : detailModal.records.length === 0 && detailModal.message ? null : (
-                            <div className="space-y-3">
-                                {detailModal.records.map((record, idx) => (
-                                    <div key={idx} className="border rounded-lg p-3 bg-gray-50">
-                                        <div className="flex justify-between items-start">
-                                            <div>
-                                                <div className="font-medium">
-                                                    {record.date}
-                                                    {record.time && <span className="text-gray-500 ml-2">{record.time}</span>}
-                                                </div>
-                                                <div className="text-sm text-gray-600">
-                                                    {record.type_name}
-                                                    {record.detail_label && `(${record.detail_label})`}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        {record.note && (
-                                            <div className="text-sm text-gray-500 mt-2 border-t pt-2">
-                                                备注: {record.note}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
+            {
+                detailModal.isOpen && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-lg font-bold">{detailModal.title}</h3>
+                                <button
+                                    onClick={() => setDetailModal({ isOpen: false, title: '', records: [], message: '' })}
+                                    className="text-gray-500 hover:text-gray-700"
+                                >
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
                             </div>
-                        )}
 
-                        <div className="mt-4 flex justify-end">
-                            <button
-                                onClick={() => setDetailModal({ isOpen: false, title: '', records: [], message: '' })}
-                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                            >
-                                关闭
-                            </button>
+                            {detailModal.message && (
+                                <p className="text-gray-600 mb-3">{detailModal.message}</p>
+                            )}
+
+                            {detailModal.records.length === 0 && !detailModal.message ? (
+                                <p className="text-gray-500 text-center py-4">暂无记录</p>
+                            ) : detailModal.records.length === 0 && detailModal.message ? null : (
+                                <div className="space-y-3">
+                                    {detailModal.records.map((record, idx) => (
+                                        <div key={idx} className="border rounded-lg p-3 bg-gray-50">
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <div className="font-medium">
+                                                        {record.date}
+                                                        {record.time && <span className="text-gray-500 ml-2">{record.time}</span>}
+                                                    </div>
+                                                    <div className="text-sm text-gray-600">
+                                                        {record.type_name}
+                                                        {record.detail_label && `(${record.detail_label})`}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {record.note && (
+                                                <div className="text-sm text-gray-500 mt-2 border-t pt-2">
+                                                    备注: {record.note}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="mt-4 flex justify-end">
+                                <button
+                                    onClick={() => setDetailModal({ isOpen: false, title: '', records: [], message: '' })}
+                                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                                >
+                                    关闭
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </Layout>
+                )
+            }
+        </Layout >
     );
 }

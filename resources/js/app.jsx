@@ -24,6 +24,7 @@ import SettingsPage from './pages/admin/SettingsPage';
 import StaffPage from './pages/admin/StaffPage';
 import PermissionsPage from './pages/admin/PermissionsPage';
 import DebugPage from './pages/DebugPage';
+import InstallWizard from './pages/InstallWizard';
 
 import useAuthStore from './store/authStore';
 import { authService } from './services/auth';
@@ -68,6 +69,9 @@ function App() {
 
     return (
         <Routes>
+            {/* Install Route */}
+            <Route path="/install" element={<InstallWizard />} />
+
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
 
