@@ -31,7 +31,7 @@ export default function PermissionsPage() {
         'leave': '请假管理',
         'student': '学生管理',
         'class': '班级管理',
-        '点名管理': '点名管理'
+        'roll_call': '点名管理'
     };
 
     useEffect(() => {

@@ -185,17 +185,57 @@ class RollCallController extends Controller
             'roll_call_type_id' => 'required|exists:roll_call_types,id',
             'roll_call_time' => 'required|date',
             'notes' => 'nullable|string',
+            'class_ids' => 'nullable|array', // For department_manager: multiple classes
+            'class_ids.*' => 'exists:school_classes,id',
         ]);
 
         $type = RollCallType::findOrFail($validated['roll_call_type_id']);
+        $rollCallTime = Carbon::parse($validated['roll_call_time']);
         
-        // Verify authorization
+        // Determine which classes to create roll calls for
+        $classIds = [];
+        
         if ($user->role === 'teacher') {
+            // Teacher can only create for their own classes
             $ownsClass = $user->teacherClasses()->where('id', $type->class_id)->exists();
             if (!$ownsClass) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
+            $classIds = [$type->class_id];
+            
+        } elseif ($user->role === 'department_manager') {
+            // Department manager can select classes in their department
+            $deptIds = $user->managedDepartments->pluck('id');
+            $allowedClassIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)
+                ->where('is_graduated', false)
+                ->pluck('id')
+                ->toArray();
+            
+            if (!empty($validated['class_ids'])) {
+                // Use selected classes, but verify they belong to manager's departments
+                $classIds = array_intersect($validated['class_ids'], $allowedClassIds);
+                if (empty($classIds)) {
+                    return response()->json(['error' => '选择的班级不在您管辖的系部内'], 403);
+                }
+            } else {
+                // Default to the roll call type's class
+                if (in_array($type->class_id, $allowedClassIds)) {
+                    $classIds = [$type->class_id];
+                } else {
+                    return response()->json(['error' => '该点名类型的班级不在您管辖范围内'], 403);
+                }
+            }
+            
+        } elseif (in_array($user->role, ['system_admin', 'school_admin', 'admin'])) {
+            // Admin can create for any class
+            if (!empty($validated['class_ids'])) {
+                $classIds = $validated['class_ids'];
+            } else {
+                $classIds = [$type->class_id];
+            }
+            
         } elseif ($user->role === 'student' && $user->student) {
+            // Student roll call admin
             $admin = RollCallAdmin::where('student_id', $user->student->id)
                 ->where('is_active', true)
                 ->first();
@@ -203,50 +243,88 @@ class RollCallController extends Controller
             if (!$admin || !in_array($type->id, $admin->roll_call_type_ids ?? [])) {
                 return response()->json(['error' => 'You are not authorized for this roll call type'], 403);
             }
+            $classIds = [$type->class_id];
+            
         } else {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        // Get students in the class
-        $students = Student::where('class_id', $type->class_id)->get();
-        $rollCallTime = Carbon::parse($validated['roll_call_time']);
-
         DB::beginTransaction();
         try {
-            // Create roll call
-            $rollCall = RollCall::create([
-                'class_id' => $type->class_id,
-                'school_id' => $type->school_id,
-                'roll_call_type_id' => $type->id,
-                'roll_call_time' => $rollCallTime,
-                'created_by' => $user->id,
-                'status' => 'in_progress',
-                'total_students' => $students->count(),
-                'notes' => $validated['notes'] ?? null,
-            ]);
-
-            // Create records for each student
-            foreach ($students as $student) {
-                $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime, $type);
+            $createdRollCalls = [];
+            
+            foreach ($classIds as $classId) {
+                // Get students in the class
+                $students = Student::where('class_id', $classId)->get();
                 
-                RollCallRecord::create([
-                    'roll_call_id' => $rollCall->id,
-                    'student_id' => $student->id,
-                    'status' => $leaveInfo ? 'on_leave' : 'pending',
-                    'leave_type_id' => $leaveInfo['leave_type_id'] ?? null,
-                    'leave_detail' => $leaveInfo['detail'] ?? null,
-                ]);
-            }
+                // Get or create roll call type for this class
+                // For department manager, we might need to use a shared type or create class-specific ones
+                $classType = $type;
+                if ($type->class_id !== $classId) {
+                    // Try to find an existing type with same name for this class
+                    $classType = RollCallType::where('class_id', $classId)
+                        ->where('name', $type->name)
+                        ->first();
+                    
+                    // If not found, use the original type but assign to this class
+                    // Or create a new type for this class
+                    if (!$classType) {
+                        $classType = RollCallType::create([
+                            'school_id' => $type->school_id,
+                            'class_id' => $classId,
+                            'name' => $type->name,
+                            'description' => $type->description,
+                            'leave_type_id' => $type->leave_type_id,
+                            'is_active' => true,
+                        ]);
+                    }
+                }
 
-            // Update on_leave_count
-            $onLeaveCount = RollCallRecord::where('roll_call_id', $rollCall->id)
-                ->where('status', 'on_leave')
-                ->count();
-            $rollCall->update(['on_leave_count' => $onLeaveCount]);
+                // Create roll call
+                $rollCall = RollCall::create([
+                    'class_id' => $classId,
+                    'school_id' => $classType->school_id,
+                    'roll_call_type_id' => $classType->id,
+                    'roll_call_time' => $rollCallTime,
+                    'created_by' => $user->id,
+                    'status' => 'in_progress',
+                    'total_students' => $students->count(),
+                    'notes' => $validated['notes'] ?? null,
+                ]);
+
+                // Create records for each student
+                foreach ($students as $student) {
+                    $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime, $classType);
+                    
+                    RollCallRecord::create([
+                        'roll_call_id' => $rollCall->id,
+                        'student_id' => $student->id,
+                        'status' => $leaveInfo ? 'on_leave' : 'pending',
+                        'leave_type_id' => $leaveInfo['leave_type_id'] ?? null,
+                        'leave_detail' => $leaveInfo['detail'] ?? null,
+                    ]);
+                }
+
+                // Update on_leave_count
+                $onLeaveCount = RollCallRecord::where('roll_call_id', $rollCall->id)
+                    ->where('status', 'on_leave')
+                    ->count();
+                $rollCall->update(['on_leave_count' => $onLeaveCount]);
+                
+                $createdRollCalls[] = $rollCall->load('rollCallType', 'class', 'records.student.user');
+            }
 
             DB::commit();
 
-            return response()->json($rollCall->load('rollCallType', 'records.student.user'), 201);
+            // Return single roll call or array depending on count
+            if (count($createdRollCalls) === 1) {
+                return response()->json($createdRollCalls[0], 201);
+            }
+            return response()->json([
+                'message' => '成功为 ' . count($createdRollCalls) . ' 个班级创建点名',
+                'roll_calls' => $createdRollCalls
+            ], 201);
+            
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => $e->getMessage()], 500);

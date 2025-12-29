@@ -21,6 +21,33 @@ export default function Layout({ children }) {
     const [showWechatMenu, setShowWechatMenu] = useState(false);
     // Change password modal state
     const [showPasswordModal, setShowPasswordModal] = useState(false);
+    // School name state
+    const [schoolName, setSchoolName] = useState('智慧校园');
+
+    useEffect(() => {
+        // Fetch school info
+        axios.get('/school/info')
+            .then(res => {
+                const name = res.data?.name || '智慧校园';
+                setSchoolName(name);
+                document.title = name + ' - 考勤系统';
+            })
+            .catch(() => {
+                setSchoolName('智慧校园');
+            });
+
+        // Listen for school name updates
+        const handleSchoolNameUpdate = (e) => {
+            const name = e.detail?.name || '智慧校园';
+            setSchoolName(name);
+            document.title = name + ' - 考勤系统';
+        };
+        window.addEventListener('schoolNameUpdated', handleSchoolNameUpdate);
+
+        return () => {
+            window.removeEventListener('schoolNameUpdated', handleSchoolNameUpdate);
+        };
+    }, []);
 
     useEffect(() => {
         // Fetch wechat status only for teachers
@@ -83,7 +110,7 @@ export default function Layout({ children }) {
                             <div className="flex h-16 items-center justify-between">
                                 <div className="flex items-center">
                                     <div className="flex-shrink-0">
-                                        <span className="text-white font-bold text-xl">🛡️ 智慧校园</span>
+                                        <span className="text-white font-bold text-xl">🛡️ {schoolName}</span>
                                     </div>
                                     <div className="hidden md:block">
                                         <div className="ml-10 flex items-baseline space-x-4">

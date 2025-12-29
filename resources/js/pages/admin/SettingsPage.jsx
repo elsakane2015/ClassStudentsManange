@@ -393,8 +393,98 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [] }) => {
     );
 };
 
+// School Settings Component
+const SchoolSettings = () => {
+    const [schoolName, setSchoolName] = useState('');
+    const [originalName, setOriginalName] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [message, setMessage] = useState({ type: '', text: '' });
+
+    useEffect(() => {
+        fetchSchoolInfo();
+    }, []);
+
+    const fetchSchoolInfo = async () => {
+        try {
+            const res = await axios.get('/school/info');
+            setSchoolName(res.data.name || '');
+            setOriginalName(res.data.name || '');
+        } catch (err) {
+            console.error('Failed to fetch school info:', err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setSaving(true);
+        setMessage({ type: '', text: '' });
+
+        try {
+            await axios.put('/school/update', { name: schoolName });
+            setOriginalName(schoolName);
+            setMessage({ type: 'success', text: '学校名称已更新' });
+
+            // Dispatch event to update navbar and title
+            window.dispatchEvent(new CustomEvent('schoolNameUpdated', { detail: { name: schoolName } }));
+        } catch (err) {
+            setMessage({ type: 'error', text: '更新失败: ' + (err.response?.data?.error || err.message) });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const hasChanges = schoolName !== originalName;
+
+    if (loading) {
+        return <div className="animate-pulse">加载中...</div>;
+    }
+
+    return (
+        <div>
+            <h4 className="text-md font-bold text-gray-700 mb-4">学校设置</h4>
+
+            {message.text && (
+                <div className={`p-3 rounded mb-4 ${message.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                    {message.text}
+                </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="bg-gray-50 p-4 rounded border">
+                <div className="mb-4">
+                    <label className="label">学校名称</label>
+                    <input
+                        type="text"
+                        value={schoolName}
+                        onChange={(e) => setSchoolName(e.target.value)}
+                        placeholder="请输入学校名称"
+                        className="input-field"
+                        required
+                        maxLength={100}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                        学校名称将显示在登录页面、导航栏和网页标题中
+                    </p>
+                </div>
+
+                <div className="flex justify-end">
+                    <button
+                        type="submit"
+                        disabled={!hasChanges || saving}
+                        className={`btn-primary ${(!hasChanges || saving) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                        {saving ? '保存中...' : '保存'}
+                    </button>
+                </div>
+            </form>
+        </div>
+    );
+};
+
 export default function SettingsPage() {
-    const [activeTab, setActiveTab] = useState('semesters');
+    const [activeTab, setActiveTab] = useState('school');
     const [semesters, setSemesters] = useState([]);
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [departments, setDepartments] = useState([]);
@@ -636,6 +726,7 @@ export default function SettingsPage() {
                             <h3 className="text-lg font-medium leading-6 text-gray-900">系统设置</h3>
                             <p className="mt-1 text-sm text-gray-500">学校基础数据配置中心。</p>
                             <nav className="mt-4 space-y-1">
+                                <NavButton id="school" label="学校设置" />
                                 <NavButton id="semesters" label="学期管理" />
                                 <NavButton id="departments" label="系部管理" />
                                 <NavButton id="classes" label="班级管理" />
@@ -649,6 +740,11 @@ export default function SettingsPage() {
 
                         <div className="mt-5 md:col-span-3 md:mt-0">
                             {error && <div className="bg-red-50 text-red-600 p-3 rounded mb-4">{error}</div>}
+
+                            {/* SCHOOL SETTINGS */}
+                            {activeTab === 'school' && (
+                                <SchoolSettings />
+                            )}
 
                             {/* SEMESTERS */}
                             {activeTab === 'semesters' && (

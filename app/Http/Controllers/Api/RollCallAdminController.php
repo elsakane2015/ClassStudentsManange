@@ -27,7 +27,16 @@ class RollCallAdminController extends Controller
             if (!$ownsClass) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
-        } elseif (!in_array($user->role, ['admin', 'system_admin'])) {
+        } elseif ($user->role === 'department_manager') {
+            // Department manager can view classes in their departments
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classInDept = \App\Models\SchoolClass::where('id', $classId)
+                ->whereIn('department_id', $deptIds)
+                ->exists();
+            if (!$classInDept) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif (!in_array($user->role, ['admin', 'system_admin', 'school_admin'])) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
@@ -56,13 +65,21 @@ class RollCallAdminController extends Controller
             'roll_call_type_ids.*' => 'exists:roll_call_types,id',
         ]);
 
-        // Verify teacher owns the class
+        // Verify access
         if ($user->role === 'teacher') {
             $ownsClass = $user->teacherClasses()->where('id', $validated['class_id'])->exists();
             if (!$ownsClass) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
-        } elseif (!in_array($user->role, ['admin', 'system_admin'])) {
+        } elseif ($user->role === 'department_manager') {
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classInDept = \App\Models\SchoolClass::where('id', $validated['class_id'])
+                ->whereIn('department_id', $deptIds)
+                ->exists();
+            if (!$classInDept) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif (!in_array($user->role, ['admin', 'system_admin', 'school_admin'])) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
@@ -106,7 +123,15 @@ class RollCallAdminController extends Controller
             if (!$ownsClass) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
-        } elseif (!in_array($user->role, ['admin', 'system_admin'])) {
+        } elseif ($user->role === 'department_manager') {
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classInDept = \App\Models\SchoolClass::where('id', $rollCallAdmin->class_id)
+                ->whereIn('department_id', $deptIds)
+                ->exists();
+            if (!$classInDept) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif (!in_array($user->role, ['admin', 'system_admin', 'school_admin'])) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
@@ -133,7 +158,15 @@ class RollCallAdminController extends Controller
             if (!$ownsClass) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
-        } elseif (!in_array($user->role, ['admin', 'system_admin'])) {
+        } elseif ($user->role === 'department_manager') {
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classInDept = \App\Models\SchoolClass::where('id', $rollCallAdmin->class_id)
+                ->whereIn('department_id', $deptIds)
+                ->exists();
+            if (!$classInDept) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+        } elseif (!in_array($user->role, ['admin', 'system_admin', 'school_admin'])) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 

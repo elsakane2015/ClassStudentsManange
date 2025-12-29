@@ -26,6 +26,9 @@ Route::prefix('install')->group(function () {
     Route::post('/run', [InstallController::class, 'install']);
 });
 
+// Public school info (no auth required)
+Route::get('/school/info', [\App\Http\Controllers\Api\SchoolController::class, 'info']);
+
 // Public routes
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -41,6 +44,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/user/change-password', [AuthController::class, 'changePassword']);
+
+    // School Settings (Admin only)
+    Route::put('/school/update', [\App\Http\Controllers\Api\SchoolController::class, 'update']);
 
     // Admin Settings
     Route::apiResource('semesters', SemesterController::class);
@@ -187,6 +193,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::apiResource('time-slots', \App\Http\Controllers\Api\TimeSlotController::class);
 
     // Roll Call Types (Teacher manages for their classes)
+    Route::post('roll-call-types/batch', [\App\Http\Controllers\Api\RollCallTypeController::class, 'batchStore']);
+    Route::put('roll-call-types/batch', [\App\Http\Controllers\Api\RollCallTypeController::class, 'batchUpdate']);
     Route::apiResource('roll-call-types', \App\Http\Controllers\Api\RollCallTypeController::class);
 
     // Roll Call Admins (Teacher manages for their classes)

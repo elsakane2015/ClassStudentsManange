@@ -12,6 +12,7 @@ export default function RollCallPage() {
     const { user } = useAuthStore();
     // Check if user is teacher or admin (not a student roll call admin)
     const isTeacherOrAdmin = user?.role === 'teacher' || ['admin', 'system_admin', 'school_admin', 'department_manager'].includes(user?.role);
+    const isDepartmentManager = user?.role === 'department_manager';
     const [rollCallTypes, setRollCallTypes] = useState([]);
     const [inProgressRollCalls, setInProgressRollCalls] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -20,6 +21,11 @@ export default function RollCallPage() {
     const [selectedClassId, setSelectedClassId] = useState(null);
     const [classes, setClasses] = useState([]);
     const [leaveTypes, setLeaveTypes] = useState([]);
+    // For department manager batch selection
+    const [showBatchModal, setShowBatchModal] = useState(false);
+    const [batchTypeId, setBatchTypeId] = useState(null);
+    const [selectedClassIds, setSelectedClassIds] = useState([]);
+    const [batchLoading, setBatchLoading] = useState(false);
 
     useEffect(() => {
         fetchData();
@@ -39,8 +45,8 @@ export default function RollCallPage() {
             setClasses(classesRes.data || []);
             setLeaveTypes(leaveTypesRes.data || []);
 
-            // Set default class if available
-            if (classesRes.data?.length > 0 && !selectedClassId) {
+            // Set default class if available (auto-select for single-class teachers, not for department managers)
+            if (classesRes.data?.length > 0 && !selectedClassId && !isDepartmentManager) {
                 setSelectedClassId(classesRes.data[0].id);
             }
         } catch (err) {
@@ -50,26 +56,51 @@ export default function RollCallPage() {
         }
     };
 
+    // State for batch type creation (department manager)
+    const [batchTypeMode, setBatchTypeMode] = useState(false);
+    const [batchTypeClassIds, setBatchTypeClassIds] = useState([]);
+
     const handleTypeSubmit = async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
         const data = Object.fromEntries(formData);
-        data.class_id = parseInt(data.class_id);
         data.is_active = data.is_active === 'on';
         if (data.leave_type_id) data.leave_type_id = parseInt(data.leave_type_id);
         else delete data.leave_type_id;
 
         try {
-            if (editingType) {
+            if (editingType?._isGroup && batchTypeMode) {
+                // Editing a group - use batch update API
+                const res = await axios.put('/roll-call-types/batch', {
+                    old_name: editingType.name,  // Original name to find existing types
+                    name: data.name,              // New name from form (may be same or different)
+                    class_ids: batchTypeClassIds,
+                    description: data.description,
+                    absent_status: data.absent_status,
+                    leave_type_id: data.leave_type_id,
+                    is_active: data.is_active,
+                });
+                alert(res.data.message || '更新成功');
+            } else if (editingType) {
                 await axios.put(`/roll-call-types/${editingType.id}`, data);
+            } else if (batchTypeMode && batchTypeClassIds.length > 0) {
+                // Batch create for multiple classes
+                const res = await axios.post('/roll-call-types/batch', {
+                    ...data,
+                    class_ids: batchTypeClassIds,
+                });
+                alert(res.data.message || '批量创建成功');
             } else {
+                data.class_id = parseInt(data.class_id);
                 await axios.post('/roll-call-types', data);
             }
             setShowTypeForm(false);
             setEditingType(null);
+            setBatchTypeMode(false);
+            setBatchTypeClassIds([]);
             fetchData();
         } catch (err) {
-            alert('Error: ' + (err.response?.data?.message || err.message));
+            alert('Error: ' + (err.response?.data?.error || err.response?.data?.message || err.message));
         }
     };
 
@@ -84,6 +115,14 @@ export default function RollCallPage() {
     };
 
     const startRollCall = async (typeId) => {
+        // For department manager, show batch selection modal
+        if (isDepartmentManager && classes.length > 1) {
+            setBatchTypeId(typeId);
+            setSelectedClassIds([selectedClassId]); // Pre-select current class
+            setShowBatchModal(true);
+            return;
+        }
+
         try {
             const res = await axios.post('/roll-calls', {
                 roll_call_type_id: typeId,
@@ -95,9 +134,88 @@ export default function RollCallPage() {
         }
     };
 
+    // Batch create roll calls for department manager
+    const handleBatchCreate = async () => {
+        if (selectedClassIds.length === 0) {
+            alert('请至少选择一个班级');
+            return;
+        }
+
+        setBatchLoading(true);
+        try {
+            const res = await axios.post('/roll-calls', {
+                roll_call_type_id: batchTypeId,
+                roll_call_time: new Date().toISOString(),
+                class_ids: selectedClassIds,
+            });
+
+            setShowBatchModal(false);
+            setBatchTypeId(null);
+            setSelectedClassIds([]);
+
+            // If only one roll call created, navigate to it
+            if (res.data.id) {
+                navigate(`/roll-call/${res.data.id}`);
+            } else {
+                alert(res.data.message || '点名创建成功');
+                fetchData();
+            }
+        } catch (err) {
+            alert('Error: ' + (err.response?.data?.error || err.message));
+        } finally {
+            setBatchLoading(false);
+        }
+    };
+
+    // Toggle class selection
+    const toggleClassSelection = (classId) => {
+        setSelectedClassIds(prev =>
+            prev.includes(classId)
+                ? prev.filter(id => id !== classId)
+                : [...prev, classId]
+        );
+    };
+
+    // Select all classes
+    const selectAllClasses = () => {
+        setSelectedClassIds(classes.map(c => c.id));
+    };
+
+    // Deselect all classes
+    const deselectAllClasses = () => {
+        setSelectedClassIds([]);
+    };
+
     const filteredTypes = selectedClassId
         ? rollCallTypes.filter(t => t.class_id === selectedClassId)
         : rollCallTypes;
+
+    // Group types by name for department manager view (when no specific class selected)
+    const groupedTypes = isDepartmentManager && !selectedClassId
+        ? Object.values(
+            rollCallTypes.reduce((acc, type) => {
+                const key = type.name;
+                if (!acc[key]) {
+                    acc[key] = {
+                        name: type.name,
+                        description: type.description,
+                        absent_status: type.absent_status,
+                        leave_type_id: type.leave_type_id,
+                        creator: type.creator,
+                        types: [],
+                        classNames: [],
+                        classIds: [],
+                    };
+                }
+                acc[key].types.push(type);
+                if (type.class) {
+                    acc[key].classNames.push(type.class.name);
+                    acc[key].classIds.push(type.class_id);
+                }
+                return acc;
+            }, {})
+        )
+        : null;
 
     if (loading) {
         return (
@@ -152,9 +270,12 @@ export default function RollCallPage() {
                         <label className="text-sm font-medium text-gray-700">选择班级:</label>
                         <select
                             value={selectedClassId || ''}
-                            onChange={(e) => setSelectedClassId(parseInt(e.target.value))}
+                            onChange={(e) => setSelectedClassId(e.target.value ? parseInt(e.target.value) : null)}
                             className="input-field max-w-xs"
                         >
+                            {isDepartmentManager && (
+                                <option value="">全部班级 (分组视图)</option>
+                            )}
                             {classes.map(c => (
                                 <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
@@ -208,14 +329,86 @@ export default function RollCallPage() {
                                         placeholder="早操点名"
                                         className="input-field"
                                     />
+                                    {editingType?._isGroup && (
+                                        <p className="text-xs text-gray-400 mt-1">修改名称将同时更新所有班级</p>
+                                    )}
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">班级</label>
-                                    <select name="class_id" defaultValue={editingType?.class_id || selectedClassId} className="input-field">
-                                        {classes.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                    </select>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        班级
+                                        {isDepartmentManager && !editingType?._isGroup && !editingType && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setBatchTypeMode(!batchTypeMode);
+                                                    if (!batchTypeMode) {
+                                                        setBatchTypeClassIds([selectedClassId]);
+                                                    }
+                                                }}
+                                                className="ml-2 text-xs text-indigo-600 hover:text-indigo-800"
+                                            >
+                                                {batchTypeMode ? '单班级模式' : '批量创建模式'}
+                                            </button>
+                                        )}
+                                        {editingType?._isGroup && (
+                                            <span className="ml-2 text-xs text-green-600">编辑班级范围</span>
+                                        )}
+                                    </label>
+                                    {(batchTypeMode && isDepartmentManager) || editingType?._isGroup ? (
+                                        <div className="space-y-2">
+                                            <div className="flex gap-2 text-xs">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setBatchTypeClassIds(classes.map(c => c.id))}
+                                                    className="text-indigo-600 hover:text-indigo-800"
+                                                >
+                                                    全选本系
+                                                </button>
+                                                <span className="text-gray-300">|</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setBatchTypeClassIds([])}
+                                                    className="text-gray-600 hover:text-gray-800"
+                                                >
+                                                    取消全选
+                                                </button>
+                                                <span className="text-gray-400 ml-auto">
+                                                    已选: {batchTypeClassIds.length} / {classes.length}
+                                                </span>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border rounded p-2">
+                                                {classes.map(c => (
+                                                    <label
+                                                        key={c.id}
+                                                        className={`flex items-center p-2 rounded cursor-pointer text-sm ${batchTypeClassIds.includes(c.id)
+                                                            ? 'bg-indigo-50 text-indigo-700'
+                                                            : 'hover:bg-gray-50'
+                                                            }`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={batchTypeClassIds.includes(c.id)}
+                                                            onChange={() => {
+                                                                setBatchTypeClassIds(prev =>
+                                                                    prev.includes(c.id)
+                                                                        ? prev.filter(id => id !== c.id)
+                                                                        : [...prev, c.id]
+                                                                );
+                                                            }}
+                                                            className="h-3 w-3 text-indigo-600 rounded mr-2"
+                                                        />
+                                                        {c.name}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <select name="class_id" defaultValue={editingType?.class_id || selectedClassId} className="input-field">
+                                            {classes.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
@@ -249,15 +442,92 @@ export default function RollCallPage() {
                                 </label>
                             </div>
                             <div className="flex justify-end gap-2 mt-4">
-                                <button type="button" onClick={() => { setShowTypeForm(false); setEditingType(null); }} className="btn-secondary">
+                                <button type="button" onClick={() => { setShowTypeForm(false); setEditingType(null); setBatchTypeMode(false); setBatchTypeClassIds([]); }} className="btn-secondary">
                                     取消
                                 </button>
-                                <button type="submit" className="btn-primary">保存</button>
+                                <button type="submit" className="btn-primary" disabled={(batchTypeMode || editingType?._isGroup) && batchTypeClassIds.length === 0}>
+                                    {editingType?._isGroup
+                                        ? `更新 ${batchTypeClassIds.length} 个班级`
+                                        : batchTypeMode
+                                            ? `为 ${batchTypeClassIds.length} 个班级创建`
+                                            : '保存'}
+                                </button>
                             </div>
                         </form>
                     )}
 
-                    {filteredTypes.length === 0 ? (
+                    {/* Grouped view for department manager without class filter */}
+                    {groupedTypes && groupedTypes.length > 0 ? (
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {groupedTypes.map(group => (
+                                <div
+                                    key={group.name}
+                                    className="border rounded-lg p-4 hover:shadow-md transition-shadow"
+                                >
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex-1">
+                                            <h4 className="font-medium text-gray-900">{group.name}</h4>
+                                            <div className="text-xs text-indigo-600 mt-1">
+                                                📚 {group.classNames.join(' / ')}
+                                            </div>
+                                            {group.description && (
+                                                <p className="text-sm text-gray-500 mt-1">{group.description}</p>
+                                            )}
+                                            <div className="text-xs text-gray-400 mt-2">
+                                                未到标记: {group.absent_status === 'absent' ? '旷课' : group.absent_status === 'late' ? '迟到' : '请假'}
+                                            </div>
+                                            {group.creator && (
+                                                <div className="text-xs text-gray-400 mt-1">
+                                                    创建: {group.creator.name}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="flex gap-1">
+                                            <button
+                                                onClick={() => {
+                                                    // Edit group - enter batch mode with existing classes
+                                                    setEditingType({ ...group.types[0], _isGroup: true, _groupTypes: group.types });
+                                                    setBatchTypeMode(true);
+                                                    setBatchTypeClassIds(group.classIds);
+                                                    setShowTypeForm(true);
+                                                }}
+                                                className="text-indigo-600 hover:text-indigo-800 p-1"
+                                                title="编辑班级"
+                                            >
+                                                <PencilIcon className="h-4 w-4" />
+                                            </button>
+                                            <button
+                                                onClick={async () => {
+                                                    if (!confirm(`确定要删除所有班级的「${group.name}」活动类型吗？`)) return;
+                                                    try {
+                                                        await Promise.all(group.types.map(t => axios.delete(`/roll-call-types/${t.id}`)));
+                                                        fetchData();
+                                                    } catch (err) {
+                                                        alert('Error: ' + err.message);
+                                                    }
+                                                }}
+                                                className="text-red-600 hover:text-red-800 p-1"
+                                                title="删除全部"
+                                            >
+                                                <TrashIcon className="h-4 w-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            // Show batch modal with this group's classes pre-selected
+                                            setBatchTypeId(group.types[0].id);
+                                            setSelectedClassIds(group.classIds);
+                                            setShowBatchModal(true);
+                                        }}
+                                        className="mt-4 w-full btn-primary flex items-center justify-center"
+                                    >
+                                        <PlayIcon className="h-4 w-4 mr-1" /> 开始点名
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    ) : filteredTypes.length === 0 ? (
                         <div className="text-center py-8 text-gray-500">
                             <p>暂无活动类型</p>
                             <p className="text-sm mt-1">点击"新增类型"创建点名活动</p>
@@ -272,12 +542,24 @@ export default function RollCallPage() {
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <h4 className="font-medium text-gray-900">{type.name}</h4>
+                                            {/* Show class name for department managers */}
+                                            {isDepartmentManager && type.class && (
+                                                <div className="text-xs text-indigo-600 mt-0.5">
+                                                    📚 {type.class.name}
+                                                </div>
+                                            )}
                                             {type.description && (
                                                 <p className="text-sm text-gray-500 mt-1">{type.description}</p>
                                             )}
                                             <div className="text-xs text-gray-400 mt-2">
                                                 未到标记: {type.absent_status === 'absent' ? '旷课' : type.absent_status === 'late' ? '迟到' : '请假'}
                                             </div>
+                                            {/* Show creator info */}
+                                            {type.creator && (
+                                                <div className="text-xs text-gray-400 mt-1">
+                                                    创建: {type.creator.name}
+                                                </div>
+                                            )}
                                         </div>
                                         {isTeacherOrAdmin && (
                                             <div className="flex gap-1">
@@ -310,6 +592,89 @@ export default function RollCallPage() {
                     )}
                 </div>
             </div>
+
+            {/* Batch Selection Modal for Department Manager */}
+            {showBatchModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+                    <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-hidden">
+                        <div className="px-6 py-4 border-b">
+                            <h3 className="text-lg font-medium text-gray-900">选择班级创建点名</h3>
+                            <p className="text-sm text-gray-500 mt-1">可选择多个班级同时创建点名</p>
+                        </div>
+
+                        <div className="px-6 py-4">
+                            {/* Quick actions */}
+                            <div className="flex gap-2 mb-4">
+                                <button
+                                    onClick={selectAllClasses}
+                                    className="text-sm text-indigo-600 hover:text-indigo-800"
+                                >
+                                    全选本系
+                                </button>
+                                <span className="text-gray-300">|</span>
+                                <button
+                                    onClick={deselectAllClasses}
+                                    className="text-sm text-gray-600 hover:text-gray-800"
+                                >
+                                    取消全选
+                                </button>
+                                <span className="text-gray-400 ml-auto text-sm">
+                                    已选: {selectedClassIds.length} / {classes.length}
+                                </span>
+                            </div>
+
+                            {/* Class list */}
+                            <div className="space-y-2 max-h-60 overflow-y-auto">
+                                {classes.map(c => (
+                                    <label
+                                        key={c.id}
+                                        className={`flex items-center p-3 rounded-lg border cursor-pointer transition-colors ${selectedClassIds.includes(c.id)
+                                            ? 'border-indigo-500 bg-indigo-50'
+                                            : 'border-gray-200 hover:bg-gray-50'
+                                            }`}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedClassIds.includes(c.id)}
+                                            onChange={() => toggleClassSelection(c.id)}
+                                            className="h-4 w-4 text-indigo-600 rounded"
+                                        />
+                                        <span className="ml-3 text-sm font-medium text-gray-900">
+                                            {c.name}
+                                        </span>
+                                        {c.department?.name && (
+                                            <span className="ml-2 text-xs text-gray-500">
+                                                ({c.department.name})
+                                            </span>
+                                        )}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="px-6 py-4 border-t flex justify-end gap-3">
+                            <button
+                                onClick={() => {
+                                    setShowBatchModal(false);
+                                    setBatchTypeId(null);
+                                    setSelectedClassIds([]);
+                                }}
+                                className="btn-secondary"
+                                disabled={batchLoading}
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleBatchCreate}
+                                className="btn-primary"
+                                disabled={batchLoading || selectedClassIds.length === 0}
+                            >
+                                {batchLoading ? '创建中...' : `为 ${selectedClassIds.length} 个班级创建点名`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </Layout>
     );
 }

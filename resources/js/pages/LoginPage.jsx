@@ -1,17 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth';
 import useAuthStore from '../store/authStore';
+import axios from 'axios';
 
 export default function LoginPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [schoolName, setSchoolName] = useState('智慧校园考勤系统');
 
     // Store
     const { setUser, setToken } = useAuthStore();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        // Fetch school info (axios baseURL is already /api)
+        axios.get('/school/info')
+            .then(res => {
+                const name = res.data?.name;
+                if (name) {
+                    setSchoolName(name);
+                    document.title = name + ' - 登录';
+                }
+            })
+            .catch(() => {
+                // Keep default
+            });
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -48,10 +65,10 @@ export default function LoginPage() {
         <div className="flex min-h-screen flex-col justify-center px-6 py-12 lg:px-8 bg-gray-50">
             <div className="sm:mx-auto sm:w-full sm:max-w-sm">
                 <h2 className="mt-10 text-center text-2xl font-bold leading-9 tracking-tight text-gray-900">
-                    账号登录
+                    学生考勤系统
                 </h2>
                 <p className="text-center text-sm text-gray-500 mt-2">
-                    智慧校园考勤系统
+                    {schoolName}
                 </p>
             </div>
 
