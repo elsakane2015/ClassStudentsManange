@@ -41,15 +41,30 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email',
+            'email' => 'required|string', // Can be email or student_id
             'password' => 'required',
         ]);
 
-        $user = User::where('email', $request->email)->first();
+        $loginId = $request->email;
+        $user = null;
+
+        // Try to find user by email first
+        if (filter_var($loginId, FILTER_VALIDATE_EMAIL)) {
+            $user = User::where('email', $loginId)->first();
+        }
+
+        // If not found by email, try to find by student_id
+        if (!$user) {
+            // Look up student by student_id, then get the associated user
+            $student = \App\Models\Student::where('student_id', $loginId)->first();
+            if ($student && $student->user_id) {
+                $user = User::find($student->user_id);
+            }
+        }
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
             throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
+                'email' => ['账号或密码错误'],
             ]);
         }
 

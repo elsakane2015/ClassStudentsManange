@@ -108,9 +108,14 @@ class InstallController extends Controller
             'admin_password' => 'required|string|min:6',
         ]);
 
+        // Extend execution time for migrations (5 minutes)
+        set_time_limit(300);
+        ini_set('max_execution_time', '300');
+
         try {
             // Step 1: Update .env file
             $this->updateEnvFile([
+                'DB_CONNECTION' => 'mysql',
                 'DB_HOST' => $request->db_host,
                 'DB_PORT' => $request->db_port,
                 'DB_DATABASE' => $request->db_database,
@@ -120,6 +125,9 @@ class InstallController extends Controller
 
             // Reload config
             Artisan::call('config:clear');
+            
+            // Set default connection to mysql
+            config(['database.default' => 'mysql']);
             
             // Reconnect with new settings
             config([
@@ -132,31 +140,27 @@ class InstallController extends Controller
             
             DB::purge('mysql');
             DB::reconnect('mysql');
+            DB::setDefaultConnection('mysql');
 
-            // Step 2: Run migrations
-            Artisan::call('migrate', ['--force' => true]);
+            // Step 2: Run fresh migrations (drops all tables and recreates)
+            Artisan::call('migrate:fresh', ['--force' => true]);
 
-            // Step 3: Create school
-            $school = School::firstOrCreate(
-                ['id' => 1],
-                ['name' => $request->school_name]
-            );
+            // Step 3: Create school (must be created BEFORE seeders that depend on school_id=1)
+            $school = School::create(['name' => $request->school_name]);
 
-            // Step 4: Create admin user
-            $admin = User::firstOrCreate(
-                ['email' => $request->admin_email],
-                [
-                    'uuid' => (string) Str::uuid(),
-                    'name' => $request->admin_name,
-                    'password' => Hash::make($request->admin_password),
-                    'role' => 'system_admin',
-                ]
-            );
-
-            // Step 5: Run seeders
+            // Step 4: Run seeders (after school is created)
             Artisan::call('db:seed', ['--class' => 'PermissionSeeder', '--force' => true]);
             Artisan::call('db:seed', ['--class' => 'LeaveTypeSeeder', '--force' => true]);
             Artisan::call('db:seed', ['--class' => 'SystemSettingsSeeder', '--force' => true]);
+
+            // Step 5: Create admin user
+            $admin = User::create([
+                'uuid' => (string) Str::uuid(),
+                'name' => $request->admin_name,
+                'email' => $request->admin_email,
+                'password' => Hash::make($request->admin_password),
+                'role' => 'system_admin',
+            ]);
 
             // Step 6: Create storage link
             try {
@@ -178,7 +182,7 @@ class InstallController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Installation failed: ' . $e->getMessage());
+            \Log::error('Installation failed: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
             return response()->json([
                 'success' => false,
                 'error' => '安装失败: ' . $e->getMessage()

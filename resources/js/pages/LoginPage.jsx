@@ -69,15 +69,16 @@ export default function LoginPage() {
 
                     <div>
                         <label htmlFor="email" className="block text-sm font-medium leading-6 text-gray-900">
-                            邮箱地址
+                            邮箱 / 学号
                         </label>
                         <div className="mt-2">
                             <input
                                 id="email"
                                 name="email"
-                                type="email"
-                                autoComplete="email"
+                                type="text"
+                                autoComplete="username"
                                 required
+                                placeholder="输入邮箱或学号"
                                 value={email}
                                 onChange={e => setEmail(e.target.value)}
                                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6 px-3"
@@ -117,9 +118,7 @@ export default function LoginPage() {
                 </form>
 
                 <div className="mt-8 text-center text-xs text-gray-400">
-                    <p>Demo Credentials:</p>
-                    <p>Teacher: teacher@demo.com / password</p>
-                    <p>Student: student1@demo.com / password</p>
+                    <p>支持使用邮箱或学号登录</p>
                 </div>
             </div>
         </div>

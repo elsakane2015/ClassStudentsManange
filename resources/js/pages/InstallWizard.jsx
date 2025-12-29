@@ -36,7 +36,7 @@ const InstallWizard = () => {
 
     const checkInstalled = async () => {
         try {
-            const response = await axios.get('/api/install/check');
+            const response = await axios.get('/install/check');
             if (response.data.installed) {
                 navigate('/login');
             }
@@ -50,7 +50,7 @@ const InstallWizard = () => {
         setLoading(true);
         setError('');
         try {
-            const response = await axios.get('/api/install/requirements');
+            const response = await axios.get('/install/requirements');
             setRequirements(response.data.requirements);
             setReqPassed(response.data.passed);
             if (response.data.passed) {
@@ -69,7 +69,7 @@ const InstallWizard = () => {
         setError('');
         setDbTestResult(null);
         try {
-            const response = await axios.post('/api/install/test-database', {
+            const response = await axios.post('/install/test-database', {
                 host: formData.db_host,
                 port: formData.db_port,
                 database: formData.db_database,
@@ -101,7 +101,7 @@ const InstallWizard = () => {
         setLoading(true);
         setError('');
         try {
-            const response = await axios.post('/api/install/run', formData);
+            const response = await axios.post('/install/run', formData);
             if (response.data.success) {
                 setSuccess('安装成功！正在跳转到登录页面...');
                 setStep(5);

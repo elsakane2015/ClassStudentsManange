@@ -83,6 +83,18 @@ touch "${TEMP_DIR}/bootstrap/cache/.gitkeep"
 # 复制 .env.example 作为初始配置模板
 cp .env.example "${TEMP_DIR}/.env.example"
 
+# 创建 .env 文件并生成 APP_KEY（安装向导会覆盖数据库配置）
+cp .env.example "${TEMP_DIR}/.env"
+# 生成随机 APP_KEY 使用 PHP
+php -r "echo 'APP_KEY=base64:' . base64_encode(random_bytes(32));" > /tmp/app_key.txt
+APP_KEY=$(cat /tmp/app_key.txt)
+# 替换 .env 中的 APP_KEY 行
+grep -v "^APP_KEY=" "${TEMP_DIR}/.env" > "${TEMP_DIR}/.env.tmp"
+echo "${APP_KEY}" >> "${TEMP_DIR}/.env.tmp"
+mv "${TEMP_DIR}/.env.tmp" "${TEMP_DIR}/.env"
+rm -f /tmp/app_key.txt
+
+
 # 步骤4: 创建发布目录并打包
 echo "📦 步骤 4/5: 创建发布包..."
 mkdir -p "${RELEASE_DIR}"
