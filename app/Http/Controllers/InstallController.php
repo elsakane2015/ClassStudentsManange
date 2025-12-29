@@ -88,7 +88,7 @@ class InstallController extends Controller
     }
 
     /**
-     * Run installation
+     * Run installation step by step
      */
     public function install(Request $request)
     {
@@ -112,8 +112,26 @@ class InstallController extends Controller
         set_time_limit(300);
         ini_set('max_execution_time', '300');
 
+        $steps = [
+            ['name' => '配置数据库连接', 'status' => 'pending'],
+            ['name' => '创建数据库表', 'status' => 'pending'],
+            ['name' => '创建学校信息', 'status' => 'pending'],
+            ['name' => '初始化权限数据', 'status' => 'pending'],
+            ['name' => '初始化请假类型', 'status' => 'pending'],
+            ['name' => '初始化系统设置', 'status' => 'pending'],
+            ['name' => '创建管理员账户', 'status' => 'pending'],
+            ['name' => '配置存储链接', 'status' => 'pending'],
+            ['name' => '清理缓存', 'status' => 'pending'],
+            ['name' => '完成安装', 'status' => 'pending'],
+        ];
+
+        $currentStep = 0;
+        $errorStep = -1;
+        $errorMessage = '';
+
         try {
-            // Step 1: Update .env file
+            // Step 1: Update .env file and configure database
+            $steps[$currentStep]['status'] = 'running';
             $this->updateEnvFile([
                 'DB_CONNECTION' => 'mysql',
                 'DB_HOST' => $request->db_host,
@@ -122,14 +140,8 @@ class InstallController extends Controller
                 'DB_USERNAME' => $request->db_username,
                 'DB_PASSWORD' => $request->db_password ?? '',
             ]);
-
-            // Reload config
             Artisan::call('config:clear');
-            
-            // Set default connection to mysql
             config(['database.default' => 'mysql']);
-            
-            // Reconnect with new settings
             config([
                 'database.connections.mysql.host' => $request->db_host,
                 'database.connections.mysql.port' => $request->db_port,
@@ -137,23 +149,44 @@ class InstallController extends Controller
                 'database.connections.mysql.username' => $request->db_username,
                 'database.connections.mysql.password' => $request->db_password ?? '',
             ]);
-            
             DB::purge('mysql');
             DB::reconnect('mysql');
             DB::setDefaultConnection('mysql');
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
 
-            // Step 2: Run fresh migrations (drops all tables and recreates)
+            // Step 2: Run fresh migrations
+            $steps[$currentStep]['status'] = 'running';
             Artisan::call('migrate:fresh', ['--force' => true]);
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
 
-            // Step 3: Create school (must be created BEFORE seeders that depend on school_id=1)
+            // Step 3: Create school
+            $steps[$currentStep]['status'] = 'running';
             $school = School::create(['name' => $request->school_name]);
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
 
-            // Step 4: Run seeders (after school is created)
+            // Step 4: Run PermissionSeeder
+            $steps[$currentStep]['status'] = 'running';
             Artisan::call('db:seed', ['--class' => 'PermissionSeeder', '--force' => true]);
-            Artisan::call('db:seed', ['--class' => 'LeaveTypeSeeder', '--force' => true]);
-            Artisan::call('db:seed', ['--class' => 'SystemSettingsSeeder', '--force' => true]);
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
 
-            // Step 5: Create admin user
+            // Step 5: Run LeaveTypeSeeder
+            $steps[$currentStep]['status'] = 'running';
+            Artisan::call('db:seed', ['--class' => 'LeaveTypeSeeder', '--force' => true]);
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
+
+            // Step 6: Run SystemSettingsSeeder
+            $steps[$currentStep]['status'] = 'running';
+            Artisan::call('db:seed', ['--class' => 'SystemSettingsSeeder', '--force' => true]);
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
+
+            // Step 7: Create admin user
+            $steps[$currentStep]['status'] = 'running';
             $admin = User::create([
                 'uuid' => (string) Str::uuid(),
                 'name' => $request->admin_name,
@@ -161,31 +194,50 @@ class InstallController extends Controller
                 'password' => Hash::make($request->admin_password),
                 'role' => 'system_admin',
             ]);
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
 
-            // Step 6: Create storage link
+            // Step 8: Create storage link
+            $steps[$currentStep]['status'] = 'running';
             try {
                 Artisan::call('storage:link');
             } catch (\Exception $e) {
                 // Ignore if already exists
             }
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
 
-            // Step 7: Clear caches
+            // Step 9: Clear caches
+            $steps[$currentStep]['status'] = 'running';
             Artisan::call('optimize:clear');
+            $steps[$currentStep]['status'] = 'done';
+            $currentStep++;
 
-            // Step 8: Create install lock file
+            // Step 10: Create install lock file
+            $steps[$currentStep]['status'] = 'running';
             File::put(storage_path('installed'), date('Y-m-d H:i:s'));
+            $steps[$currentStep]['status'] = 'done';
 
             return response()->json([
                 'success' => true,
                 'message' => '安装成功！',
-                'admin_email' => $request->admin_email
+                'admin_email' => $request->admin_email,
+                'steps' => $steps
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Installation failed: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            \Log::error('Installation failed at step ' . ($currentStep + 1) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            
+            // Mark current step as failed
+            $steps[$currentStep]['status'] = 'failed';
+            $steps[$currentStep]['error'] = $e->getMessage();
+            
             return response()->json([
                 'success' => false,
-                'error' => '安装失败: ' . $e->getMessage()
+                'error' => '安装失败: ' . $e->getMessage(),
+                'failed_step' => $currentStep + 1,
+                'failed_step_name' => $steps[$currentStep]['name'],
+                'steps' => $steps
             ], 500);
         }
     }

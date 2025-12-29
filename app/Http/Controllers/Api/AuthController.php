@@ -53,10 +53,10 @@ class AuthController extends Controller
             $user = User::where('email', $loginId)->first();
         }
 
-        // If not found by email, try to find by student_id
+        // If not found by email, try to find by student_no (学号)
         if (!$user) {
-            // Look up student by student_id, then get the associated user
-            $student = \App\Models\Student::where('student_id', $loginId)->first();
+            // Look up student by student_no, then get the associated user
+            $student = \App\Models\Student::where('student_no', $loginId)->first();
             if ($student && $student->user_id) {
                 $user = User::find($student->user_id);
             }

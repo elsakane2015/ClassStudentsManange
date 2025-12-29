@@ -87,7 +87,12 @@ const InstallWizard = () => {
         }
     };
 
-    // Step 4: Run installation
+    // Installation steps state
+    const [installSteps, setInstallSteps] = useState([]);
+    const [installing, setInstalling] = useState(false);
+    const [failedStep, setFailedStep] = useState(null);
+
+    // Step 4: Run installation with progress display
     const runInstall = async () => {
         if (formData.admin_password !== formData.admin_password_confirm) {
             setError('两次输入的密码不一致');
@@ -99,10 +104,29 @@ const InstallWizard = () => {
         }
 
         setLoading(true);
+        setInstalling(true);
         setError('');
+        setFailedStep(null);
+
+        // Initialize steps for UI display
+        const initialSteps = [
+            { name: '配置数据库连接', status: 'pending' },
+            { name: '创建数据库表', status: 'pending' },
+            { name: '创建学校信息', status: 'pending' },
+            { name: '初始化权限数据', status: 'pending' },
+            { name: '初始化请假类型', status: 'pending' },
+            { name: '初始化系统设置', status: 'pending' },
+            { name: '创建管理员账户', status: 'pending' },
+            { name: '配置存储链接', status: 'pending' },
+            { name: '清理缓存', status: 'pending' },
+            { name: '完成安装', status: 'pending' },
+        ];
+        setInstallSteps(initialSteps);
+
         try {
             const response = await axios.post('/install/run', formData);
             if (response.data.success) {
+                setInstallSteps(response.data.steps || initialSteps.map(s => ({ ...s, status: 'done' })));
                 setSuccess('安装成功！正在跳转到登录页面...');
                 setStep(5);
                 setTimeout(() => {
@@ -110,9 +134,18 @@ const InstallWizard = () => {
                 }, 3000);
             }
         } catch (err) {
-            setError('安装失败: ' + (err.response?.data?.error || err.message));
+            const errorData = err.response?.data;
+            if (errorData?.steps) {
+                setInstallSteps(errorData.steps);
+            }
+            if (errorData?.failed_step) {
+                setFailedStep(errorData.failed_step);
+            }
+            setError('安装失败: ' + (errorData?.error || err.message) +
+                (errorData?.failed_step_name ? ` (步骤: ${errorData.failed_step_name})` : ''));
         } finally {
             setLoading(false);
+            setInstalling(false);
         }
     };
 
@@ -397,33 +430,71 @@ const InstallWizard = () => {
     const renderConfirm = () => (
         <div className="space-y-6">
             <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-800">确认安装</h2>
-                <p className="text-gray-600 mt-2">请确认以下信息无误</p>
+                <h2 className="text-2xl font-bold text-gray-800">
+                    {installing ? '正在安装...' : '确认安装'}
+                </h2>
+                <p className="text-gray-600 mt-2">
+                    {installing ? '请耐心等待，安装过程可能需要1-2分钟' : '请确认以下信息无误'}
+                </p>
             </div>
 
-            <div className="bg-gray-50 rounded-lg p-4 space-y-4">
-                <div>
-                    <h3 className="font-medium text-gray-500">数据库</h3>
-                    <p>{formData.db_username}@{formData.db_host}:{formData.db_port}/{formData.db_database}</p>
+            {/* Installation Progress */}
+            {installing || installSteps.length > 0 ? (
+                <div className="bg-gray-50 rounded-lg p-4">
+                    <h3 className="font-medium mb-3">安装进度</h3>
+                    <div className="space-y-2">
+                        {installSteps.map((stepItem, index) => (
+                            <div key={index} className="flex items-center space-x-3">
+                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium
+                                    ${stepItem.status === 'done' ? 'bg-green-500 text-white' :
+                                        stepItem.status === 'running' ? 'bg-blue-500 text-white animate-pulse' :
+                                            stepItem.status === 'failed' ? 'bg-red-500 text-white' :
+                                                'bg-gray-300 text-gray-600'}`}>
+                                    {stepItem.status === 'done' ? '✓' :
+                                        stepItem.status === 'failed' ? '✗' :
+                                            stepItem.status === 'running' ? '◎' :
+                                                index + 1}
+                                </div>
+                                <span className={`text-sm ${stepItem.status === 'done' ? 'text-green-600' :
+                                        stepItem.status === 'running' ? 'text-blue-600 font-medium' :
+                                            stepItem.status === 'failed' ? 'text-red-600' :
+                                                'text-gray-500'
+                                    }`}>
+                                    {stepItem.name}
+                                    {stepItem.status === 'running' && '...'}
+                                    {stepItem.error && <span className="text-xs text-red-500 ml-2">({stepItem.error})</span>}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
-                <div>
-                    <h3 className="font-medium text-gray-500">学校名称</h3>
-                    <p>{formData.school_name}</p>
-                </div>
-                <div>
-                    <h3 className="font-medium text-gray-500">管理员</h3>
-                    <p>{formData.admin_name} ({formData.admin_email})</p>
-                </div>
-            </div>
+            ) : (
+                <>
+                    <div className="bg-gray-50 rounded-lg p-4 space-y-4">
+                        <div>
+                            <h3 className="font-medium text-gray-500">数据库</h3>
+                            <p>{formData.db_username}@{formData.db_host}:{formData.db_port}/{formData.db_database}</p>
+                        </div>
+                        <div>
+                            <h3 className="font-medium text-gray-500">学校名称</h3>
+                            <p>{formData.school_name}</p>
+                        </div>
+                        <div>
+                            <h3 className="font-medium text-gray-500">管理员</h3>
+                            <p>{formData.admin_name} ({formData.admin_email})</p>
+                        </div>
+                    </div>
 
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">
-                <p className="font-medium">⚠️ 注意</p>
-                <ul className="text-sm mt-2 space-y-1">
-                    <li>• 安装将创建数据库表结构</li>
-                    <li>• 如果数据库已有数据，可能会被覆盖</li>
-                    <li>• 安装完成后请妥善保管管理员密码</li>
-                </ul>
-            </div>
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">
+                        <p className="font-medium">⚠️ 注意</p>
+                        <ul className="text-sm mt-2 space-y-1">
+                            <li>• 安装将创建数据库表结构</li>
+                            <li>• 如果数据库已有数据，可能会被覆盖</li>
+                            <li>• 安装完成后请妥善保管管理员密码</li>
+                        </ul>
+                    </div>
+                </>
+            )}
 
             <div className="flex justify-between">
                 <button
