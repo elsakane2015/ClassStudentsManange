@@ -40,16 +40,30 @@ function CalendarDetailModal({ isOpen, onClose, date, records }) {
                             {records.length === 0 ? (
                                 <p className="text-gray-500 text-center py-4">暂无考勤记录</p>
                             ) : (
-                                records.map((record, idx) => (
-                                    <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded text-sm">
-                                        <span className={`font-medium ${statusColors[record.status] || 'text-gray-700'}`}>
-                                            {record.type}{record.option ? `(${record.option})` : ''}
-                                        </span>
-                                        <span className="text-gray-600">：</span>
-                                        <span className="text-gray-800">{record.student_no ? `${record.student_no} ` : ''}{record.student_name}</span>
-                                        <span className="text-gray-400 ml-auto">{record.time}</span>
-                                    </div>
-                                ))
+                                records.map((record, idx) => {
+                                    // 生成审批状态标签
+                                    let approvalBadge = '';
+                                    if (record.is_self_applied) {
+                                        if (record.approval_status === 'pending') {
+                                            approvalBadge = '(待审)';
+                                        } else if (record.approval_status === 'approved') {
+                                            approvalBadge = '(已审批)';
+                                        } else if (record.approval_status === 'rejected') {
+                                            approvalBadge = '(已驳回)';
+                                        }
+                                    }
+
+                                    return (
+                                        <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded text-sm">
+                                            <span className={`font-medium ${statusColors[record.status] || 'text-gray-700'}`}>
+                                                {record.type}{record.option ? `(${record.option})` : ''}{approvalBadge}
+                                            </span>
+                                            <span className="text-gray-600">：</span>
+                                            <span className="text-gray-800">{record.student_no ? `${record.student_no} ` : ''}{record.student_name}</span>
+                                            <span className="text-gray-400 ml-auto">{record.time}</span>
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
                     </div>
@@ -214,15 +228,27 @@ export default function AttendanceCalendar({ user }) {
 
         return (
             <div className="mt-1 space-y-0.5">
-                {displayRecords.map((record, idx) => (
-                    <div
-                        key={idx}
-                        className={`text-[10px] leading-tight truncate ${statusColors[record.status] || 'text-gray-600'}`}
-                        title={`${record.type}${record.option ? `(${record.option})` : ''}: ${record.student_name} ${record.time}`}
-                    >
-                        {record.type}{record.option ? `(${record.option})` : ''}: {record.student_name}
-                    </div>
-                ))}
+                {displayRecords.map((record, idx) => {
+                    // 生成审批状态标签
+                    let approvalBadge = '';
+                    if (record.is_self_applied) {
+                        if (record.approval_status === 'pending') {
+                            approvalBadge = '(待审)';
+                        } else if (record.approval_status === 'approved') {
+                            approvalBadge = '(已审批)';
+                        }
+                    }
+
+                    return (
+                        <div
+                            key={idx}
+                            className={`text-[10px] leading-tight truncate ${statusColors[record.status] || 'text-gray-600'}`}
+                            title={`${record.type}${record.option ? `(${record.option})` : ''}${approvalBadge}: ${record.student_name} ${record.time}`}
+                        >
+                            {record.type}{record.option ? `(${record.option})` : ''}{approvalBadge}: {record.student_name}
+                        </div>
+                    );
+                })}
                 {remaining > 0 && (
                     <button
                         onClick={(e) => handleShowMore(day, records, e)}

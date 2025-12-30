@@ -11,6 +11,7 @@ class TimeSlot extends Model
         'name',
         'time_start',
         'time_end',
+        'period_ids',
         'sort_order',
         'is_active',
     ];
@@ -19,6 +20,7 @@ class TimeSlot extends Model
         'is_active' => 'boolean',
         'time_start' => 'datetime:H:i',
         'time_end' => 'datetime:H:i',
+        'period_ids' => 'array',
     ];
 
     public function school()

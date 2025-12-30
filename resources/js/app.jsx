@@ -12,7 +12,7 @@ import ClassAttendancePage from './pages/student/ClassAttendancePage';
 
 // Placeholder Pages
 import TeacherDashboard from './pages/teacher/Dashboard';
-import LeaveApprovals from './pages/teacher/LeaveApprovals';
+import ApprovalHistory from './pages/teacher/ApprovalHistory';
 import StudentImport from './pages/teacher/StudentImport';
 import StudentList from './pages/teacher/StudentList';
 import RollCallPage from './pages/teacher/RollCallPage';
@@ -84,7 +84,7 @@ function App() {
 
             <Route path="/teacher" element={<Navigate to="/teacher/dashboard" replace />} />
             <Route path="/teacher/dashboard" element={<RequireAuth><TeacherDashboard /></RequireAuth>} />
-            <Route path="/teacher/approvals" element={<RequireAuth><LeaveApprovals /></RequireAuth>} />
+            <Route path="/teacher/approvals" element={<RequireAuth><ApprovalHistory /></RequireAuth>} />
             <Route path="/teacher/import" element={<RequireAuth><StudentImport /></RequireAuth>} />
             <Route path="/teacher/students" element={<RequireAuth><StudentList /></RequireAuth>} />
 

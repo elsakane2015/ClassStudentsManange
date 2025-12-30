@@ -39,7 +39,7 @@ class LeaveRequestController extends Controller
         $user = $request->user();
         
         // Query attendance_records for self-applied leaves
-        $query = AttendanceRecord::with(['student.user', 'class', 'leaveType'])
+        $query = AttendanceRecord::with(['student.user', 'class', 'leaveType', 'approver'])
             ->where('is_self_applied', true);
 
         if ($user->role === 'student') {
@@ -86,6 +86,8 @@ class LeaveRequestController extends Controller
                 'images' => $first->images,
                 'status' => $first->approval_status ?? 'approved',
                 'approval_status' => $first->approval_status,
+                'approved_at' => $first->approved_at,
+                'approver_name' => $first->approver?->name,
                 'created_at' => $first->created_at,
                 'record_ids' => $group->pluck('id')->toArray(),
             ];
@@ -119,6 +121,7 @@ class LeaveRequestController extends Controller
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'half_day' => 'nullable|in:am,pm',
+            'time_slot_id' => 'nullable|exists:time_slots,id',
             'sessions' => 'nullable|array',
             'reason' => 'nullable|string',
             'images' => 'nullable|array',
@@ -168,6 +171,20 @@ class LeaveRequestController extends Controller
                 }
             }
         }
+        
+        // 处理时段：如果提供了 time_slot_id，获取其关联的节次
+        $periodIds = $request->sessions ?? [];
+        $timeSlotId = $request->time_slot_id;
+        
+        if ($timeSlotId) {
+            $timeSlot = \App\Models\TimeSlot::find($timeSlotId);
+            if ($timeSlot && !empty($timeSlot->period_ids)) {
+                $periodIds = $timeSlot->period_ids;
+                $details['time_slot_id'] = $timeSlotId;
+                $details['time_slot_name'] = $timeSlot->name;
+                $details['period_ids'] = $periodIds;
+            }
+        }
 
         // Create attendance records (UNIFIED DATA SOURCE)
         $start = Carbon::parse($request->start_date);
@@ -177,8 +194,9 @@ class LeaveRequestController extends Controller
         DB::beginTransaction();
         try {
             while ($start->lte($end)) {
-                if ($request->sessions) {
-                    foreach ($request->sessions as $periodId) {
+                if (!empty($periodIds)) {
+                    // 为每个节次创建独立的考勤记录
+                    foreach ($periodIds as $periodId) {
                         $record = AttendanceRecord::create([
                             'student_id' => $student->id,
                             'school_id' => $student->school_id,
@@ -197,6 +215,7 @@ class LeaveRequestController extends Controller
                         $createdRecords[] = $record;
                     }
                 } else {
+                    // 无特定节次，创建一条全天记录
                     $record = AttendanceRecord::create([
                         'student_id' => $student->id,
                         'school_id' => $student->school_id,
@@ -369,7 +388,14 @@ class LeaveRequestController extends Controller
      */
     protected function getOptionLabel($record)
     {
-        $option = $record->details['option'] ?? null;
+        $details = is_array($record->details) ? $record->details : (is_string($record->details) ? json_decode($record->details, true) : []);
+        
+        // 优先使用 time_slot_name（新的时段选择方式）
+        if (isset($details['time_slot_name'])) {
+            return $details['time_slot_name'];
+        }
+        
+        $option = $details['option'] ?? null;
         if (!$option || !$record->leaveType) {
             return null;
         }

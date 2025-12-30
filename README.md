@@ -220,6 +220,7 @@ echo "$(date)" > storage/installed
 # 应用配置
 APP_NAME="智慧校园考勤系统"
 APP_URL=https://your-domain.com
+APP_TIMEZONE=Asia/Shanghai    # 时区设置（默认UTC，中国用户改为 Asia/Shanghai）
 
 # 数据库配置
 DB_CONNECTION=mysql

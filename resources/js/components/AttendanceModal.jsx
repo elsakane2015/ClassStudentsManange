@@ -10,6 +10,7 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
     const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [periods, setPeriods] = useState([]);
+    const [timeSlots, setTimeSlots] = useState([]);
     const [submitting, setSubmitting] = useState(false);
 
     // Dynamic Input State (for leave types with input requirements)
@@ -20,6 +21,7 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
     useEffect(() => {
         fetchLeaveTypes();
         fetchPeriods();
+        fetchTimeSlots();
     }, []);
 
     useEffect(() => {
@@ -43,6 +45,15 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
             setPeriods(res.data.data || res.data || []);
         } catch (error) {
             console.error("Failed to load periods", error);
+        }
+    };
+
+    const fetchTimeSlots = async () => {
+        try {
+            const res = await axios.get('/time-slots');
+            setTimeSlots(res.data || []);
+        } catch (error) {
+            console.error("Failed to load time slots", error);
         }
     };
 
@@ -270,8 +281,8 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
                                 <label
                                     key={p.id}
                                     className={`flex items-center justify-center p-2 border rounded cursor-pointer ${inputData.periods?.includes(p.id)
-                                            ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
-                                            : 'hover:bg-gray-50'
+                                        ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
+                                        : 'hover:bg-gray-50'
                                         }`}
                                 >
                                     <input
@@ -295,27 +306,56 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
                 );
 
             case 'duration_select':
-                const options = config.options || [];
+                // 严格按照请假类型配置的 options 过滤系统时段
+                if (!config.options || config.options.length === 0) {
+                    return (
+                        <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
+                            该请假类型未配置可选时段
+                        </div>
+                    );
+                }
+
+                const allowedSlotKeys = config.options.map(opt =>
+                    typeof opt === 'object' ? opt.key : opt
+                );
+                const filteredSlots = timeSlots.filter(slot => {
+                    const slotKey = `time_slot_${slot.id}`;
+                    return allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id));
+                });
+
+                if (filteredSlots.length === 0) {
+                    return (
+                        <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
+                            该请假类型配置的时段不存在于系统时段中
+                        </div>
+                    );
+                }
+
                 return (
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">选择时长</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">选择时段</label>
                         <div className="space-y-2">
-                            {options.map(opt => {
-                                const optKey = typeof opt === 'object' ? opt.key : opt;
-                                const optLabel = typeof opt === 'object' && opt.label ? opt.label : optKey;
-                                return (
-                                    <label key={optKey} className="flex items-center">
-                                        <input
-                                            type="radio"
-                                            name="duration_opt"
-                                            className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                            checked={inputData.option === optKey}
-                                            onChange={() => setInputData({ ...inputData, option: optKey })}
-                                        />
-                                        <span className="ml-2 text-sm text-gray-700">{optLabel}</span>
-                                    </label>
-                                );
-                            })}
+                            {filteredSlots.map(slot => (
+                                <label key={slot.id} className="flex items-center">
+                                    <input
+                                        type="radio"
+                                        name="duration_opt"
+                                        className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                                        checked={inputData.time_slot_id === slot.id}
+                                        onChange={() => setInputData({
+                                            ...inputData,
+                                            time_slot_id: slot.id,
+                                            time_slot_name: slot.name,
+                                            period_ids: slot.period_ids || [],
+                                            option_periods: (slot.period_ids || []).length
+                                        })}
+                                    />
+                                    <span className="ml-2 text-sm text-gray-700">
+                                        {slot.name}
+                                        <span className="text-gray-400 text-xs ml-1">({(slot.period_ids || []).length}节)</span>
+                                    </span>
+                                </label>
+                            ))}
                         </div>
                     </div>
                 );
@@ -369,10 +409,10 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
                                         onClick={() => handleActionClick(lt)}
                                         disabled={submitting}
                                         className={`px-3 py-1 text-white rounded text-sm disabled:opacity-50 ${['late', 'early_leave'].includes(lt.slug)
-                                                ? 'bg-yellow-500 hover:bg-yellow-600'
-                                                : (lt.slug === 'absent'
-                                                    ? 'bg-red-600 hover:bg-red-700'
-                                                    : 'bg-blue-600 hover:bg-blue-700')
+                                            ? 'bg-yellow-500 hover:bg-yellow-600'
+                                            : (lt.slug === 'absent'
+                                                ? 'bg-red-600 hover:bg-red-700'
+                                                : 'bg-blue-600 hover:bg-blue-700')
                                             }`}
                                         title={lt.description}
                                     >

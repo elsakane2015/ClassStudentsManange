@@ -88,7 +88,14 @@ export default function LeaveApprovals() {
                                         </div>
                                     </div>
                                     <div className="mt-2 text-sm text-gray-700">
-                                        <p>日期: <span className="font-semibold">{format(new Date(request.start_date), 'MMM d, yyyy')}</span> - <span className="font-semibold">{format(new Date(request.end_date), 'MMM d, yyyy')}</span></p>
+                                        <p>
+                                            日期: <span className="font-semibold">{format(new Date(request.start_date), 'MMM d, yyyy')}</span> - <span className="font-semibold">{format(new Date(request.end_date), 'MMM d, yyyy')}</span>
+                                            {request.created_at && (
+                                                <span className="ml-3 text-gray-400">
+                                                    提交于 {format(new Date(request.created_at), 'HH:mm')}
+                                                </span>
+                                            )}
+                                        </p>
                                         <p className="mt-1 italic">"{request.reason}"</p>
                                     </div>
 

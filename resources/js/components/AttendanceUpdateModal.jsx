@@ -10,7 +10,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const [loading, setLoading] = useState(true);
     const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
     const [leaveTypes, setLeaveTypes] = useState([]);
-    const [periods, setPeriods] = useState([]); // 时段列表
+    const [periods, setPeriods] = useState([]); // 节次列表
+    const [timeSlots, setTimeSlots] = useState([]); // 时段列表（上午/下午/全天）
     const [selectedPeriod, setSelectedPeriod] = useState(null); // 选中的时段ID，null表示全天
 
     // Dynamic Input State
@@ -25,16 +26,30 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                 setLeaveTypes(res.data.data || res.data);
             }).catch(e => console.error("Failed to load leave types"));
 
-            // 获取节次列表（添加时间戳防止缓存）
-            axios.get('/class-periods', {
-                params: { _t: Date.now() }
-            }).then(res => {
-                const allPeriods = res.data.data || res.data || [];
-                console.log('[Class Periods] API returned:', allPeriods);
-                console.log('[Class Periods] Count:', allPeriods.length);
-                // 后端已经过滤和限制了，前端直接使用
-                setPeriods(allPeriods);
-            }).catch(e => console.error("Failed to load periods"));
+            // 从系统设置获取节次列表
+            axios.get('/settings').then(res => {
+                const settingsObj = {};
+                res.data.forEach(s => settingsObj[s.key] = s.value);
+                if (settingsObj.attendance_periods) {
+                    try {
+                        const periodsData = typeof settingsObj.attendance_periods === 'string'
+                            ? JSON.parse(settingsObj.attendance_periods)
+                            : settingsObj.attendance_periods;
+                        setPeriods(Array.isArray(periodsData) ? periodsData : []);
+                    } catch (e) {
+                        console.warn('Failed to parse attendance_periods', e);
+                        setPeriods([]);
+                    }
+                }
+            }).catch(e => console.error("Failed to load settings"));
+
+            // 获取时段列表（用于 duration_select）
+            axios.get('/time-slots').then(res => {
+                const slots = res.data || [];
+                // 按 sort_order 排序
+                slots.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+                setTimeSlots(slots);
+            }).catch(e => console.error("Failed to load time slots"));
         }
     }, [isOpen, date]);
 
@@ -191,22 +206,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             let shouldLoopPeriods = true; // 是否需要循环每个节次
 
             if (details) {
-                if (details.option === 'full_day') {
-                    // 全天 - 创建全天记录，会删除所有时段记录
-                    periodIds = [null];
-                } else if (details.option === 'morning_exercise') {
-                    // 早操 - ID=8
-                    periodIds = [8];
-                } else if (details.option === 'evening_exercise') {
-                    // 晚操 - ID=9
-                    periodIds = [9];
-                } else if (details.option === 'morning_half') {
-                    // 上午半天 - 使用第1节代表
-                    periodIds = [1];
-                } else if (details.option === 'afternoon_half') {
-                    // 下午半天 - 使用第6节代表
-                    periodIds = [6];
-                } else if (details.time) {
+                if (details.time) {
                     // 有时间输入（迟到/早退）
                     // 如果用户选择了节次，使用用户选择的节次
                     // 否则使用默认值：迟到用第1节，早退用第8节
@@ -225,6 +225,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                     periodIds = [details.periods[0]];
                     shouldLoopPeriods = false; // 不循环，只发送一次
                 }
+                // 对于 duration_select 类型的选项（如"上午"、"下午"），
+                // 不需要前端指定 period_id，后端会根据 option 动态生成
             }
 
             // 为每个时段发送请求（旷课只发送一次）
@@ -300,17 +302,24 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     };
 
     // 删除考勤记录
-    const handleDeleteRecord = async (studentId, periodId) => {
+    const handleDeleteRecord = async (studentId, record) => {
         if (!window.confirm('确定要撤销这条考勤记录吗？')) {
             return;
         }
+
+        const details = typeof record.details === 'string'
+            ? JSON.parse(record.details || '{}')
+            : (record.details || {});
 
         try {
             await axios.delete(`/attendance/records`, {
                 params: {
                     student_id: studentId,
                     date: formattedDate,
-                    period_id: periodId
+                    period_id: record.period_id,
+                    option: details.option,
+                    source_type: record.source_type,
+                    source_id: record.source_id
                 }
             });
 
@@ -392,8 +401,9 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             if (lt) leaveTypeName = lt.name;
         }
 
-        // For excused or leave status with leave type, show the leave type name directly
-        if (leaveTypeName && (status === 'leave' || status === 'excused')) {
+        // 优先使用 leaveTypeName（请假类型名称），而不是硬编码的 labels
+        // 这样 "旷课"、"迟到"、"早退" 等都会显示实际配置的名称
+        if (leaveTypeName) {
             label = leaveTypeName;
         }
 
@@ -408,10 +418,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                 detailText = `(第${details.periods.join(',')}节)`; // 兼容旧数据
             }
             if (details.option) {
-                // 从leaveType的input_config中获取label
-                let optionLabel = details.option;
+                // 优先使用保存的 option_label，然后从 leaveType 的 input_config 中获取 label
+                let optionLabel = details.option_label || details.option;
 
-                if (leaveTypeId) {
+                // 如果没有保存的 label，尝试从配置中查找（兼容旧数据）
+                if (!details.option_label && leaveTypeId) {
                     const leaveType = leaveTypes.find(lt => lt.id === leaveTypeId);
                     if (leaveType && leaveType.input_config) {
                         try {
@@ -473,7 +484,6 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                             {/* Action Toolbar */}
                             <div className="flex flex-wrap gap-2 mb-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                                 <span className="text-sm text-gray-500 flex items-center mr-2">批量标记 ({selectedStudentIds.size}人):</span>
-                                <button onClick={() => handleActionClick('present')} className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700">出勤</button>
 
                                 {leaveTypes.map(lt => (
                                     <button
@@ -523,53 +533,45 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{student.student_no}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{student.user?.name}</td>
                                                     <td className="px-6 py-4">
-                                                        {/* 显示多个状态 */}
-                                                        {records.length === 0 && (
-                                                            <StatusBadge status="present" />
-                                                        )}
-                                                        {records.length > 0 && (
-                                                            <div className="flex flex-wrap items-center gap-1">
-                                                                {/* 全天基础状态 */}
-                                                                {records.find(r => r.period_id === null) && (
-                                                                    <>
-                                                                        <StatusBadge
-                                                                            status={records.find(r => r.period_id === null).status}
-                                                                            details={records.find(r => r.period_id === null).details}
-                                                                            leaveTypeId={records.find(r => r.period_id === null).leave_type_id}
-                                                                            leaveType={records.find(r => r.period_id === null).leave_type}
-                                                                            displayLabel={records.find(r => r.period_id === null).display_label}
-                                                                            onClick={records.find(r => r.period_id === null).status !== 'present'
-                                                                                ? () => handleDeleteRecord(student.id, null)
-                                                                                : undefined}
-                                                                        />
-                                                                        {records.filter(r => r.period_id !== null).length > 0 && (
-                                                                            <span className="text-gray-400">|</span>
-                                                                        )}
-                                                                    </>
-                                                                )}
+                                                        {/* 显示异常状态，无异常则显示 - */}
+                                                        {(() => {
+                                                            // 过滤掉 status='present' 的记录，只显示异常状态
+                                                            const nonPresentRecords = records.filter(r => r.status !== 'present');
 
-                                                                {/* 时段记录 */}
-                                                                {records.filter(r => r.period_id !== null).map((record, idx) => {
-                                                                    return (
-                                                                        <React.Fragment key={idx}>
-                                                                            <StatusBadge
-                                                                                status={record.status}
-                                                                                details={record.details}
-                                                                                leaveTypeId={record.leave_type_id}
-                                                                                leaveType={record.leave_type}
-                                                                                displayLabel={record.display_label}
-                                                                                periodId={record.period_id}
-                                                                                period={record.period}
-                                                                                onClick={() => handleDeleteRecord(student.id, record.period_id)}
-                                                                            />
-                                                                            {idx < records.filter(r => r.period_id !== null).length - 1 && (
-                                                                                <span className="text-gray-400">|</span>
-                                                                            )}
-                                                                        </React.Fragment>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        )}
+                                                            // 如果没有异常记录，显示 "-"（出勤是默认状态，无需标记）
+                                                            if (nonPresentRecords.length === 0) {
+                                                                return <span className="text-gray-400">-</span>;
+                                                            }
+
+                                                            // 显示所有异常记录
+                                                            return (
+                                                                <div className="flex flex-wrap items-center gap-1">
+                                                                    {nonPresentRecords.map((record, idx) => {
+                                                                        const details = typeof record.details === 'string'
+                                                                            ? JSON.parse(record.details || '{}')
+                                                                            : (record.details || {});
+
+                                                                        return (
+                                                                            <React.Fragment key={record.id || idx}>
+                                                                                <StatusBadge
+                                                                                    status={record.status}
+                                                                                    details={record.details}
+                                                                                    leaveTypeId={record.leave_type_id}
+                                                                                    leaveType={record.leave_type}
+                                                                                    displayLabel={record.display_label}
+                                                                                    periodId={record.period_id}
+                                                                                    period={record.period}
+                                                                                    onClick={() => handleDeleteRecord(student.id, record)}
+                                                                                />
+                                                                                {idx < nonPresentRecords.length - 1 && (
+                                                                                    <span className="text-gray-400">|</span>
+                                                                                )}
+                                                                            </React.Fragment>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </td>
                                                 </tr>
                                             );
@@ -695,7 +697,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                             else setInputData({ ...inputData, periods: [...current, p.id] });
                                                                         }}
                                                                     />
-                                                                    第{index + 1}节
+                                                                    {p.name}
                                                                 </label>
                                                             ));
                                                         })()}
@@ -706,41 +708,34 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
 
                                         {pendingAction?.leaveType?.input_type === 'duration_select' && (
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-2">选择时长</label>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">选择时段</label>
                                                 <div className="space-y-2">
-                                                    {(() => {
-                                                        // 解析input_config
-                                                        let options = [];
-                                                        try {
-                                                            const config = typeof pendingAction.leaveType.input_config === 'string'
-                                                                ? JSON.parse(pendingAction.leaveType.input_config)
-                                                                : pendingAction.leaveType.input_config;
-                                                            options = config?.options || [];
-                                                        } catch (e) {
-                                                            console.error('Failed to parse input_config:', e);
-                                                            options = [];
-                                                        }
-
-                                                        return options.map(opt => {
-                                                            // 优先使用配置中的label
-                                                            const optKey = typeof opt === 'object' ? opt.key : opt;
-                                                            const optLabel = typeof opt === 'object' && opt.label ? opt.label : optKey;
-
-                                                            return (
-                                                                <label key={optKey} className="flex items-center">
-                                                                    <input
-                                                                        type="radio"
-                                                                        name="duration_opt"
-                                                                        className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                                                        onChange={() => setInputData({ ...inputData, option: optKey })}
-                                                                    />
-                                                                    <span className="ml-2 text-sm text-gray-700">
-                                                                        {optLabel}
-                                                                    </span>
-                                                                </label>
-                                                            );
-                                                        })
-                                                    })()}
+                                                    {timeSlots.length === 0 ? (
+                                                        <p className="text-sm text-gray-400">暂无时段配置，请联系管理员配置</p>
+                                                    ) : (
+                                                        timeSlots.filter(slot => slot.is_active).map(slot => (
+                                                            <label key={slot.id} className="flex items-center">
+                                                                <input
+                                                                    type="radio"
+                                                                    name="duration_opt"
+                                                                    className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                                                                    checked={inputData.time_slot_id === slot.id}
+                                                                    onChange={() => setInputData({
+                                                                        ...inputData,
+                                                                        time_slot_id: slot.id,
+                                                                        option: `time_slot_${slot.id}`,
+                                                                        option_label: slot.name,
+                                                                        option_periods: (slot.period_ids || []).length || 1,
+                                                                        period_ids: slot.period_ids || []
+                                                                    })}
+                                                                />
+                                                                <span className="ml-2 text-sm text-gray-700">
+                                                                    {slot.name}
+                                                                    <span className="text-gray-400 text-xs ml-1">({(slot.period_ids || []).length || 1}节)</span>
+                                                                </span>
+                                                            </label>
+                                                        ))
+                                                    )}
                                                 </div>
                                             </div>
                                         )}

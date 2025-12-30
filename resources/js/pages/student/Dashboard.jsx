@@ -7,6 +7,7 @@ import useAuthStore from '../../store/authStore';
 import AttendanceUpdateModal from '../../components/AttendanceUpdateModal';
 import StudentCalendar from '../../components/StudentCalendar';
 import WechatBindCard from '../../components/WechatBindCard';
+import GroupedRecordsList from '../../components/GroupedRecordsList';
 
 export default function StudentDashboard() {
     const navigate = useNavigate();
@@ -168,16 +169,34 @@ export default function StudentDashboard() {
                             const details = typeof record.details === 'string'
                                 ? JSON.parse(record.details)
                                 : record.details;
-                            if (details.option && record.leave_type?.input_config) {
-                                const config = typeof record.leave_type.input_config === 'string'
-                                    ? JSON.parse(record.leave_type.input_config)
-                                    : record.leave_type.input_config;
-                                if (config.options) {
-                                    const opt = config.options.find(o =>
-                                        (typeof o === 'object' ? o.key : o) === details.option
-                                    );
-                                    if (opt) {
-                                        detailLabel = typeof opt === 'object' ? opt.label : opt;
+
+                            // 优先使用时段名称（自主请假选择的时段，如"上午"、"下午"）
+                            if (details.time_slot_name) {
+                                detailLabel = details.time_slot_name;
+                                // 处理时间（迟到/早退）
+                            } else if (details.time) {
+                                detailLabel = details.time;
+                                // 处理节次信息（旷课等）
+                            } else if (details.period_numbers && details.period_numbers.length > 0) {
+                                detailLabel = `第${details.period_numbers.join(',')}节`;
+                            } else if (details.periods && details.periods.length > 0) {
+                                detailLabel = `第${details.periods.join(',')}节`;
+                                // 处理 option（上午/下午等）
+                            } else if (details.option) {
+                                // 优先使用保存的 option_label
+                                if (details.option_label) {
+                                    detailLabel = details.option_label;
+                                } else if (record.leave_type?.input_config) {
+                                    const config = typeof record.leave_type.input_config === 'string'
+                                        ? JSON.parse(record.leave_type.input_config)
+                                        : record.leave_type.input_config;
+                                    if (config.options) {
+                                        const opt = config.options.find(o =>
+                                            (typeof o === 'object' ? o.key : o) === details.option
+                                        );
+                                        if (opt) {
+                                            detailLabel = typeof opt === 'object' ? opt.label : opt;
+                                        }
                                     }
                                 }
                             }
@@ -204,7 +223,7 @@ export default function StudentDashboard() {
                         color: color,
                         allDay: true,
                         type: record.leave_type?.name || record.status,
-                        detail: detailLabel,
+                        // detail 已包含在 title 中，不再重复设置
                         note: record.reason || record.note || '',
                         approvalStatus: record.approval_status,
                         isSelfApplied: record.is_self_applied,
@@ -351,7 +370,7 @@ export default function StudentDashboard() {
                                 {/* Pending Requests Card for Class Admin */}
                                 {isClassAdmin && stats.pending_requests !== undefined && (
                                     <Link
-                                        to="/teacher/approvals"
+                                        to="/teacher/approvals?status=pending"
                                         className="bg-gray-50 p-4 rounded-lg border-l-4 border-amber-500 hover:bg-gray-100 transition cursor-pointer"
                                     >
                                         <div className="text-gray-500 text-sm">待审批请假</div>
@@ -426,33 +445,37 @@ export default function StudentDashboard() {
                                 <p className="text-gray-600 mb-3">{detailModal.message}</p>
                             )}
 
-                            {detailModal.records.length === 0 && !detailModal.message ? (
-                                <p className="text-gray-500 text-center py-4">暂无记录</p>
-                            ) : detailModal.records.length === 0 && detailModal.message ? null : (
-                                <div className="space-y-3">
-                                    {detailModal.records.map((record, idx) => (
-                                        <div key={idx} className="border rounded-lg p-3 bg-gray-50">
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <div className="font-medium">
-                                                        {record.date}
-                                                        {record.time && <span className="text-gray-500 ml-2">{record.time}</span>}
-                                                    </div>
-                                                    <div className="text-sm text-gray-600">
-                                                        {record.type_name}
-                                                        {record.detail_label && `(${record.detail_label})`}
-                                                    </div>
-                                                </div>
+                            <GroupedRecordsList
+                                records={detailModal.records}
+                                emptyText={detailModal.message ? null : '暂无记录'}
+                                renderRecord={(record, idx) => (
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-medium text-gray-800">
+                                                    {record.date?.split('T')[0]?.replace(/-/g, '.')}
+                                                </span>
+                                                {record.time && (
+                                                    <span className="text-gray-500 text-sm">{record.time}</span>
+                                                )}
+                                            </div>
+                                            <div className="text-sm text-gray-600 mt-1">
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                                    {record.type_name}
+                                                </span>
+                                                {record.detail_label && (
+                                                    <span className="ml-2 text-gray-500">({record.detail_label})</span>
+                                                )}
                                             </div>
                                             {record.note && (
-                                                <div className="text-sm text-gray-500 mt-2 border-t pt-2">
+                                                <div className="text-sm text-gray-500 mt-1">
                                                     备注: {record.note}
                                                 </div>
                                             )}
                                         </div>
-                                    ))}
-                                </div>
-                            )}
+                                    </div>
+                                )}
+                            />
 
                             <div className="mt-4 flex justify-end">
                                 <button

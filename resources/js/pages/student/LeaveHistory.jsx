@@ -114,9 +114,15 @@ export default function LeaveHistory() {
                                         <div className="mb-2">
                                             {getStatusBadge(leave.status)}
                                         </div>
-                                        <div className="text-xs text-gray-500 mb-2">
-                                            申请于: {format(new Date(leave.created_at), 'yyyy-MM-dd')}
+                                        <div className="text-xs text-gray-500 mb-1">
+                                            提交于: {format(new Date(leave.created_at), 'yyyy-MM-dd HH:mm')}
                                         </div>
+                                        {leave.approved_at && (leave.status === 'approved' || leave.status === 'rejected') && (
+                                            <div className="text-xs text-gray-500">
+                                                {leave.status === 'approved' ? '批准于' : '驳回于'}: {format(new Date(leave.approved_at), 'yyyy-MM-dd HH:mm')}
+                                                {leave.approver_name && ` (${leave.approver_name})`}
+                                            </div>
+                                        )}
 
                                         {/* Edit/Delete buttons for pending requests */}
                                         {leave.status === 'pending' && (

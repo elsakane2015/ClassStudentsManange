@@ -46,4 +46,9 @@ class LeaveRequest extends Model
     {
         return $this->belongsTo(LeaveType::class, 'type', 'slug');
     }
+
+    public function timeSlot()
+    {
+        return $this->belongsTo(TimeSlot::class);
+    }
 }

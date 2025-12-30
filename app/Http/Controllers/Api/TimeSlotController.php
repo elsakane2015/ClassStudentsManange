@@ -40,6 +40,8 @@ class TimeSlotController extends Controller
             'name' => 'required|string|max:50',
             'time_start' => 'required|date_format:H:i',
             'time_end' => 'required|date_format:H:i',
+            'period_ids' => 'nullable|array',
+            'period_ids.*' => 'integer',
             'sort_order' => 'nullable|integer',
             'is_active' => 'boolean',
         ]);
@@ -65,6 +67,8 @@ class TimeSlotController extends Controller
             'name' => 'sometimes|string|max:50',
             'time_start' => 'sometimes|date_format:H:i',
             'time_end' => 'sometimes|date_format:H:i',
+            'period_ids' => 'nullable|array',
+            'period_ids.*' => 'integer',
             'sort_order' => 'nullable|integer',
             'is_active' => 'boolean',
         ]);

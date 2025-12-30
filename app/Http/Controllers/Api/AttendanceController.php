@@ -415,13 +415,10 @@ class AttendanceController extends Controller
                 $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
                 if (isset($details['roll_call_type'])) {
                     $originalStatus = $details['original_status'] ?? $record->status;
-                    $statusLabel = match($originalStatus) {
-                        'absent' => '旷课',
-                        'late' => '迟到',
-                        'early_leave' => '早退',
-                        default => $originalStatus,
-                    };
-                    $record->display_label = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                    // 从 leave_type 表读取名称，而不是硬编码
+                    $leaveType = \App\Models\LeaveType::where('slug', $originalStatus)->first();
+                    $statusLabel = $leaveType ? $leaveType->name : $originalStatus;
+                    $record->display_label = $statusLabel . '(' . $details['roll_call_type'] . ')';
                 }
             }
             
@@ -437,9 +434,23 @@ class AttendanceController extends Controller
                  // 获取该学生的所有考勤记录（可能有多条）
                  $studentRecords = $attendances->has($s->id) ? $attendances->get($s->id) : collect([]);
                  
-                 // 分离全天记录和时段记录
-                 $fullDayRecord = $studentRecords->firstWhere('period_id', null);
-                 $periodRecords = $studentRecords->where('period_id', '!=', null);
+                 // 区分记录类型：
+                 // 1. 真正的全天记录：period_id=null 且没有 option
+                 // 2. 时段选项记录：period_id=null 但有 option（如"上午"、"下午"）
+                 // 3. 具体时段记录：period_id != null
+                 $fullDayRecord = $studentRecords->first(function($rec) {
+                     if ($rec->period_id !== null) return false;
+                     $details = is_string($rec->details) ? json_decode($rec->details, true) : $rec->details;
+                     // 没有 option 或者 option 是"全天"类型的才是真正的全天记录
+                     $hasOption = isset($details['option']) && $details['option'] !== null;
+                     $isFullDayOption = isset($details['option_label']) && mb_strpos($details['option_label'], '全天') !== false;
+                     return !$hasOption || $isFullDayOption;
+                 });
+                 
+                 // 其他所有记录都视为"时段记录"（包括有option的记录和有period_id的记录）
+                 $periodRecords = $studentRecords->filter(function($rec) use ($fullDayRecord) {
+                     return $rec->id !== ($fullDayRecord->id ?? null);
+                 });
                  
                  $s->attendance = $studentRecords->toArray();
                  $s->attendance_summary = [
@@ -447,7 +458,7 @@ class AttendanceController extends Controller
                      'type' => $periodRecords->isNotEmpty() ? 'periods' : 'full_day',
                      'default_status' => $fullDayRecord?->status ?? 'present',
                      'period_count' => $periodRecords->count(),
-                     'statuses' => $periodRecords->pluck('status')->unique()->values()->toArray()
+                     'statuses' => $studentRecords->pluck('status')->unique()->values()->toArray()
                  ];
                  return $s;
              })->values();
@@ -547,6 +558,18 @@ class AttendanceController extends Controller
         $result = [];
         $leaveTypes = \App\Models\LeaveType::where('is_active', true)->get()->keyBy('id');
         
+        // 加载节次配置
+        $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+        $attendancePeriods = [];
+        if ($attendancePeriodsJson) {
+            try {
+                $attendancePeriods = json_decode($attendancePeriodsJson, true) ?: [];
+            } catch (\Exception $e) {
+                $attendancePeriods = [];
+            }
+        }
+        $periodMap = collect($attendancePeriods)->keyBy('id');
+        
         foreach ($records as $record) {
             // Ensure date is formatted as string for array key
             $dateKey = $record->date instanceof \Carbon\Carbon 
@@ -574,8 +597,15 @@ class AttendanceController extends Controller
             // Get time option label
             $optionLabel = '';
             $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+            $timeSlotId = $details['time_slot_id'] ?? null;
             
-            if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
+            // 优先使用时段名称（自主请假选择的时段，如"上午"、"下午"）
+            if (isset($details['time_slot_name'])) {
+                $optionLabel = $details['time_slot_name'];
+            // 其次检查 period_id（老师/管理员直接标记的具体节次，如"第9节"）
+            } elseif ($record->period_id && isset($periodMap[$record->period_id])) {
+                $optionLabel = $periodMap[$record->period_id]['name'] ?? "第{$record->period_id}节";
+            } elseif ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
                 $optionLabel = $details['roll_call_type'];
             } elseif (isset($details['option']) && $record->leaveType && $record->leaveType->input_config) {
                 $config = is_string($record->leaveType->input_config) 
@@ -602,7 +632,10 @@ class AttendanceController extends Controller
                 $recordTime = $record->created_at->setTimezone('Asia/Shanghai')->format('H:i');
             }
             
-            $result[$dateKey][] = [
+            // 创建合并键，用于去重同一学生同一时段的记录
+            $mergeKey = $record->student_id . '_' . ($timeSlotId ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
+            
+            $result[$dateKey][$mergeKey] = [
                 'id' => $record->id,
                 'type' => $typeLabel,
                 'option' => $optionLabel,
@@ -610,7 +643,14 @@ class AttendanceController extends Controller
                 'student_no' => $record->student?->student_no ?? '',
                 'time' => $recordTime,
                 'status' => $record->status,
+                'is_self_applied' => $record->is_self_applied ?? false,
+                'approval_status' => $record->approval_status,
             ];
+        }
+        
+        // 将合并后的结果转换为数组
+        foreach ($result as $dateKey => $records) {
+            $result[$dateKey] = array_values($records);
         }
         
         return response()->json($result);
@@ -650,13 +690,14 @@ class AttendanceController extends Controller
                     if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
                         // Use original_status from details if available (for accurate label)
                         $originalStatus = $details['original_status'] ?? $record->status;
-                        $statusLabel = match($originalStatus) {
-                            'absent' => '旷课',
-                            'late' => '迟到',
-                            'early_leave' => '早退',
-                            default => $originalStatus,
-                        };
-                        $detailLabel = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                        // 从 leave_type 表读取名称，而不是硬编码
+                        $leaveType = \App\Models\LeaveType::where('slug', $originalStatus)->first();
+                        $statusLabel = $leaveType ? $leaveType->name : $originalStatus;
+                        $detailLabel = $statusLabel . '(' . $details['roll_call_type'] . ')';
+                    }
+                    // 优先使用时段名称（自主请假选择的时段，如"上午"、"下午"）
+                    elseif (isset($details['time_slot_name'])) {
+                        $detailLabel = $details['time_slot_name'];
                     }
                     // Normal leave type handling
                     elseif ($record->details && $record->leaveType && $record->leaveType->input_config) {
@@ -692,10 +733,31 @@ class AttendanceController extends Controller
                     $record->record_time = $recordTime;
                     return $record;
                 });
+            
+            // 合并同一天、同一时段的记录（避免"上午"显示5条）
+            $grouped = [];
+            foreach ($attendance as $record) {
+                $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                $timeSlotId = $details['time_slot_id'] ?? null;
+                
+                // 如果有 time_slot_id，按日期+时段合并
+                if ($timeSlotId) {
+                    $key = $record->date . '_ts_' . $timeSlotId . '_' . $record->leave_type_id . '_' . $record->approval_status;
+                    if (!isset($grouped[$key])) {
+                        $grouped[$key] = $record;
+                    }
+                    // 已存在则跳过（保留第一条）
+                } else {
+                    // 没有 time_slot_id 的记录保持原样
+                    $grouped[] = $record;
+                }
+            }
+            
+            $mergedAttendance = collect(array_values($grouped));
                 
             // Return only attendance (leaves are now empty since all data is in attendance_records)
             return response()->json([
-                'attendance' => $attendance,
+                'attendance' => $mergedAttendance,
                 'leaves' => []  // Deprecated: all data now in attendance_records
             ]);
         } catch (\Exception $e) {
@@ -986,23 +1048,18 @@ class AttendanceController extends Controller
                     // Special handling for roll_call source
                     if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
                         $originalStatus = $details['original_status'] ?? $record->status;
-                        $statusLabel = match($originalStatus) {
-                            'absent' => '旷课',
-                            'late' => '迟到',
-                            'early_leave' => '早退',
-                            default => $originalStatus,
-                        };
-                        $typeName = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                        // 从 leave_type 表读取名称
+                        $leaveTypeModel = \App\Models\LeaveType::where('slug', $originalStatus)->first();
+                        $statusLabel = $leaveTypeModel ? $leaveTypeModel->name : $originalStatus;
+                        $typeName = $statusLabel . '(' . $details['roll_call_type'] . ')';
                     } else {
                         // Normal leave/absent/late/early_leave
-                        $typeName = $record->leaveType ? $record->leaveType->name : match($record->status) {
-                            'absent' => '旷课',
-                            'late' => '迟到',
-                            'early_leave' => '早退',
-                            'leave' => '请假',
-                            'excused' => '请假',
-                            default => $record->status,
-                        };
+                        if ($record->leaveType) {
+                            $typeName = $record->leaveType->name;
+                        } else {
+                            $leaveTypeModel = \App\Models\LeaveType::where('slug', $record->status)->first();
+                            $typeName = $leaveTypeModel ? $leaveTypeModel->name : $record->status;
+                        }
                         
                         // Add option label if available
                         if ($record->details && $record->leaveType && $record->leaveType->input_config) {
@@ -1072,15 +1129,17 @@ class AttendanceController extends Controller
                     if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
                         // Use original_status from details if available (for accurate label)
                         $originalStatus = $details['original_status'] ?? $record->status;
-                        $statusLabel = match($originalStatus) {
-                            'absent' => '旷课',
-                            'late' => '迟到',
-                            'early_leave' => '早退',
-                            default => $originalStatus,
-                        };
-                        $typeName = $details['roll_call_type'] . '(' . $statusLabel . ')';
+                        // 从 leave_type 表读取名称
+                        $leaveTypeModel = \App\Models\LeaveType::where('slug', $originalStatus)->first();
+                        $statusLabel = $leaveTypeModel ? $leaveTypeModel->name : $originalStatus;
+                        $typeName = $statusLabel . '(' . $details['roll_call_type'] . ')';
                     } else {
-                        $typeName = $record->leaveType ? $record->leaveType->name : $status;
+                        if ($record->leaveType) {
+                            $typeName = $record->leaveType->name;
+                        } else {
+                            $leaveTypeModel = \App\Models\LeaveType::where('slug', $record->status)->first();
+                            $typeName = $leaveTypeModel ? $leaveTypeModel->name : $status;
+                        }
                         
                         if ($record->details && $record->leaveType && $record->leaveType->input_config) {
                             $config = is_string($record->leaveType->input_config) ? json_decode($record->leaveType->input_config, true) : $record->leaveType->input_config;
@@ -1263,11 +1322,24 @@ class AttendanceController extends Controller
         $updatedCount = 0;
         
         // 获取请求中的period_id（如果有）
-        $periodId = $request->input('period_id', null);
+        $basePeriodId = $request->input('period_id', null);
 
         foreach ($request->records as $recordData) {
             $student = \App\Models\Student::find($recordData['student_id']);
             if (!$student) continue;
+            
+            // 根据details中的option确定如何存储记录
+            // 使用 period_id = null，但通过 option 来区分不同的时段记录
+            $periodId = $basePeriodId;
+            $details = $recordData['details'] ?? null;
+            $option = null;
+            
+            if ($details && isset($details['option'])) {
+                $option = $details['option'];
+                // 使用 period_id = null，记录由 option 区分
+                // 后端 AttendanceService 会处理去重逻辑
+                $periodId = null;
+            }
             
             // 使用AttendanceService创建时段记录
             $service = new \App\Services\AttendanceService();
@@ -1275,7 +1347,7 @@ class AttendanceController extends Controller
             $record = $service->record(
                 $student->id,
                 $date,
-                $periodId, // 如果为null，则创建全天记录；否则创建时段记录
+                $periodId, // 根据option确定的period_id
                 $recordData['status'],
                 [
                     'leave_type_id' => $recordData['leave_type_id'] ?? null,
@@ -1306,13 +1378,30 @@ class AttendanceController extends Controller
             'student_id' => 'required|exists:students,id',
             'date' => 'required|date',
             'period_id' => 'nullable|exists:class_periods,id',
+            'option' => 'nullable|string', // 用于删除带 option 的记录
+            'source_type' => 'nullable|string', // 用于删除指定来源的记录
+            'source_id' => 'nullable|integer', // 用于删除指定来源的记录
         ]);
         
-        // First, find the record to check if it's from a leave_request
-        $record = AttendanceRecord::where('student_id', $request->student_id)
-            ->where('date', $request->date)
-            ->where('period_id', $request->period_id)
-            ->first();
+        // 构建查询
+        $query = AttendanceRecord::where('student_id', $request->student_id)
+            ->where('date', $request->date);
+        
+        // 如果是点名来源的记录，按 source_type 和 source_id 匹配
+        if ($request->source_type === 'roll_call' && $request->source_id) {
+            $query->where('source_type', 'roll_call')
+                  ->where('source_id', $request->source_id);
+        } else {
+            // 普通记录按 period_id 匹配
+            $query->where('period_id', $request->period_id);
+        }
+        
+        // 如果提供了 option，按 option 过滤
+        if ($request->has('option') && $request->option) {
+            $query->whereRaw("JSON_EXTRACT(details, '$.option') = ?", [$request->option]);
+        }
+        
+        $record = $query->first();
         
         if (!$record) {
             return response()->json(['message' => 'Record not found.'], 404);
@@ -1337,6 +1426,54 @@ class AttendanceController extends Controller
                     'leave_request_cancelled' => true
                 ]);
             }
+        }
+        
+        // If the record is from roll_call, sync delete the roll_call_record and all related attendance records
+        if ($record->source_type === 'roll_call' && $record->source_id) {
+            $rollCallId = $record->source_id;
+            $studentId = $record->student_id;
+            
+            // 获取 details 中保存的 roll_call_record_id（如果有）
+            $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+            $rollCallRecordId = $details['roll_call_record_id'] ?? null;
+            
+            // 删除该学生该点名的所有考勤记录（可能有多条，因为 period_count > 1）
+            $deletedCount = AttendanceRecord::where('source_type', 'roll_call')
+                ->where('source_id', $rollCallId)
+                ->where('student_id', $studentId)
+                ->delete();
+            
+            // 更新 roll_call_record 状态为 present（签到）
+            $rollCallRecord = \App\Models\RollCallRecord::where('roll_call_id', $rollCallId)
+                ->where('student_id', $studentId)
+                ->first();
+            
+            if ($rollCallRecord) {
+                $rollCallRecord->update([
+                    'status' => 'present',
+                    'marked_at' => now(),
+                ]);
+                
+                // 更新 roll_call 的统计
+                $rollCall = \App\Models\RollCall::find($rollCallId);
+                if ($rollCall) {
+                    $presentCount = \App\Models\RollCallRecord::where('roll_call_id', $rollCallId)
+                        ->where('status', 'present')
+                        ->count();
+                    $rollCall->update(['present_count' => $presentCount]);
+                }
+                
+                \Log::info('Synced roll_call_record to present and deleted attendance records', [
+                    'roll_call_id' => $rollCallId,
+                    'student_id' => $studentId,
+                    'deleted_attendance_records' => $deletedCount
+                ]);
+            }
+            
+            return response()->json([
+                'message' => '记录已撤销，学生已标记为签到',
+                'deleted_count' => $deletedCount
+            ]);
         }
         
         // Regular delete for non-leave records

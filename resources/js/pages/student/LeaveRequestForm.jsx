@@ -12,6 +12,9 @@ export default function LeaveRequestForm() {
 
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [periods, setPeriods] = useState([]);
+    const [timeSlots, setTimeSlots] = useState([]);
+    const [selectedTimeSlotId, setSelectedTimeSlotId] = useState(null);
+    const [showPeriodDetail, setShowPeriodDetail] = useState(false);
     const [imageSettings, setImageSettings] = useState({
         enabled: false,
         max_count: 3,
@@ -23,6 +26,7 @@ export default function LeaveRequestForm() {
         start_date: searchParams.get('start') || '',
         end_date: searchParams.get('end') || '',
         half_day: '',
+        time_slot_id: null,
         reason: '',
         details: {},
         images: []
@@ -69,17 +73,33 @@ export default function LeaveRequestForm() {
         fetchImageSettings();
     }, [user]);
 
-    // Fetch class periods for period_select types
+    // Fetch periods from settings and time slots
     useEffect(() => {
-        const fetchPeriods = async () => {
+        const fetchPeriodsAndTimeSlots = async () => {
             try {
-                const response = await axios.get('/class-periods');
-                setPeriods(response.data.data || response.data || []);
+                // 获取节次配置
+                const settingsRes = await axios.get('/settings');
+                const settingsObj = {};
+                settingsRes.data.forEach(s => settingsObj[s.key] = s.value);
+                if (settingsObj.attendance_periods) {
+                    try {
+                        const periodsData = typeof settingsObj.attendance_periods === 'string'
+                            ? JSON.parse(settingsObj.attendance_periods)
+                            : settingsObj.attendance_periods;
+                        setPeriods(Array.isArray(periodsData) ? periodsData : []);
+                    } catch (e) {
+                        console.warn('Failed to parse attendance_periods', e);
+                    }
+                }
+
+                // 获取时段配置
+                const timeSlotsRes = await axios.get('/time-slots');
+                setTimeSlots(timeSlotsRes.data || []);
             } catch (err) {
-                console.error('Failed to fetch periods:', err);
+                console.error('Failed to fetch periods/time slots:', err);
             }
         };
-        fetchPeriods();
+        fetchPeriodsAndTimeSlots();
     }, []);
 
     // Set default option when leave type changes and has duration_select
@@ -98,10 +118,18 @@ export default function LeaveRequestForm() {
 
             const options = config?.options || [];
             if (options.length > 0 && !formData.details.option) {
-                const firstOptKey = typeof options[0] === 'object' ? options[0].key : options[0];
+                const firstOpt = options[0];
+                const firstOptKey = typeof firstOpt === 'object' ? firstOpt.key : firstOpt;
+                const firstOptLabel = typeof firstOpt === 'object' && firstOpt.label ? firstOpt.label : firstOptKey;
+                const firstOptPeriods = typeof firstOpt === 'object' && firstOpt.periods ? firstOpt.periods : 1;
                 setFormData(prev => ({
                     ...prev,
-                    details: { ...prev.details, option: firstOptKey }
+                    details: {
+                        ...prev.details,
+                        option: firstOptKey,
+                        option_label: firstOptLabel,
+                        option_periods: firstOptPeriods
+                    }
                 }));
             }
         }
@@ -146,12 +174,23 @@ export default function LeaveRequestForm() {
         setError(null);
 
         try {
-            await axios.post('/leave-requests', {
+            // 构建提交数据
+            const submitData = {
                 ...formData,
                 half_day: formData.half_day || null,
                 details: Object.keys(formData.details).length > 0 ? formData.details : null,
                 images: formData.images.length > 0 ? formData.images : null
-            });
+            };
+
+            // 如果选择了时段，传递 time_slot_id 和 sessions (period_ids)
+            if (formData.time_slot_id) {
+                submitData.time_slot_id = formData.time_slot_id;
+            }
+            if (formData.details?.period_ids && formData.details.period_ids.length > 0) {
+                submitData.sessions = formData.details.period_ids;
+            }
+
+            await axios.post('/leave-requests', submitData);
             alert('请假申请提交成功！');
             navigate('/student/dashboard');
         } catch (err) {
@@ -209,7 +248,7 @@ export default function LeaveRequestForm() {
                                 >
                                     <option value="">请选择节次</option>
                                     {periods.map((p, index) => (
-                                        <option key={p.id} value={p.id}>第{index + 1}节</option>
+                                        <option key={p.id} value={p.id}>{p.name}</option>
                                     ))}
                                 </select>
                             </div>
@@ -262,7 +301,7 @@ export default function LeaveRequestForm() {
                                         checked={formData.details.periods?.includes(p.id) || false}
                                         onChange={() => handlePeriodToggle(p.id)}
                                     />
-                                    第{index + 1}节
+                                    {p.name}
                                 </label>
                             ))}
                         </div>
@@ -270,32 +309,103 @@ export default function LeaveRequestForm() {
                 );
 
             case 'duration_select':
-                const durationOptions = inputConfig.options || [];
-                if (durationOptions.length === 0) return null;
+                // 使用时段配置而非请假类型的options
+                if (timeSlots.length === 0) {
+                    return (
+                        <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
+                            暂无时段配置，请联系管理员在系统设置中配置时段
+                        </div>
+                    );
+                }
 
                 if (formData.start_date && formData.end_date && formData.start_date !== formData.end_date) return null;
 
-                return (
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">选择时长</label>
-                        <div className="space-y-2">
-                            {durationOptions.map((opt, index) => {
-                                const optKey = typeof opt === 'object' ? opt.key : opt;
-                                const optLabel = typeof opt === 'object' && opt.label ? opt.label : optKey;
-                                return (
-                                    <label key={optKey} className="flex items-center">
-                                        <input
-                                            type="radio"
-                                            name="duration_option"
-                                            className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                            checked={formData.details.option === optKey || (index === 0 && !formData.details.option)}
-                                            onChange={() => handleDetailsChange('option', optKey)}
-                                        />
-                                        <span className="ml-2 text-sm text-gray-700">{optLabel}</span>
-                                    </label>
-                                );
-                            })}
+                // 严格按照请假类型配置的 options 显示时段
+                // inputConfig.options 格式: [{key: "time_slot_1", label: "早操"}, ...]
+                // 如果没有配置 options，则不显示时段选择器
+                if (!inputConfig.options || inputConfig.options.length === 0) {
+                    return (
+                        <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
+                            该请假类型未配置可选时段，请联系管理员
                         </div>
+                    );
+                }
+
+                const allowedSlotKeys = inputConfig.options.map(opt =>
+                    typeof opt === 'object' ? opt.key : opt
+                );
+                // 支持两种格式的 key: "time_slot_1" 或直接时段 ID
+                const filteredTimeSlots = timeSlots.filter(slot => {
+                    const slotKey = `time_slot_${slot.id}`;
+                    return allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id));
+                });
+
+                if (filteredTimeSlots.length === 0) {
+                    return (
+                        <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
+                            该请假类型配置的时段不存在于系统时段中，请联系管理员检查配置
+                        </div>
+                    );
+                }
+
+                const handleTimeSlotSelect = (slot) => {
+                    setSelectedTimeSlotId(slot.id);
+                    setFormData(prev => ({
+                        ...prev,
+                        time_slot_id: slot.id,
+                        details: {
+                            ...prev.details,
+                            time_slot_id: slot.id,
+                            time_slot_name: slot.name,
+                            period_ids: slot.period_ids || [],
+                            option_periods: (slot.period_ids || []).length
+                        }
+                    }));
+                };
+
+                const selectedSlot = timeSlots.find(s => s.id === selectedTimeSlotId);
+
+                return (
+                    <div className="space-y-3">
+                        <label className="block text-sm font-medium text-gray-700">选择时段</label>
+                        <div className="flex flex-wrap gap-2">
+                            {filteredTimeSlots.map(slot => (
+                                <button
+                                    key={slot.id}
+                                    type="button"
+                                    onClick={() => handleTimeSlotSelect(slot)}
+                                    className={`px-4 py-2 rounded-lg border text-sm transition-colors ${selectedTimeSlotId === slot.id
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white border-gray-300 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    {slot.name}
+                                    <span className={`text-xs ml-1 ${selectedTimeSlotId === slot.id ? 'text-indigo-200' : 'text-gray-400'}`}>
+                                        ({(slot.period_ids || []).length}节)
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {selectedSlot && selectedSlot.period_ids && selectedSlot.period_ids.length > 0 && (
+                            <div className="mt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPeriodDetail(!showPeriodDetail)}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                                >
+                                    {showPeriodDetail ? '▲ 收起节次详情' : '▼ 查看包含节次'}
+                                </button>
+                                {showPeriodDetail && (
+                                    <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-600">
+                                        包含节次：{selectedSlot.period_ids.map(pid => {
+                                            const period = periods.find(p => p.id === pid);
+                                            return period ? period.name : `节次${pid}`;
+                                        }).join('、')}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 );
 

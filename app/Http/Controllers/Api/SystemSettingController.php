@@ -51,4 +51,32 @@ class SystemSettingController extends Controller
 
         return response()->json(['message' => 'Settings updated successfully']);
     }
+    
+    /**
+     * Clean up deleted period ID from all time_slots
+     */
+    public function cleanupPeriod(Request $request)
+    {
+        $data = $request->validate([
+            'period_id' => 'required|integer'
+        ]);
+        
+        $periodId = $data['period_id'];
+        $updatedCount = 0;
+        
+        $timeSlots = \App\Models\TimeSlot::whereNotNull('period_ids')->get();
+        
+        foreach ($timeSlots as $slot) {
+            $periodIds = $slot->period_ids ?? [];
+            if (in_array($periodId, $periodIds)) {
+                $slot->period_ids = array_values(array_filter($periodIds, fn($id) => $id !== $periodId));
+                $slot->save();
+                $updatedCount++;
+            }
+        }
+        
+        return response()->json([
+            'message' => "Period ID {$periodId} removed from {$updatedCount} time slots"
+        ]);
+    }
 }

@@ -21,6 +21,8 @@ export default function RollCallPage() {
     const [selectedClassId, setSelectedClassId] = useState(null);
     const [classes, setClasses] = useState([]);
     const [leaveTypes, setLeaveTypes] = useState([]);
+    const [periods, setPeriods] = useState([]);  // 节次列表
+    const [selectedPeriodIds, setSelectedPeriodIds] = useState([]);  // 选中的节次ID（多选）
     // For department manager batch selection
     const [showBatchModal, setShowBatchModal] = useState(false);
     const [batchTypeId, setBatchTypeId] = useState(null);
@@ -34,16 +36,32 @@ export default function RollCallPage() {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const [typesRes, inProgressRes, classesRes, leaveTypesRes] = await Promise.all([
+            const [typesRes, inProgressRes, classesRes, leaveTypesRes, settingsRes] = await Promise.all([
                 axios.get('/roll-call-types'),
                 axios.get('/roll-calls/in-progress'),
                 axios.get('/options/classes'),
                 axios.get('/leave-types'),
+                axios.get('/settings'),  // 从系统设置获取节次配置
             ]);
             setRollCallTypes(typesRes.data);
             setInProgressRollCalls(inProgressRes.data);
             setClasses(classesRes.data || []);
             setLeaveTypes(leaveTypesRes.data || []);
+
+            // 从 settings 中解析 attendance_periods
+            const settingsObj = {};
+            settingsRes.data.forEach(s => settingsObj[s.key] = s.value);
+            if (settingsObj.attendance_periods) {
+                try {
+                    const periodsData = typeof settingsObj.attendance_periods === 'string'
+                        ? JSON.parse(settingsObj.attendance_periods)
+                        : settingsObj.attendance_periods;
+                    setPeriods(Array.isArray(periodsData) ? periodsData : []);
+                } catch (e) {
+                    console.warn('Failed to parse attendance_periods', e);
+                    setPeriods([]);
+                }
+            }
 
             // Set default class if available (auto-select for single-class teachers, not for department managers)
             if (classesRes.data?.length > 0 && !selectedClassId && !isDepartmentManager) {
@@ -67,6 +85,9 @@ export default function RollCallPage() {
         data.is_active = data.is_active === 'on';
         if (data.leave_type_id) data.leave_type_id = parseInt(data.leave_type_id);
         else delete data.leave_type_id;
+        // 使用选中的节次ID数组
+        data.period_ids = selectedPeriodIds.length > 0 ? selectedPeriodIds : null;
+        delete data.period_count;  // 移除旧字段
 
         try {
             if (editingType?._isGroup && batchTypeMode) {
@@ -98,6 +119,7 @@ export default function RollCallPage() {
             setEditingType(null);
             setBatchTypeMode(false);
             setBatchTypeClassIds([]);
+            setSelectedPeriodIds([]);  // 重置选中的节次
             fetchData();
         } catch (err) {
             alert('Error: ' + (err.response?.data?.error || err.response?.data?.message || err.message));
@@ -306,7 +328,7 @@ export default function RollCallPage() {
                                         <span className="hidden sm:inline">点名员</span>
                                     </Link>
                                     <button
-                                        onClick={() => { setEditingType(null); setShowTypeForm(true); }}
+                                        onClick={() => { setEditingType(null); setSelectedPeriodIds([]); setShowTypeForm(true); }}
                                         className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
                                     >
                                         <PlusIcon className="h-4 w-4" />
@@ -422,9 +444,20 @@ export default function RollCallPage() {
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">未到标记为</label>
                                     <select name="absent_status" defaultValue={editingType?.absent_status || 'absent'} className="input-field">
-                                        <option value="absent">旷课 (absent)</option>
-                                        <option value="late">迟到 (late)</option>
-                                        <option value="leave">请假 (leave)</option>
+                                        {/* 从请假类型中筛选出可用于未到标记的类型 */}
+                                        {leaveTypes
+                                            .filter(lt => ['absent', 'late', 'early_leave'].includes(lt.slug))
+                                            .map(lt => (
+                                                <option key={lt.slug} value={lt.slug}>{lt.name}</option>
+                                            ))
+                                        }
+                                        {/* 如果没有匹配的类型，提供默认选项 */}
+                                        {leaveTypes.filter(lt => ['absent', 'late', 'early_leave'].includes(lt.slug)).length === 0 && (
+                                            <>
+                                                <option value="absent">旷课</option>
+                                                <option value="late">迟到</option>
+                                            </>
+                                        )}
                                     </select>
                                 </div>
                                 <div>
@@ -435,6 +468,47 @@ export default function RollCallPage() {
                                             <option key={lt.id} value={lt.id}>{lt.name}</option>
                                         ))}
                                     </select>
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        关联节次
+                                        <span className="text-gray-400 font-normal ml-1">(用于考勤统计，可多选)</span>
+                                    </label>
+                                    <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+                                        {periods.map((p) => {
+                                            const isSelected = selectedPeriodIds.some(id => parseInt(id) === parseInt(p.id));
+                                            return (
+                                                <label
+                                                    key={p.id}
+                                                    className={`flex items-center justify-center p-2 border rounded cursor-pointer transition-colors text-sm ${isSelected
+                                                        ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
+                                                        : 'hover:bg-gray-50 border-gray-200'
+                                                        }`}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        className="sr-only"
+                                                        checked={isSelected}
+                                                        onChange={() => {
+                                                            const periodId = parseInt(p.id);
+                                                            setSelectedPeriodIds(prev =>
+                                                                prev.some(id => parseInt(id) === periodId)
+                                                                    ? prev.filter(id => parseInt(id) !== periodId)
+                                                                    : [...prev, periodId]
+                                                            );
+                                                        }}
+                                                    />
+                                                    {p.name}
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                    {periods.length === 0 && (
+                                        <p className="text-sm text-gray-400">暂无节次配置，请在系统设置中添加</p>
+                                    )}
+                                    <p className="text-xs text-gray-400 mt-2">
+                                        已选 {selectedPeriodIds.length} 个节次，缺勤时将生成对应的考勤记录
+                                    </p>
                                 </div>
                                 <label className="flex items-center col-span-2">
                                     <input name="is_active" type="checkbox" defaultChecked={editingType?.is_active ?? true} className="mr-2" />
@@ -474,7 +548,7 @@ export default function RollCallPage() {
                                                 <p className="text-sm text-gray-500 mt-1">{group.description}</p>
                                             )}
                                             <div className="text-xs text-gray-400 mt-2">
-                                                未到标记: {group.absent_status === 'absent' ? '旷课' : group.absent_status === 'late' ? '迟到' : '请假'}
+                                                未到标记: {leaveTypes.find(lt => lt.slug === group.absent_status)?.name || group.absent_status}
                                             </div>
                                             {group.creator && (
                                                 <div className="text-xs text-gray-400 mt-1">
@@ -486,9 +560,12 @@ export default function RollCallPage() {
                                             <button
                                                 onClick={() => {
                                                     // Edit group - enter batch mode with existing classes
-                                                    setEditingType({ ...group.types[0], _isGroup: true, _groupTypes: group.types });
+                                                    const firstType = group.types[0];
+                                                    setEditingType({ ...firstType, _isGroup: true, _groupTypes: group.types });
                                                     setBatchTypeMode(true);
                                                     setBatchTypeClassIds(group.classIds);
+                                                    // 确保 period_ids 转换为整数数组
+                                                    setSelectedPeriodIds((firstType.period_ids || []).map(id => parseInt(id)));
                                                     setShowTypeForm(true);
                                                 }}
                                                 className="text-indigo-600 hover:text-indigo-800 p-1"
@@ -552,7 +629,7 @@ export default function RollCallPage() {
                                                 <p className="text-sm text-gray-500 mt-1">{type.description}</p>
                                             )}
                                             <div className="text-xs text-gray-400 mt-2">
-                                                未到标记: {type.absent_status === 'absent' ? '旷课' : type.absent_status === 'late' ? '迟到' : '请假'}
+                                                未到标记: {leaveTypes.find(lt => lt.slug === type.absent_status)?.name || type.absent_status}
                                             </div>
                                             {/* Show creator info */}
                                             {type.creator && (
@@ -564,7 +641,12 @@ export default function RollCallPage() {
                                         {isTeacherOrAdmin && (
                                             <div className="flex gap-1">
                                                 <button
-                                                    onClick={() => { setEditingType(type); setShowTypeForm(true); }}
+                                                    onClick={() => {
+                                                        setEditingType(type);
+                                                        // 确保 period_ids 转换为整数数组
+                                                        setSelectedPeriodIds((type.period_ids || []).map(id => parseInt(id)));
+                                                        setShowTypeForm(true);
+                                                    }}
                                                     className="text-indigo-600 hover:text-indigo-800 p-1"
                                                     title="编辑"
                                                 >

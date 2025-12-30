@@ -188,6 +188,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // System Settings
     Route::get('/settings', [\App\Http\Controllers\Api\SystemSettingController::class, 'index']);
     Route::post('/settings', [\App\Http\Controllers\Api\SystemSettingController::class, 'update']);
+    Route::post('/settings/cleanup-period', [\App\Http\Controllers\Api\SystemSettingController::class, 'cleanupPeriod']);
 
     // Time Slots (Admin only)
     Route::apiResource('time-slots', \App\Http\Controllers\Api\TimeSlotController::class);

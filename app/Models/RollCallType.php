@@ -13,6 +13,7 @@ class RollCallType extends Model
         'description',
         'absent_status',
         'leave_type_id',
+        'period_ids',  // 关联的节次ID数组
         'is_active',
         'sort_order',
         'created_by',
@@ -20,6 +21,7 @@ class RollCallType extends Model
 
     protected $casts = [
         'is_active' => 'boolean',
+        'period_ids' => 'array',  // JSON 自动转换为数组
     ];
 
     public function school()

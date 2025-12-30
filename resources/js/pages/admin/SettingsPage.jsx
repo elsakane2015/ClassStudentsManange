@@ -6,6 +6,7 @@ import { zhCN } from 'date-fns/locale';
 import { PlusIcon, TrashIcon, PencilIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import WechatSettings from './WechatSettings';
 import LeaveImageSettings from './LeaveImageSettings';
+import AttendanceSettings from './AttendanceSettings';
 
 // Calendar Component
 import { differenceInCalendarWeeks } from 'date-fns'; // Ensure this is imported
@@ -132,7 +133,7 @@ const CalendarSelector = ({ startDateStr, totalWeeks, holidays, onToggleDate, we
     );
 };
 
-const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [] }) => {
+const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attendancePeriods = [] }) => {
     const [inputType, setInputType] = useState(initialData?.input_type || 'none');
     const [config, setConfig] = useState(initialData?.input_config || {});
     // 动态选项管理（用于 duration_select）
@@ -310,8 +311,19 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [] }) => {
                         )}
                         {inputType === 'period_select' && (
                             <div>
-                                <label className="text-xs text-gray-500">最大节数</label>
-                                <input name="config_max_periods" type="number" defaultValue={config.max_periods || 8} className="input-field" />
+                                <label className="text-xs text-gray-500 mb-2 block">可选节次（来自考勤规则）</label>
+                                {attendancePeriods.length === 0 ? (
+                                    <p className="text-xs text-gray-400">请先在"考勤规则"中配置节次</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 rounded">
+                                        {attendancePeriods.map(period => (
+                                            <span key={period.id} className={`text-xs px-2 py-1 rounded ${period.type === 'special' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                {period.name}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                                <p className="text-xs text-gray-400 mt-2">共 {attendancePeriods.length} 个节次可供选择</p>
                             </div>
                         )}
                         {inputType === 'duration_select' && (
@@ -443,42 +455,40 @@ const SchoolSettings = () => {
     }
 
     return (
-        <div>
-            <h4 className="text-md font-bold text-gray-700 mb-4">学校设置</h4>
+        <div className="space-y-6">
+            <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-2">学校信息</h3>
+                <p className="text-sm text-gray-500 mb-4">配置学校基本信息，将显示在登录页面、导航栏和网页标题中</p>
 
-            {message.text && (
-                <div className={`p-3 rounded mb-4 ${message.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
-                    {message.text}
-                </div>
-            )}
+                {message.text && (
+                    <div className={`p-3 rounded-lg mb-4 ${message.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                        {message.text}
+                    </div>
+                )}
 
-            <form onSubmit={handleSubmit} className="bg-gray-50 p-4 rounded border">
-                <div className="mb-4">
-                    <label className="label">学校名称</label>
+                <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">学校名称</label>
                     <input
                         type="text"
                         value={schoolName}
                         onChange={(e) => setSchoolName(e.target.value)}
                         placeholder="请输入学校名称"
-                        className="input-field"
+                        className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                         required
                         maxLength={100}
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                        学校名称将显示在登录页面、导航栏和网页标题中
-                    </p>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex items-center gap-4">
                     <button
-                        type="submit"
+                        onClick={handleSubmit}
                         disabled={!hasChanges || saving}
-                        className={`btn-primary ${(!hasChanges || saving) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors ${(!hasChanges || saving) ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
-                        {saving ? '保存中...' : '保存'}
+                        {saving ? '保存中...' : '保存设置'}
                     </button>
                 </div>
-            </form>
+            </div>
         </div>
     );
 };
@@ -508,11 +518,13 @@ export default function SettingsPage() {
 
     // Settings State
     const [settings, setSettings] = useState({});
+    const [attendancePeriods, setAttendancePeriods] = useState([]);
 
     // Time Slots State
     const [timeSlots, setTimeSlots] = useState([]);
     const [editingTimeSlot, setEditingTimeSlot] = useState(null);
     const [showTimeSlotForm, setShowTimeSlotForm] = useState(false);
+    const [timeSlotPeriodIds, setTimeSlotPeriodIds] = useState([]);
 
     // Semester Form State (Controlled)
     const [semesterForm, setSemesterForm] = useState({
@@ -557,6 +569,19 @@ export default function SettingsPage() {
             const settingsObj = {};
             setRes.data.forEach(s => settingsObj[s.key] = s.value);
             setSettings(settingsObj);
+
+            // 解析节次配置
+            if (settingsObj.attendance_periods) {
+                try {
+                    const periods = typeof settingsObj.attendance_periods === 'string'
+                        ? JSON.parse(settingsObj.attendance_periods)
+                        : settingsObj.attendance_periods;
+                    setAttendancePeriods(Array.isArray(periods) ? periods : []);
+                } catch (e) {
+                    console.warn('Failed to parse attendance_periods', e);
+                    setAttendancePeriods([]);
+                }
+            }
         } catch (err) {
             console.warn("Failed to load settings", err);
             // Non-critical, just log
@@ -692,12 +717,31 @@ export default function SettingsPage() {
         const data = Object.fromEntries(formData);
         data.is_active = data.is_active === 'on';
         data.sort_order = parseInt(data.sort_order) || 0;
+        data.period_ids = timeSlotPeriodIds;
 
         try {
             if (editingTimeSlot) await axios.put(`/time-slots/${editingTimeSlot.id}`, data);
             else await axios.post('/time-slots', data);
-            setShowTimeSlotForm(false); setEditingTimeSlot(null); fetchData();
+            setShowTimeSlotForm(false); setEditingTimeSlot(null); setTimeSlotPeriodIds([]); fetchData();
         } catch (err) { alert('Error: ' + (err.response?.data?.message || err.message)); }
+    };
+
+    const openTimeSlotEdit = (slot) => {
+        setEditingTimeSlot(slot);
+        setTimeSlotPeriodIds(slot.period_ids || []);
+        setShowTimeSlotForm(true);
+    };
+
+    const openTimeSlotCreate = () => {
+        setEditingTimeSlot(null);
+        setTimeSlotPeriodIds([]);
+        setShowTimeSlotForm(true);
+    };
+
+    const toggleTimeSlotPeriod = (periodId) => {
+        setTimeSlotPeriodIds(prev =>
+            prev.includes(periodId) ? prev.filter(id => id !== periodId) : [...prev, periodId]
+        );
     };
 
     const deleteTimeSlot = async (id) => {
@@ -1003,6 +1047,7 @@ export default function SettingsPage() {
                                             key={editingLeaveType ? editingLeaveType.id : 'new'}
                                             initialData={editingLeaveType}
                                             timeSlots={timeSlots}
+                                            attendancePeriods={attendancePeriods}
                                             onSubmit={e => {
                                                 // Wrapper to match existing handler signature if needed, or update handler?
                                                 // handleLeaveTypeSubmit expects an event `e` with `e.target` as form.
@@ -1083,124 +1128,120 @@ export default function SettingsPage() {
 
                             {/* TIME SLOTS */}
                             {activeTab === 'timeSlots' && (
-                                <div>
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h4 className="text-md font-bold text-gray-700">时段配置</h4>
-                                        <button onClick={() => { setEditingTimeSlot(null); setShowTimeSlotForm(true); }} className="btn-primary">
-                                            <PlusIcon className="h-4 w-4 mr-1" /> 新增
-                                        </button>
-                                    </div>
-                                    <p className="text-sm text-gray-500 mb-4">配置可用于请假和点名的时段，如早操、上午、下午、晚操等。</p>
+                                <div className="space-y-6">
+                                    <div className="bg-white rounded-lg shadow p-6">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <div>
+                                                <h3 className="text-lg font-medium text-gray-900">时段管理</h3>
+                                                <p className="text-sm text-gray-500">配置请假时段（如上午/下午/全天），并关联对应的节次</p>
+                                            </div>
+                                            <button onClick={openTimeSlotCreate} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 inline-flex items-center">
+                                                <PlusIcon className="h-4 w-4 mr-1.5" />新增时段
+                                            </button>
+                                        </div>
 
-                                    {showTimeSlotForm && (
-                                        <form onSubmit={handleTimeSlotSubmit} className="bg-gray-50 p-4 rounded mb-4 border grid grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">名称</label>
-                                                <input required name="name" defaultValue={editingTimeSlot?.name} placeholder="早操" className="input-field" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">排序</label>
-                                                <input type="number" name="sort_order" defaultValue={editingTimeSlot?.sort_order || 0} className="input-field" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
-                                                <input required type="time" name="time_start" defaultValue={editingTimeSlot?.time_start?.substring(0, 5)} className="input-field" />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
-                                                <input required type="time" name="time_end" defaultValue={editingTimeSlot?.time_end?.substring(0, 5)} className="input-field" />
-                                            </div>
-                                            <label className="flex items-center col-span-2">
-                                                <input name="is_active" type="checkbox" defaultChecked={editingTimeSlot?.is_active ?? true} className="mr-2" /> 启用
-                                            </label>
-                                            <div className="col-span-2 flex justify-end space-x-2">
-                                                <button type="button" onClick={() => { setShowTimeSlotForm(false); setEditingTimeSlot(null); }} className="btn-secondary">取消</button>
-                                                <button type="submit" className="btn-primary">保存</button>
-                                            </div>
-                                        </form>
-                                    )}
+                                        {showTimeSlotForm && (
+                                            <form onSubmit={handleTimeSlotSubmit} className="bg-gray-50 p-4 rounded-lg mb-4 border space-y-4">
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">名称</label>
+                                                        <input required name="name" defaultValue={editingTimeSlot?.name} placeholder="上午" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">排序</label>
+                                                        <input type="number" name="sort_order" defaultValue={editingTimeSlot?.sort_order || 0} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+                                                        <input required type="time" name="time_start" defaultValue={editingTimeSlot?.time_start?.substring(0, 5)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-1">结束时间</label>
+                                                        <input required type="time" name="time_end" defaultValue={editingTimeSlot?.time_end?.substring(0, 5)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                                                    </div>
+                                                </div>
 
-                                    <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 rounded-lg">
-                                        <table className="min-w-full divide-y divide-gray-300">
-                                            <thead className="bg-gray-50">
-                                                <tr>
-                                                    <th className="text-left pl-4 sm:pl-6">名称</th>
-                                                    <th className="text-left">开始时间</th>
-                                                    <th className="text-left">结束时间</th>
-                                                    <th className="text-center">排序</th>
-                                                    <th className="text-center">状态</th>
-                                                    <th className="text-center pr-4 sm:pr-6">操作</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-gray-200 bg-white">
-                                                {timeSlots.map(slot => (
-                                                    <tr key={slot.id}>
-                                                        <td className="text-left pl-4 sm:pl-6 font-medium text-gray-900">{slot.name}</td>
-                                                        <td className="text-left">{slot.time_start?.substring(0, 5)}</td>
-                                                        <td className="text-left">{slot.time_end?.substring(0, 5)}</td>
-                                                        <td className="text-center text-gray-500">{slot.sort_order}</td>
-                                                        <td className="text-center">{slot.is_active ? <span className="badge-green">启用</span> : <span className="badge-gray">停用</span>}</td>
-                                                        <td className="text-center pr-4 sm:pr-6 space-x-2">
-                                                            <button onClick={() => { setEditingTimeSlot(slot); setShowTimeSlotForm(true); }} className="text-indigo-600" title="编辑"><PencilIcon className="h-4 w-4" /></button>
-                                                            <button onClick={() => deleteTimeSlot(slot.id)} className="text-red-600" title="删除"><TrashIcon className="h-4 w-4" /></button>
-                                                        </td>
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">关联节次（请假该时段时，将标记这些节次）</label>
+                                                    {attendancePeriods.length === 0 ? (
+                                                        <p className="text-sm text-gray-400">请先在"考勤规则"中配置节次</p>
+                                                    ) : (
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {attendancePeriods.map(period => (
+                                                                <label key={period.id} className={`cursor-pointer px-3 py-1.5 rounded-lg border text-sm transition-colors ${timeSlotPeriodIds.includes(period.id) ? 'bg-indigo-100 border-indigo-500 text-indigo-700' : 'bg-white border-gray-300 hover:bg-gray-50'}`}>
+                                                                    <input type="checkbox" className="sr-only" checked={timeSlotPeriodIds.includes(period.id)} onChange={() => toggleTimeSlotPeriod(period.id)} />
+                                                                    {period.name}
+                                                                </label>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    <p className="text-xs text-gray-400 mt-1">已选 {timeSlotPeriodIds.length} 个节次</p>
+                                                </div>
+
+                                                <div className="flex items-center justify-between">
+                                                    <label className="flex items-center">
+                                                        <input name="is_active" type="checkbox" defaultChecked={editingTimeSlot?.is_active ?? true} className="mr-2" />
+                                                        <span className="text-sm text-gray-700">启用</span>
+                                                    </label>
+                                                    <div className="flex space-x-2">
+                                                        <button type="button" onClick={() => { setShowTimeSlotForm(false); setEditingTimeSlot(null); setTimeSlotPeriodIds([]); }} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">取消</button>
+                                                        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">保存</button>
+                                                    </div>
+                                                </div>
+                                            </form>
+                                        )}
+
+                                        <div className="overflow-x-auto border rounded-lg">
+                                            <table className="min-w-full divide-y divide-gray-200">
+                                                <thead className="bg-gray-50">
+                                                    <tr>
+                                                        <th className="text-left pl-4 py-3 text-xs font-medium text-gray-500 uppercase">名称</th>
+                                                        <th className="text-left py-3 text-xs font-medium text-gray-500 uppercase">时间</th>
+                                                        <th className="text-left py-3 text-xs font-medium text-gray-500 uppercase">关联节次</th>
+                                                        <th className="text-center py-3 text-xs font-medium text-gray-500 uppercase">状态</th>
+                                                        <th className="text-center pr-4 py-3 text-xs font-medium text-gray-500 uppercase">操作</th>
                                                     </tr>
-                                                ))}
-                                                {timeSlots.length === 0 && (
-                                                    <tr><td colSpan="6" className="text-center py-4 text-gray-500">暂无时段配置，请点击"新增"添加</td></tr>
-                                                )}
-                                            </tbody>
-                                        </table>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-200 bg-white">
+                                                    {timeSlots.map(slot => (
+                                                        <tr key={slot.id}>
+                                                            <td className="text-left pl-4 py-3 font-medium text-gray-900">{slot.name}</td>
+                                                            <td className="text-left py-3 text-sm text-gray-500">{slot.time_start?.substring(0, 5)} - {slot.time_end?.substring(0, 5)}</td>
+                                                            <td className="text-left py-3">
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {(slot.period_ids || []).map(periodId => {
+                                                                        const period = attendancePeriods.find(p => p.id === periodId);
+                                                                        return period ? (
+                                                                            <span key={periodId} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded">{period.name}</span>
+                                                                        ) : null;
+                                                                    })}
+                                                                    {(!slot.period_ids || slot.period_ids.length === 0) && <span className="text-xs text-gray-400">未配置</span>}
+                                                                </div>
+                                                            </td>
+                                                            <td className="text-center py-3">{slot.is_active ? <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">启用</span> : <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">停用</span>}</td>
+                                                            <td className="text-center pr-4 py-3 space-x-2">
+                                                                <button onClick={() => openTimeSlotEdit(slot)} className="text-indigo-600 hover:text-indigo-900" title="编辑"><PencilIcon className="h-4 w-4 inline" /></button>
+                                                                <button onClick={() => deleteTimeSlot(slot.id)} className="text-red-600 hover:text-red-900" title="删除"><TrashIcon className="h-4 w-4 inline" /></button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {timeSlots.length === 0 && (
+                                                        <tr><td colSpan="5" className="text-center py-8 text-gray-400">暂无时段配置，请点击"新增时段"添加</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                        <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                                            <p className="text-sm text-gray-600">💡 时段用于学生请假时快速选择。例如选择"上午"请假，系统将自动标记关联的所有节次为请假状态。</p>
+                                        </div>
                                     </div>
                                 </div>
                             )}
 
                             {/* ATTENDANCE SETTINGS */}
                             {activeTab === 'attendance' && (
-                                <div>
-                                    <h4 className="text-md font-bold text-gray-700 mb-4">考勤规则设置</h4>
-                                    <form onSubmit={handleSettingsSubmit} className="bg-white p-6 rounded-lg border shadow-sm space-y-6">
-                                        <div className="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
-                                            <div className="sm:col-span-3">
-                                                <label className="label">自动出勤标记时间</label>
-                                                <p className="text-xs text-gray-500 mb-2">在此时间点，如果通过定时任务检测，系统将自动把未标记且未请假的学生设为“出勤”。</p>
-                                                <input
-                                                    type="time"
-                                                    value={settings.attendance_auto_mark_time || '08:30'}
-                                                    onChange={e => setSettings({ ...settings, attendance_auto_mark_time: e.target.value })}
-                                                    className="input-field max-w-xs"
-                                                />
-                                            </div>
-
-                                            <div className="sm:col-span-3">
-                                                <label className="label">每日总课时数 (节)</label>
-                                                <p className="text-xs text-gray-500 mb-2">用于统计每日出勤率的基础总数。</p>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    value={settings.daily_lessons_count || 8}
-                                                    onChange={e => setSettings({ ...settings, daily_lessons_count: parseInt(e.target.value) || 0 })}
-                                                    className="input-field max-w-xs"
-                                                />
-                                            </div>
-
-                                            <div className="sm:col-span-3">
-                                                <label className="label">旷课折算阈值 (节 &gt; 天)</label>
-                                                <p className="text-xs text-gray-500 mb-2">累计旷课多少节，在统计时视为旷课 1 天。</p>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    value={settings.absent_lessons_as_day || 3}
-                                                    onChange={e => setSettings({ ...settings, absent_lessons_as_day: parseInt(e.target.value) || 0 })}
-                                                    className="input-field max-w-xs"
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="flex justify-end">
-                                            <button type="submit" className="btn-primary">保存设置</button>
-                                        </div>
-                                    </form>
-                                </div>
+                                <AttendanceSettings />
                             )}
 
                             {/* LEAVE IMAGE SETTINGS */}

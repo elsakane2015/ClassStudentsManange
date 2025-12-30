@@ -6,6 +6,7 @@ import useAuthStore from '../../store/authStore';
 
 import AttendanceCalendar from '../../components/AttendanceCalendar'; // Import
 import AttendanceExportModal from '../../components/AttendanceExportModal';
+import GroupedRecordsList from '../../components/GroupedRecordsList';
 
 export default function TeacherDashboard() {
     const navigate = useNavigate();
@@ -484,7 +485,7 @@ export default function TeacherDashboard() {
                                                 </svg>
                                             }
                                             color="bg-yellow-500"
-                                            onClick={() => navigate('/teacher/approvals')}
+                                            onClick={() => navigate('/teacher/approvals?status=pending')}
                                         />
                                     )}
 
@@ -821,143 +822,118 @@ export default function TeacherDashboard() {
                                         </span>
                                     </h3>
 
-                                    {studentDetailModal.records.length > 0 ? (
-                                        <div className="overflow-x-auto">
-                                            <table className="min-w-full divide-y divide-gray-200">
-                                                <thead className="bg-gray-50">
-                                                    <tr>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">日期</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">备注</th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">时间</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="bg-white divide-y divide-gray-200">
-                                                    {Array.isArray(studentDetailModal.records) && studentDetailModal.records.map((record, index) => {
-                                                        // 安全解析 details
-                                                        let details = null;
+                                    <GroupedRecordsList
+                                        records={studentDetailModal.records}
+                                        emptyText="暂无记录"
+                                        renderRecord={(record, index) => {
+                                            // 安全解析 details
+                                            let details = null;
+                                            try {
+                                                if (record.details) {
+                                                    details = typeof record.details === 'string'
+                                                        ? JSON.parse(record.details)
+                                                        : record.details;
+                                                }
+                                            } catch (e) {
+                                                console.error('Failed to parse details:', e);
+                                            }
+
+                                            let remarkText = '';
+                                            let detailText = '';
+
+                                            // 备注：显示节次或时段
+                                            if (record.period && record.period.period_number) {
+                                                remarkText = `第${record.period.period_number}节`;
+                                            } else if (details) {
+                                                if (details.roll_call_type) {
+                                                    remarkText = details.roll_call_type;
+                                                } else if (details.period_numbers && Array.isArray(details.period_numbers) && details.period_numbers.length > 0) {
+                                                    remarkText = `第${details.period_numbers.join(',')}节`;
+                                                } else if (details.periods && Array.isArray(details.periods) && details.periods.length > 0) {
+                                                    remarkText = `第${details.periods.join(',')}节`;
+                                                } else if (details.option) {
+                                                    let optionLabel = details.option_label || details.option;
+                                                    if (!details.option_label && record.leave_type && record.leave_type.input_config) {
                                                         try {
-                                                            if (record.details) {
-                                                                details = typeof record.details === 'string'
-                                                                    ? JSON.parse(record.details)
-                                                                    : record.details;
-                                                            }
-                                                        } catch (e) {
-                                                            console.error('Failed to parse details:', e);
-                                                        }
-
-                                                        let remarkText = '-';
-                                                        let detailText = '-';
-
-                                                        // 备注列：显示节次或时段
-                                                        if (record.period && record.period.period_number) {
-                                                            remarkText = `第${record.period.period_number}节`;
-                                                        } else if (details) {
-                                                            // 点名记录：显示点名类型
-                                                            if (details.roll_call_type) {
-                                                                remarkText = details.roll_call_type;
-                                                            } else if (details.period_numbers && Array.isArray(details.period_numbers) && details.period_numbers.length > 0) {
-                                                                remarkText = `第${details.period_numbers.join(',')}节`;
-                                                            } else if (details.periods && Array.isArray(details.periods) && details.periods.length > 0) {
-                                                                remarkText = `第${details.periods.join(',')}节`;
-                                                            } else if (details.option) {
-                                                                // 从leave_type的input_config中获取label，而不是硬编码
-                                                                let optionLabel = details.option;
-
-                                                                if (record.leave_type && record.leave_type.input_config) {
-                                                                    try {
-                                                                        const inputConfig = typeof record.leave_type.input_config === 'string'
-                                                                            ? JSON.parse(record.leave_type.input_config)
-                                                                            : record.leave_type.input_config;
-
-                                                                        if (inputConfig.options && Array.isArray(inputConfig.options)) {
-                                                                            const option = inputConfig.options.find(opt => opt.key === details.option);
-                                                                            if (option && option.label) {
-                                                                                optionLabel = option.label;
-                                                                            }
-                                                                        }
-                                                                    } catch (e) {
-                                                                        console.error('Failed to parse input_config:', e);
-                                                                    }
+                                                            const inputConfig = typeof record.leave_type.input_config === 'string'
+                                                                ? JSON.parse(record.leave_type.input_config)
+                                                                : record.leave_type.input_config;
+                                                            if (inputConfig.options && Array.isArray(inputConfig.options)) {
+                                                                const option = inputConfig.options.find(opt => opt.key === details.option);
+                                                                if (option && option.label) {
+                                                                    optionLabel = option.label;
                                                                 }
-
-                                                                remarkText = optionLabel;
                                                             }
-                                                        }
+                                                        } catch (e) { }
+                                                    }
+                                                    remarkText = optionLabel;
+                                                }
+                                            }
 
-                                                        // 时间列：显示具体时间
-                                                        if (details) {
-                                                            if (details.roll_call_time) {
-                                                                // 点名时间
-                                                                detailText = details.roll_call_time;
-                                                            } else if (details.time) {
-                                                                // 迟到/早退时间
-                                                                detailText = details.time;
-                                                            }
-                                                        }
+                                            // 时间
+                                            if (details) {
+                                                if (details.roll_call_time) {
+                                                    detailText = details.roll_call_time;
+                                                } else if (details.time) {
+                                                    detailText = details.time;
+                                                }
+                                            }
 
-                                                        // 格式化日期：只显示 YYYY-MM-DD
-                                                        const dateStr = record.date ? record.date.split('T')[0] : '-';
+                                            // 状态显示
+                                            let statusText = '';
+                                            let statusColor = '';
 
-                                                        // 状态显示：如果是请假，显示请假类型名称
-                                                        let statusText = '';
-                                                        let statusColor = '';
+                                            if ((record.status === 'leave' || record.status === 'excused') && record.leave_type) {
+                                                statusText = record.leave_type.name;
+                                                statusColor = 'bg-blue-100 text-blue-800';
+                                            } else {
+                                                const statusMap = {
+                                                    'present': '出勤',
+                                                    'absent': '旷课',
+                                                    'late': '迟到',
+                                                    'early_leave': '早退',
+                                                    'leave': '请假',
+                                                    'excused': '已批假'
+                                                };
+                                                statusText = statusMap[record.status] || record.status;
 
-                                                        if ((record.status === 'leave' || record.status === 'excused') && record.leave_type) {
-                                                            // 请假/excused：显示请假类型
-                                                            statusText = record.leave_type.name;
-                                                            statusColor = 'bg-blue-100 text-blue-800';
-                                                        } else {
-                                                            // 其他状态
-                                                            const statusMap = {
-                                                                'present': '出勤',
-                                                                'absent': '旷课',
-                                                                'late': '迟到',
-                                                                'early_leave': '早退',
-                                                                'leave': '请假',
-                                                                'excused': '已批假'
-                                                            };
-                                                            statusText = statusMap[record.status] || record.status;
+                                                if (record.status === 'present') {
+                                                    statusColor = 'bg-green-100 text-green-800';
+                                                } else if (record.status === 'absent') {
+                                                    statusColor = 'bg-red-100 text-red-800';
+                                                } else if (record.status === 'late') {
+                                                    statusColor = 'bg-yellow-100 text-yellow-800';
+                                                } else if (record.status === 'early_leave') {
+                                                    statusColor = 'bg-orange-100 text-orange-800';
+                                                } else {
+                                                    statusColor = 'bg-blue-100 text-blue-800';
+                                                }
+                                            }
 
-                                                            // 状态颜色
-                                                            if (record.status === 'present') {
-                                                                statusColor = 'bg-green-100 text-green-800';
-                                                            } else if (record.status === 'absent') {
-                                                                statusColor = 'bg-red-100 text-red-800';
-                                                            } else if (record.status === 'late') {
-                                                                statusColor = 'bg-yellow-100 text-yellow-800';
-                                                            } else if (record.status === 'early_leave') {
-                                                                statusColor = 'bg-orange-100 text-orange-800';
-                                                            } else {
-                                                                statusColor = 'bg-blue-100 text-blue-800';
-                                                            }
-                                                        }
+                                            const dateStr = record.date ? record.date.split('T')[0].replace(/-/g, '.') : '-';
 
-                                                        return (
-                                                            <tr key={index}>
-                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                                                    {dateStr}
-                                                                </td>
-                                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                                                    <span className={`px-2 py-1 rounded-full text-xs ${statusColor}`}>
-                                                                        {statusText}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                                    {remarkText}
-                                                                </td>
-                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                                    {detailText}
-                                                                </td>
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    ) : (
-                                        <p className="text-gray-500 text-center py-4">暂无记录</p>
-                                    )}
+                                            return (
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="font-medium text-gray-800">{dateStr}</span>
+                                                            {detailText && (
+                                                                <span className="text-gray-500 text-sm">{detailText}</span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColor}`}>
+                                                                {statusText}
+                                                            </span>
+                                                            {remarkText && (
+                                                                <span className="text-gray-500 text-sm">({remarkText})</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        }}
+                                    />
 
                                     <div className="mt-4 flex justify-end">
                                         <button

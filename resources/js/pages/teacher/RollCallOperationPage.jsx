@@ -129,7 +129,8 @@ export default function RollCallOperationPage() {
     const onLeaveCount = records.filter(r => r.status === 'on_leave').length;
     const absentCount = records.filter(r => r.status === 'absent').length;
     const pendingCount = records.filter(r => r.status === 'pending').length;
-    const totalCount = records.length;
+    // 使用 rollCall.total_students 以保持与历史列表一致，如果没有则使用 records.length
+    const totalCount = rollCall?.total_students || records.length;
 
     if (loading) {
         return (

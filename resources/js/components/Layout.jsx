@@ -92,7 +92,7 @@ export default function Layout({ children }) {
         ]
         : [
             { name: '概览', href: '/teacher/dashboard' },
-            ...(canApproveLeave ? [{ name: '请假审批', href: '/teacher/approvals' }] : []),
+            ...(canApproveLeave ? [{ name: '审批记录', href: '/teacher/approvals' }] : []),
             { name: '学生管理', href: '/teacher/students' },
             ...(canManageRollCall ? [{ name: '点名', href: '/roll-call' }] : []),
             ...(showWechatMenu ? [{ name: '微信推送', href: '/teacher/wechat' }] : []),
