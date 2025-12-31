@@ -92,8 +92,8 @@ class AttendanceController extends Controller
         if ($user->role === 'teacher' || $user->role === 'manager') {
              $pendingQuery->whereIn('class_id', $classIds);
         }
-        // Count unique pending requests (by student_id + date combination)
-        $pendingRequests = $pendingQuery->selectRaw('COUNT(DISTINCT student_id, date) as count')->value('count') ?? 0;
+        // Count unique pending requests (by student_id + date + leave_type_id = each submission)
+        $pendingRequests = $pendingQuery->selectRaw('COUNT(DISTINCT student_id, date, leave_type_id) as count')->value('count') ?? 0;
 
         // Efficient breakdown query
         $attendanceStats = $attendanceQuery->clone()
@@ -102,40 +102,111 @@ class AttendanceController extends Controller
              ->pluck('count', 'status')
              ->toArray();
 
-        // Leave Types breakdown - 计算人数和次数
-        $leaveStatsRaw = $attendanceQuery->clone()
-             ->where('status', 'leave')
-             ->join('leave_types', 'attendance_records.leave_type_id', '=', 'leave_types.id')
-             ->selectRaw('leave_types.name as type_name, leave_types.id as type_id, 
-                          COUNT(DISTINCT attendance_records.student_id) as people_count,
-                          COUNT(*) as record_count')
-             ->groupBy('leave_types.id', 'leave_types.name')
+        // Leave Types breakdown - 计算人数和节次总数
+        // 1. 获取所有请假相关的记录（包括 leave 和 excused 状态，排除被驳回的）
+        $leaveRecords = $attendanceQuery->clone()
+             ->whereIn('status', ['leave', 'excused'])
+             ->whereNotNull('leave_type_id')
+             ->where(function($q) {
+                 // 只统计批准的或未审批的，排除被驳回的
+                 $q->where('approval_status', 'approved')
+                   ->orWhereNull('approval_status');
+             })
+             ->with('leaveType')
              ->get();
+        
+        // 2. 按请假类型统计（计算节次总数）
+        $leaveTypesData = [];
+        foreach ($leaveRecords as $record) {
+            if (!$record->leaveType) continue;
+            
+            $typeId = $record->leave_type_id;
+            $typeName = $record->leaveType->name;
+            $typeSlug = $record->leaveType->slug;
+            
+            if (!isset($leaveTypesData[$typeId])) {
+                $leaveTypesData[$typeId] = [
+                    'name' => $typeName,
+                    'slug' => $typeSlug,
+                    'display_unit' => $record->leaveType->display_unit ?? '次',
+                    'use_conversion' => $record->leaveType->use_conversion ?? false,
+                    'students' => [],
+                    'period_count' => 0
+                ];
+            }
+            
+            // 统计学生
+            $leaveTypesData[$typeId]['students'][$record->student_id] = true;
+            
+            // 统计节次数
+            // 如果有 period_id，算1节
+            if ($record->period_id) {
+                $leaveTypesData[$typeId]['period_count'] += 1;
+            } else {
+                // 如果没有 period_id，从 details 读取节次信息
+                $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                
+                // 优先使用 period_ids（时段选择保存的）
+                if (isset($details['period_ids']) && is_array($details['period_ids'])) {
+                    $leaveTypesData[$typeId]['period_count'] += count($details['period_ids']);
+                }
+                // 其次使用 option_periods（时段节次数）
+                elseif (isset($details['option_periods']) && is_numeric($details['option_periods'])) {
+                    $leaveTypesData[$typeId]['period_count'] += (int)$details['option_periods'];
+                }
+                // 其他格式
+                elseif (isset($details['periods']) && is_array($details['periods'])) {
+                    $leaveTypesData[$typeId]['period_count'] += count($details['periods']);
+                } elseif (isset($details['period_numbers']) && is_array($details['period_numbers'])) {
+                    $leaveTypesData[$typeId]['period_count'] += count($details['period_numbers']);
+                } else {
+                    // 默认算1
+                    $leaveTypesData[$typeId]['period_count'] += 1;
+                }
+            }
+        }
+        
+        // Get leave conversion setting
+        $leaveLessonsAsDay = (int) (\App\Models\SystemSetting::where('key', 'leave_periods_as_day')->value('value') ?? 6);
+        if ($leaveLessonsAsDay < 1) $leaveLessonsAsDay = 6;
          
-        // Convert to key-value format for frontend - 显示格式：X人/Y次
+        // Convert to key-value format for frontend - 显示格式：X人/Y{单位}
         $leaveStats = [];
-        foreach ($leaveStatsRaw as $stat) {
-            $leaveStats[$stat->type_name] = "{$stat->people_count}人/{$stat->record_count}次";
+        foreach ($leaveTypesData as $typeId => $data) {
+            $displayUnit = $data['display_unit'];
+            $displayCount = $data['period_count'];
+            $peopleCount = count($data['students']);
+            
+            // Apply conversion if configured
+            if ($data['use_conversion'] && $leaveLessonsAsDay > 0) {
+                $displayCount = intval(floor($data['period_count'] / $leaveLessonsAsDay));
+            }
+            
+            $leaveStats[$data['name']] = "{$peopleCount}人/{$displayCount}{$displayUnit}";
         }
         
         // Add late and early_leave counts from attendanceStats
         // These use direct status values instead of leave_type_id
         // 计算迟到：人数/次数
+        $lateLeaveType = \App\Models\LeaveType::where('slug', 'late')->first();
+        $lateDisplayUnit = $lateLeaveType->display_unit ?? '次';
         if (isset($attendanceStats['late']) && $attendanceStats['late'] > 0) {
             $latePeopleCount = $attendanceStats['late'];
             $lateRecordCount = $attendanceQuery->clone()
                 ->where('status', 'late')
                 ->count();
-            $leaveStats['迟到'] = "{$latePeopleCount}人/{$lateRecordCount}次";
+            $leaveStats['迟到'] = "{$latePeopleCount}人/{$lateRecordCount}{$lateDisplayUnit}";
         }
         
         // 计算早退：人数/次数
+        $earlyLeaveType = \App\Models\LeaveType::where('slug', 'early_leave')->first();
+        $earlyDisplayUnit = $earlyLeaveType->display_unit ?? '次';
         if (isset($attendanceStats['early_leave']) && $attendanceStats['early_leave'] > 0) {
             $earlyPeopleCount = $attendanceStats['early_leave'];
             $earlyRecordCount = $attendanceQuery->clone()
                 ->where('status', 'early_leave')
                 ->count();
-            $leaveStats['早退'] = "{$earlyPeopleCount}人/{$earlyRecordCount}次";
+            $leaveStats['早退'] = "{$earlyPeopleCount}人/{$earlyRecordCount}{$earlyDisplayUnit}";
         }
         
         // 计算旷课总节次数
@@ -199,9 +270,10 @@ class AttendanceController extends Controller
             $absentPeriodCount += $rollCallAbsentCount;
         }
         
-        // 显示格式：2人/6节
+        // 显示格式：2人/6{单位}
+        $absentDisplayUnit = $absenceLeaveType ? ($absenceLeaveType->display_unit ?? '节') : '节';
         if ($absentPeopleCount > 0) {
-            $leaveStats['旷课'] = "{$absentPeopleCount}人/{$absentPeriodCount}节";
+            $leaveStats['旷课'] = "{$absentPeopleCount}人/{$absentPeriodCount}{$absentDisplayUnit}";
         }
              
         // Calculate Effective Attendance
@@ -254,7 +326,17 @@ class AttendanceController extends Controller
                 'attendance_rate' => $periodStats && $periodStats->total_periods > 0 
                     ? round(($periodStats->present_periods + $periodStats->late_periods) / $periodStats->total_periods * 100, 2)
                     : 0
-            ]
+            ],
+            // Leave types config for frontend display
+            '_leave_types_config' => \App\Models\LeaveType::where('is_active', true)
+                ->get()
+                ->mapWithKeys(function ($lt) {
+                    return [$lt->slug => [
+                        'name' => $lt->name,
+                        'display_unit' => $lt->display_unit ?? '节',
+                        'use_conversion' => $lt->use_conversion ?? false
+                    ]];
+                })
         ]);
     }
 
@@ -793,18 +875,24 @@ class AttendanceController extends Controller
     {
         try {
             // Ensure database connection is fresh with retry
-            $maxRetries = 3;
+            $maxRetries = 5;
+            $connected = false;
             for ($i = 0; $i < $maxRetries; $i++) {
                 try {
+                    \DB::purge(); // Clear any cached connection
                     \DB::reconnect();
                     \DB::select('SELECT 1'); // Test connection
+                    $connected = true;
                     break;
                 } catch (\Exception $e) {
-                    if ($i === $maxRetries - 1) {
-                        \Log::error('studentStats: DB connection failed after retries');
-                    }
-                    usleep(100000); // 100ms wait
+                    \Log::warning('studentStats: DB connection retry ' . ($i + 1) . ': ' . $e->getMessage());
+                    usleep(200000); // 200ms wait
                 }
+            }
+            
+            if (!$connected) {
+                \Log::error('studentStats: DB connection failed after ' . $maxRetries . ' retries');
+                return response()->json(['error' => 'Database connection failed'], 503);
             }
 
             $user = $request->user();
@@ -907,12 +995,13 @@ class AttendanceController extends Controller
             $query = AttendanceRecord::where('student_id', $studentId)
                 ->whereBetween('date', [$statsStartDate->format('Y-m-d'), $statsEndDate->format('Y-m-d')]);
 
-            // Get system settings for absent conversion
+            // Get system settings for conversion
             $absentLessonsAsDay = (int) (\App\Models\SystemSetting::where('key', 'absent_lessons_as_day')->value('value') ?? 6);
-            if ($absentLessonsAsDay < 1) $absentLessonsAsDay = 1;
+            $leaveLessonsAsDay = (int) (\App\Models\SystemSetting::where('key', 'leave_periods_as_day')->value('value') ?? 6);
+            if ($absentLessonsAsDay < 1) $absentLessonsAsDay = 6;
+            if ($leaveLessonsAsDay < 1) $leaveLessonsAsDay = 6;
 
-            // Count full-day leaves (excluding non-leave types)
-            // Full-day leave = status is 'leave' or 'excused', period_id is null, approved
+            // Count full-day leaves (period_id is null, approved)
             // Exclude: absent(旷课), late(迟到), early_leave(早退), health_leave/period_leave(生理假)
             $fullDayLeaveDates = $query->clone()
                 ->whereIn('status', ['leave', 'excused'])
@@ -928,6 +1017,24 @@ class AttendanceController extends Controller
                 ->distinct()
                 ->pluck('date')
                 ->count();
+
+            // Count period-based leaves (period_id is NOT null, approved)
+            // These are partial-day leaves
+            $periodLeavePeriods = $query->clone()
+                ->whereIn('status', ['leave', 'excused'])
+                ->whereNotNull('period_id')
+                ->where(function($q) {
+                    $q->where('approval_status', 'approved')
+                      ->orWhereNull('approval_status');
+                })
+                // Exclude non-leave types
+                ->whereHas('leaveType', function($q) {
+                    $q->whereNotIn('slug', ['absent', 'late', 'early_leave', 'period_leave', 'health_leave']);
+                })
+                ->count();
+
+            // Convert period leaves to days
+            $leaveDaysFromPeriods = intval(floor($periodLeavePeriods / $leaveLessonsAsDay));
 
             // Count total absent periods
             // 1. Manual absents (status = 'absent')
@@ -946,11 +1053,11 @@ class AttendanceController extends Controller
             // Convert absent periods to days (floor division)
             $absentDaysFromPeriods = intval(floor($totalAbsentPeriods / $absentLessonsAsDay));
 
-            // Total absent days
-            $totalAbsentDays = $fullDayLeaveDates + $absentDaysFromPeriods;
+            // Total non-present days = full-day leaves + period-based leave days + absent days
+            $totalNonPresentDays = $fullDayLeaveDates + $leaveDaysFromPeriods + $absentDaysFromPeriods;
 
-            // Calculate present days: working days to today - absent days
-            $presentDays = max(0, $numeratorWorkingDays - $totalAbsentDays);
+            // Calculate present days: working days to today - non-present days
+            $presentDays = max(0, $numeratorWorkingDays - $totalNonPresentDays);
 
             // Build response with leave type counts
             $stats = [
@@ -960,35 +1067,78 @@ class AttendanceController extends Controller
 
             // Get leave types for mapping
             $leaveTypes = \App\Models\LeaveType::where('is_active', true)->get();
+            $leaveTypesConfig = [];
 
             foreach ($leaveTypes as $lt) {
-                // Count records with this leave_type_id (for 'leave' status)
-                $count = $query->clone()
+                // 统计该请假类型的节次总数（不是记录数）
+                $records = $query->clone()
                     ->where('leave_type_id', $lt->id)
-                    ->count();
+                    ->get();
+                
+                $periodCount = 0;
+                foreach ($records as $record) {
+                    if ($record->period_id) {
+                        $periodCount += 1;
+                    } else {
+                        $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                        
+                        // 优先使用 period_ids
+                        if (isset($details['period_ids']) && is_array($details['period_ids'])) {
+                            $periodCount += count($details['period_ids']);
+                        }
+                        // 其次使用 option_periods
+                        elseif (isset($details['option_periods']) && is_numeric($details['option_periods'])) {
+                            $periodCount += (int)$details['option_periods'];
+                        }
+                        // 其他格式
+                        elseif (isset($details['periods']) && is_array($details['periods'])) {
+                            $periodCount += count($details['periods']);
+                        } elseif (isset($details['period_numbers']) && is_array($details['period_numbers'])) {
+                            $periodCount += count($details['period_numbers']);
+                        } else {
+                            $periodCount += 1;
+                        }
+                    }
+                }
                 
                 // For status-based records (late, absent, early_leave), count by status
                 if (in_array($lt->slug, ['late', 'absent', 'early_leave'])) {
                     $statusCount = $query->clone()
                         ->where('status', $lt->slug)
                         ->count();
-                    $count = max($count, $statusCount);
+                    $periodCount = max($periodCount, $statusCount);
                 }
 
-                $stats[$lt->slug] = $count;
+                // Apply conversion if configured
+                $displayValue = $periodCount;
+                if ($lt->use_conversion && $leaveLessonsAsDay > 0) {
+                    $displayValue = intval(floor($periodCount / $leaveLessonsAsDay));
+                }
+
+                $stats[$lt->slug] = $displayValue;
+                
+                // Store config for frontend display
+                $leaveTypesConfig[$lt->slug] = [
+                    'display_unit' => $lt->display_unit ?? '节',
+                    'use_conversion' => $lt->use_conversion ?? false,
+                    'raw_count' => $periodCount  // Original count for reference
+                ];
             }
 
             // For class admin: add pending requests count
             if ($user->student->is_class_admin) {
                 $classId = $user->student->class_id;
-                // Count unique pending leave requests (group by student_id and date)
+                // Count unique pending leave requests (by student_id + date + leave_type_id = each submission)
                 $pendingCount = AttendanceRecord::where('class_id', $classId)
                     ->where('approval_status', 'pending')
                     ->where('is_self_applied', true)
-                    ->selectRaw('COUNT(DISTINCT student_id, date) as count')
+                    ->selectRaw('COUNT(DISTINCT student_id, date, leave_type_id) as count')
                     ->value('count') ?? 0;
                 $stats['pending_requests'] = $pendingCount;
             }
+
+            // Include leave types config for frontend
+            $stats['_leave_types_config'] = $leaveTypesConfig;
 
             return response()->json($stats);
         } catch (\Exception $e) {
@@ -1055,7 +1205,27 @@ class AttendanceController extends Controller
                     ->orderBy('date', 'desc')
                     ->get();
 
+                // Group records by date+leave_type+source_id to avoid duplicates for multi-period leaves
+                $groupedRecords = [];
                 foreach ($absenceRecords as $record) {
+                    // Create a unique key for grouping
+                    $groupKey = $record->date->format('Y-m-d') . '_' . 
+                                ($record->leave_type_id ?? 'null') . '_' . 
+                                ($record->source_id ?? $record->created_at?->format('Y-m-d H:i'));
+                    
+                    if (!isset($groupedRecords[$groupKey])) {
+                        $groupedRecords[$groupKey] = [
+                            'record' => $record,
+                            'period_count' => 1
+                        ];
+                    } else {
+                        $groupedRecords[$groupKey]['period_count']++;
+                    }
+                }
+
+                foreach ($groupedRecords as $grouped) {
+                    $record = $grouped['record'];
+                    $periodCount = $grouped['period_count'];
                     $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
                     $detailLabel = '';
                     $typeName = '';
@@ -1076,8 +1246,12 @@ class AttendanceController extends Controller
                             $typeName = $leaveTypeModel ? $leaveTypeModel->name : $record->status;
                         }
                         
-                        // Add option label if available
-                        if ($record->details && $record->leaveType && $record->leaveType->input_config) {
+                        // Add detail label (time slot name, option, period names, etc.)
+                        if (isset($details['time_slot_name'])) {
+                            $detailLabel = $details['time_slot_name'];
+                        } elseif (isset($details['display_label'])) {
+                            $detailLabel = $details['display_label'];
+                        } elseif ($record->details && $record->leaveType && $record->leaveType->input_config) {
                             $config = is_string($record->leaveType->input_config) ? json_decode($record->leaveType->input_config, true) : $record->leaveType->input_config;
                             
                             if (isset($details['option']) && isset($config['options'])) {
@@ -1090,6 +1264,51 @@ class AttendanceController extends Controller
                                     }
                                 }
                             }
+                        }
+                        
+                        // If no detail label, format period name(s)
+                        if (!$detailLabel) {
+                            // Get periods configuration
+                            $periodsConfig = \DB::table('system_settings')
+                                ->where('key', 'attendance_periods')
+                                ->value('value');
+                            $periodsConfig = $periodsConfig ? json_decode($periodsConfig, true) : [];
+                            
+                            // Get period IDs from record
+                            $periodIds = [];
+                            if (isset($details['period_ids']) && is_array($details['period_ids'])) {
+                                $periodIds = $details['period_ids'];
+                            } elseif (isset($details['periods']) && is_array($details['periods'])) {
+                                $periodIds = $details['periods'];
+                            } elseif ($record->period_id) {
+                                $periodIds = [$record->period_id];
+                            }
+                            
+                            // Convert period IDs to names
+                            if (!empty($periodIds) && !empty($periodsConfig)) {
+                                $periodNames = [];
+                                foreach ($periodIds as $pid) {
+                                    foreach ($periodsConfig as $p) {
+                                        if ((int)$p['id'] === (int)$pid) {
+                                            $periodNames[] = $p['name'];
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (!empty($periodNames)) {
+                                    $detailLabel = implode('、', $periodNames);
+                                }
+                            }
+                        }
+                        
+                        // Add period count if multiple periods and single period name already shown
+                        if ($periodCount > 1 && $detailLabel) {
+                            // Don't add "节" if already showing period names
+                            if (strpos($detailLabel, '节') === false && strpos($detailLabel, '操') === false && strpos($detailLabel, '自习') === false && strpos($detailLabel, '读') === false) {
+                                $detailLabel .= ' (' . $periodCount . '节)';
+                            }
+                        } elseif ($periodCount > 1 && !$detailLabel) {
+                            $detailLabel = $periodCount . '节';
                         }
                     }
 
@@ -1135,7 +1354,28 @@ class AttendanceController extends Controller
                     ->orderBy('date', 'desc')
                     ->get();
 
+                // Group records by source_id or created_at to avoid showing duplicates for multi-period leaves
+                $groupedRecords = [];
                 foreach ($attendanceRecords as $record) {
+                    // Determine group key based on source type
+                    if ($record->source_type === 'leave_request' && $record->source_id) {
+                        // For leave_request source, group by source_id
+                        $groupKey = 'leave_' . $record->source_id;
+                    } elseif (in_array($record->source_type, ['self_applied', 'manual_bulk', 'manual'])) {
+                        // For self_applied/manual, group by date + leave_type_id + created_at (same batch)
+                        // Records created within the same second are from the same submission
+                        $groupKey = 'batch_' . $record->date->format('Y-m-d') . '_' . $record->leave_type_id . '_' . $record->created_at->format('Y-m-d_H:i:s');
+                    } else {
+                        // Fallback: use record id (no grouping)
+                        $groupKey = 'record_' . $record->id;
+                    }
+                    
+                    if (!isset($groupedRecords[$groupKey])) {
+                        $groupedRecords[$groupKey] = $record;
+                    }
+                }
+
+                foreach ($groupedRecords as $record) {
                     $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
                     $detailLabel = '';
                     $typeName = '';
@@ -1169,6 +1409,11 @@ class AttendanceController extends Controller
                                     }
                                 }
                             }
+                            
+                            // Use display_label if available (for custom period selections)
+                            if (isset($details['display_label'])) {
+                                $detailLabel = $details['display_label'];
+                            }
                         }
                     }
 
@@ -1186,7 +1431,9 @@ class AttendanceController extends Controller
                         'time' => $recordTime,
                         'type_name' => $typeName,
                         'detail_label' => $detailLabel,
-                        'note' => $record->note
+                        'note' => $record->note,
+                        'approval_status' => $record->approval_status,
+                        'is_self_applied' => $record->is_self_applied ?? (in_array($record->source_type, ['self_applied', 'leave_request']))
                     ];
                 }
             }

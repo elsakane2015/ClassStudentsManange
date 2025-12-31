@@ -223,6 +223,7 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
         const data = Object.fromEntries(formData);
         data.is_active = formData.get('is_active') === 'on';
         data.student_requestable = formData.get('student_requestable') === 'on';
+        data.use_conversion = formData.get('use_conversion') === 'on';
 
         // Construct config based on input type
         let finalConfig = {};
@@ -395,6 +396,37 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
                     <option value="female">仅女生</option>
                     <option value="male">仅男生</option>
                 </select>
+            </div>
+
+            {/* 统计卡片显示配置 */}
+            <div className="col-span-2 border-t pt-4 mt-2">
+                <label className="label mb-2">统计卡片显示配置</label>
+                <p className="text-xs text-gray-500 mb-3">配置在仪表盘统计卡片中如何显示此类型的数据</p>
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="text-xs text-gray-500">显示单位</label>
+                        <input
+                            name="display_unit"
+                            defaultValue={initialData?.display_unit || '节'}
+                            placeholder="节、天、次、课时..."
+                            className="input-field"
+                            maxLength={10}
+                        />
+                        <p className="text-xs text-gray-400 mt-1">自定义单位后缀，如：节、天、次</p>
+                    </div>
+                    <div className="flex items-center">
+                        <label className="flex items-center cursor-pointer">
+                            <input
+                                name="use_conversion"
+                                type="checkbox"
+                                defaultChecked={initialData?.use_conversion ?? false}
+                                className="mr-2 h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                            />
+                            <span className="text-sm text-gray-700">按折算阈值换算</span>
+                        </label>
+                        <span className="ml-2 text-xs text-gray-400" title="勾选后，将按系统设置的&quot;请假折算阈值&quot;（默认6节=1天）进行换算显示">ⓘ</span>
+                    </div>
+                </div>
             </div>
 
             <div className="col-span-2 flex justify-end space-x-2">

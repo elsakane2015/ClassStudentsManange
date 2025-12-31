@@ -9,6 +9,86 @@ import StudentCalendar from '../../components/StudentCalendar';
 import WechatBindCard from '../../components/WechatBindCard';
 import GroupedRecordsList from '../../components/GroupedRecordsList';
 
+/**
+ * 格式化节次名称显示 - 将 period IDs 转换为可读的节次名称
+ */
+const formatPeriodNames = (periodIds, periods, timeSlots = []) => {
+    if (!periodIds || periodIds.length === 0 || !periods || periods.length === 0) {
+        return '';
+    }
+
+    // 标准化 periodIds 为整数数组
+    const normalizedIds = periodIds.map(id => parseInt(id)).sort((a, b) => a - b);
+
+    // 优先检查是否匹配某个时段配置
+    if (timeSlots && timeSlots.length > 0) {
+        for (const slot of timeSlots) {
+            const slotPeriodIds = (slot.period_ids || []).map(id => parseInt(id)).sort((a, b) => a - b);
+            if (slotPeriodIds.length > 0 &&
+                slotPeriodIds.length === normalizedIds.length &&
+                slotPeriodIds.every((id, idx) => id === normalizedIds[idx])) {
+                return slot.name;
+            }
+        }
+    }
+
+    // 获取节次名称
+    const names = periodIds
+        .map(id => {
+            const period = periods.find(p => p.id === id || p.id === parseInt(id));
+            return period?.name;
+        })
+        .filter(Boolean);
+
+    if (names.length === 0) {
+        return '';
+    }
+
+    // 智能合并连续的"第X节"
+    const numberedPattern = /^第(\d+)节$/;
+    const result = [];
+    let numberedRun = [];
+
+    const flushNumberedRun = () => {
+        if (numberedRun.length === 0) return;
+        if (numberedRun.length <= 2) {
+            result.push(...numberedRun);
+        } else {
+            const firstMatch = numberedRun[0].match(numberedPattern);
+            const lastMatch = numberedRun[numberedRun.length - 1].match(numberedPattern);
+            if (firstMatch && lastMatch) {
+                result.push(`第${firstMatch[1]}-${lastMatch[1]}节`);
+            } else {
+                result.push(...numberedRun);
+            }
+        }
+        numberedRun = [];
+    };
+
+    for (const name of names) {
+        const match = name.match(numberedPattern);
+        if (match) {
+            if (numberedRun.length > 0) {
+                const lastMatch = numberedRun[numberedRun.length - 1].match(numberedPattern);
+                if (lastMatch && parseInt(match[1]) === parseInt(lastMatch[1]) + 1) {
+                    numberedRun.push(name);
+                } else {
+                    flushNumberedRun();
+                    numberedRun.push(name);
+                }
+            } else {
+                numberedRun.push(name);
+            }
+        } else {
+            flushNumberedRun();
+            result.push(name);
+        }
+    }
+    flushNumberedRun();
+
+    return result.join('、');
+};
+
 export default function StudentDashboard() {
     const navigate = useNavigate();
     const { user } = useAuthStore();
@@ -19,7 +99,7 @@ export default function StudentDashboard() {
     const [selectedAttendanceDate, setSelectedAttendanceDate] = useState(new Date());
     const [isClassAdmin, setIsClassAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [scope, setScope] = useState('month'); // today, month, semester
+    const [scope, setScope] = useState('today'); // today, month, semester
     const [detailModal, setDetailModal] = useState({ isOpen: false, title: '', records: [] });
     const [statsExpanded, setStatsExpanded] = useState(true); // Stats section collapsed state
     const [dashboardConfig, setDashboardConfig] = useState({
@@ -27,42 +107,64 @@ export default function StudentDashboard() {
         show_normal_attendance: true,
         show_all_leave_types: true
     });
+    const [periods, setPeriods] = useState([]);
+    const [timeSlots, setTimeSlots] = useState([]);
 
+    // Track if initial load is complete
+    const initialLoadRef = React.useRef(true);
+    const currentScopeRef = React.useRef(scope);
+
+    // Main initialization - runs once on mount
     useEffect(() => {
         const init = async () => {
-            await fetchLeaveTypes();
-            await checkClassAdmin();
-            await fetchDashboardConfig();
+            try {
+                await fetchLeaveTypes();
+                await checkClassAdmin();
+                await fetchDashboardConfig();
+            } catch (error) {
+                console.error("Init error:", error);
+            } finally {
+                setLoading(false);
+            }
         };
         init();
         // eslint-disable-next-line
     }, []);
 
-    // Fetch data when leaveTypes is loaded or scope changes
+    // Fetch data and stats after leaveTypes AND periods are loaded
     useEffect(() => {
-        if (leaveTypes.length > 0) {
+        if (leaveTypes.length > 0 && periods.length > 0) {
+            currentScopeRef.current = scope;
             fetchData();
+            fetchStats(scope);
+            initialLoadRef.current = false;
         }
         // eslint-disable-next-line
-    }, [leaveTypes]);
+    }, [leaveTypes, periods]);
 
-    // Fetch stats when scope changes or class admin status is confirmed
+    // Refetch stats when scope changes (after initial load)
     useEffect(() => {
-        if (leaveTypes.length > 0) {
-            fetchStats();
+        // Skip if it's the initial load or scope hasn't actually changed
+        if (initialLoadRef.current || leaveTypes.length === 0) {
+            return;
+        }
+        // Only refetch if scope actually changed
+        if (currentScopeRef.current !== scope) {
+            currentScopeRef.current = scope;
+            fetchStats(scope);
         }
         // eslint-disable-next-line
-    }, [leaveTypes, scope, isClassAdmin]);
+    }, [scope]);
 
-    const fetchStats = async (retryCount = 0) => {
+    const fetchStats = async (currentScope, retryCount = 0) => {
         try {
-            const res = await axios.get('/student/stats', { params: { scope } });
+            const res = await axios.get('/student/stats', { params: { scope: currentScope } });
             const data = res.data;
 
             // Validate that we got valid data (working_days should be > 0 for month/semester)
-            if (scope !== 'today' && data.working_days === 0 && retryCount < 3) {
-                console.warn(`Stats returned working_days=0 for scope=${scope}, retrying... (${retryCount + 1})`);
-                setTimeout(() => fetchStats(retryCount + 1), 500);
+            if (currentScope !== 'today' && data.working_days === 0 && retryCount < 3) {
+                console.warn(`Stats returned working_days=0 for scope=${currentScope}, retrying... (${retryCount + 1})`);
+                setTimeout(() => fetchStats(currentScope, retryCount + 1), 500);
                 return;
             }
 
@@ -71,7 +173,7 @@ export default function StudentDashboard() {
             console.error("Failed to fetch stats", error);
             // Retry on error
             if (retryCount < 3) {
-                setTimeout(() => fetchStats(retryCount + 1), 500);
+                setTimeout(() => fetchStats(currentScope, retryCount + 1), 500);
             }
         }
     };
@@ -114,6 +216,26 @@ export default function StudentDashboard() {
             const res = await axios.get('/settings');
             const settingsObj = {};
             res.data.forEach(s => settingsObj[s.key] = s.value);
+
+            // Load periods configuration
+            if (settingsObj.attendance_periods) {
+                try {
+                    const periodsData = typeof settingsObj.attendance_periods === 'string'
+                        ? JSON.parse(settingsObj.attendance_periods)
+                        : settingsObj.attendance_periods;
+                    setPeriods(periodsData || []);
+                } catch (e) {
+                    console.warn('Failed to parse attendance_periods', e);
+                }
+            }
+
+            // Load time slots
+            try {
+                const slotsRes = await axios.get('/time-slots');
+                setTimeSlots(slotsRes.data || []);
+            } catch (e) {
+                console.warn('Failed to fetch time slots', e);
+            }
 
             if (settingsObj.dashboard_stats_config) {
                 try {
@@ -213,11 +335,12 @@ export default function StudentDashboard() {
                                 // 处理时间（迟到/早退）
                             } else if (details.time) {
                                 detailLabel = details.time;
-                                // 处理节次信息（旷课等）
-                            } else if (details.period_numbers && details.period_numbers.length > 0) {
-                                detailLabel = `第${details.period_numbers.join(',')}节`;
+                                // 处理节次信息 - 使用节次名称而不是ID
+                            } else if (details.period_ids && details.period_ids.length > 0) {
+                                detailLabel = formatPeriodNames(details.period_ids, periods, timeSlots);
                             } else if (details.periods && details.periods.length > 0) {
-                                detailLabel = `第${details.periods.join(',')}节`;
+                                // periods 存储的是 period_id，不是编号
+                                detailLabel = formatPeriodNames(details.periods, periods, timeSlots);
                                 // 处理 option（上午/下午等）
                             } else if (details.option) {
                                 // 优先使用保存的 option_label
@@ -310,6 +433,7 @@ export default function StudentDashboard() {
     // Get stats entries for display
     const statsEntries = useMemo(() => {
         const entries = [];
+        const leaveTypesConfig = stats._leave_types_config || {};
 
         // Show "present" if configured - display as "出勤天数/工作日天数"
         if (dashboardConfig.show_normal_attendance && stats.present !== undefined) {
@@ -334,10 +458,16 @@ export default function StudentDashboard() {
                     'late': 'yellow',
                     'early_leave': 'orange',
                 };
+
+                // Get display config for this leave type
+                const typeConfig = leaveTypesConfig[type.slug] || {};
+                const displayUnit = typeConfig.display_unit || '节';
+                const count = stats[type.slug] || 0;
+
                 entries.push({
                     key: type.slug,
                     name: type.name,
-                    value: stats[type.slug] || 0,
+                    value: `${count}${displayUnit}`,
                     color: type.color || colorMap[type.slug] || 'gray'
                 });
             });
@@ -498,33 +628,52 @@ export default function StudentDashboard() {
                             <GroupedRecordsList
                                 records={detailModal.records}
                                 emptyText={detailModal.message ? null : '暂无记录'}
-                                renderRecord={(record, idx) => (
-                                    <div className="flex justify-between items-start">
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium text-gray-800">
-                                                    {record.date?.split('T')[0]?.replace(/-/g, '.')}
-                                                </span>
-                                                {record.time && (
-                                                    <span className="text-gray-500 text-sm">{record.time}</span>
-                                                )}
-                                            </div>
-                                            <div className="text-sm text-gray-600 mt-1">
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                                                    {record.type_name}
-                                                </span>
-                                                {record.detail_label && (
-                                                    <span className="ml-2 text-gray-500">({record.detail_label})</span>
-                                                )}
-                                            </div>
-                                            {record.note && (
-                                                <div className="text-sm text-gray-500 mt-1">
-                                                    备注: {record.note}
+                                renderRecord={(record, idx) => {
+                                    // 为自主申请的记录添加审批状态前缀
+                                    let statusPrefix = '';
+                                    let badgeClass = 'bg-blue-100 text-blue-800';
+
+                                    if (record.is_self_applied && record.approval_status) {
+                                        if (record.approval_status === 'pending') {
+                                            statusPrefix = '待审:';
+                                            badgeClass = 'bg-gray-100 text-gray-600';
+                                        } else if (record.approval_status === 'approved') {
+                                            statusPrefix = '批准:';
+                                            badgeClass = 'bg-green-100 text-green-800';
+                                        } else if (record.approval_status === 'rejected') {
+                                            statusPrefix = '驳回:';
+                                            badgeClass = 'bg-red-100 text-red-800';
+                                        }
+                                    }
+
+                                    return (
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium text-gray-800">
+                                                        {record.date?.split('T')[0]?.replace(/-/g, '.')}
+                                                    </span>
+                                                    {record.time && (
+                                                        <span className="text-gray-500 text-sm">{record.time}</span>
+                                                    )}
                                                 </div>
-                                            )}
+                                                <div className="text-sm text-gray-600 mt-1">
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${badgeClass}`}>
+                                                        {statusPrefix}{record.type_name}
+                                                    </span>
+                                                    {record.detail_label && (
+                                                        <span className="ml-2 text-gray-500">({record.detail_label})</span>
+                                                    )}
+                                                </div>
+                                                {record.note && (
+                                                    <div className="text-sm text-gray-500 mt-1">
+                                                        备注: {record.note}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    );
+                                }}
                             />
 
                             <div className="mt-4 flex justify-end">

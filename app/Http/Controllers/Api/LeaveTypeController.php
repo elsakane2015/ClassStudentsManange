@@ -38,7 +38,9 @@ class LeaveTypeController extends Controller
             'gender_restriction' => 'nullable|string|in:all,male,female',
             'color' => 'nullable|string|max:20',
             'input_type' => 'nullable|string|in:none,time,period_select,duration_select',
-            'input_config' => 'nullable|array'
+            'input_config' => 'nullable|array',
+            'display_unit' => 'nullable|string|max:20',
+            'use_conversion' => 'boolean'
         ]);
         
         // School ID logic
@@ -67,7 +69,9 @@ class LeaveTypeController extends Controller
             'gender_restriction' => 'nullable|string|in:all,male,female',
             'color' => 'nullable|string|max:20',
             'input_type' => 'nullable|string|in:none,time,period_select,duration_select',
-            'input_config' => 'nullable|array'
+            'input_config' => 'nullable|array',
+            'display_unit' => 'nullable|string|max:20',
+            'use_conversion' => 'boolean'
         ]);
 
         // Self-Healing: Fix missing columns if needed

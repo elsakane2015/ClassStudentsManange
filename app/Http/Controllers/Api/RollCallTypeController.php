@@ -83,6 +83,8 @@ class RollCallTypeController extends Controller
             'description' => 'nullable|string',
             'absent_status' => 'nullable|string|in:absent,late,leave',
             'leave_type_id' => 'nullable|exists:leave_types,id',
+            'period_ids' => 'nullable|array',
+            'period_ids.*' => 'integer',
             'sort_order' => 'nullable|integer',
             'is_active' => 'boolean',
         ]);
@@ -127,6 +129,8 @@ class RollCallTypeController extends Controller
             'description' => 'nullable|string',
             'absent_status' => 'nullable|string|in:absent,late,leave',
             'leave_type_id' => 'nullable|exists:leave_types,id',
+            'period_ids' => 'nullable|array',
+            'period_ids.*' => 'integer',
             'is_active' => 'boolean',
         ]);
 
@@ -169,6 +173,7 @@ class RollCallTypeController extends Controller
                 'description' => $validated['description'] ?? null,
                 'absent_status' => $validated['absent_status'] ?? 'absent',
                 'leave_type_id' => $validated['leave_type_id'] ?? null,
+                'period_ids' => $validated['period_ids'] ?? null,
                 'is_active' => $validated['is_active'] ?? true,
                 'created_by' => $user->id,
             ]);
@@ -203,6 +208,8 @@ class RollCallTypeController extends Controller
             'description' => 'nullable|string',
             'absent_status' => 'nullable|string|in:absent,late,leave',
             'leave_type_id' => 'nullable|exists:leave_types,id',
+            'period_ids' => 'nullable|array',
+            'period_ids.*' => 'integer',
             'is_active' => 'boolean',
         ]);
 
@@ -250,6 +257,7 @@ class RollCallTypeController extends Controller
                 'description' => $validated['description'] ?? null,
                 'absent_status' => $validated['absent_status'] ?? 'absent',
                 'leave_type_id' => $validated['leave_type_id'] ?? null,
+                'period_ids' => $validated['period_ids'] ?? null,
                 'is_active' => $validated['is_active'] ?? true,
                 'created_by' => $user->id,
             ]);
@@ -264,6 +272,7 @@ class RollCallTypeController extends Controller
                 'description' => $validated['description'] ?? null,
                 'absent_status' => $validated['absent_status'] ?? 'absent',
                 'leave_type_id' => $validated['leave_type_id'] ?? null,
+                'period_ids' => $validated['period_ids'] ?? null,
                 'is_active' => $validated['is_active'] ?? true,
             ]);
 
@@ -305,6 +314,8 @@ class RollCallTypeController extends Controller
             'description' => 'nullable|string',
             'absent_status' => 'nullable|string|in:absent,late,leave',
             'leave_type_id' => 'nullable|exists:leave_types,id',
+            'period_ids' => 'nullable|array',
+            'period_ids.*' => 'integer',
             'sort_order' => 'nullable|integer',
             'is_active' => 'boolean',
         ]);

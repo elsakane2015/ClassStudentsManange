@@ -175,16 +175,6 @@ export default function StudentList() {
         }
     };
 
-    const toggleManager = async (student) => {
-        const action = student.is_manager ? '取消' : '指定';
-        if (!confirm(`确定要${action}"${student.name}"为班级管理员吗？`)) return;
-        try {
-            await axios.post(`/students/${student.id}/toggle-manager`);
-            fetchStudents(meta.current_page);
-        } catch (error) {
-            alert('操作失败: ' + (error.response?.data?.message || error.message));
-        }
-    };
 
     const toggleClassAdmin = async (student) => {
         const action = student.is_class_admin ? '取消' : '指定';
@@ -371,14 +361,8 @@ export default function StudentList() {
                                                 <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6 space-x-2">
                                                     <button onClick={() => handleEdit(student)} className="text-indigo-600 hover:text-indigo-900">编辑</button>
                                                     <button
-                                                        onClick={() => toggleManager(student)}
-                                                        className={student.is_manager ? "text-orange-600 hover:text-orange-900" : "text-green-600 hover:text-green-900"}
-                                                    >
-                                                        {student.is_manager ? '取消管理员' : '指定管理员'}
-                                                    </button>
-                                                    <button
                                                         onClick={() => toggleClassAdmin(student)}
-                                                        className={student.is_class_admin ? "text-purple-600 hover:text-purple-900" : "text-blue-600 hover:text-blue-900"}
+                                                        className={student.is_class_admin ? "text-orange-600 hover:text-orange-900" : "text-blue-600 hover:text-blue-900"}
                                                     >
                                                         {student.is_class_admin ? '取消班级管理员' : '指定班级管理员'}
                                                     </button>

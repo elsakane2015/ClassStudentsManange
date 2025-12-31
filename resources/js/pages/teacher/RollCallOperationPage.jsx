@@ -285,9 +285,6 @@ export default function RollCallOperationPage() {
                                         </div>
                                         <div>
                                             <div className="font-medium text-gray-900">{displayName}</div>
-                                            {isOnLeave && record.leave_detail && (
-                                                <div className="text-xs text-blue-600">{record.leave_detail}</div>
-                                            )}
                                             {isPresent && record.marked_at && (
                                                 <div className="text-xs text-gray-400">
                                                     签到于 {format(new Date(record.marked_at), 'HH:mm')}
@@ -299,7 +296,7 @@ export default function RollCallOperationPage() {
                                     <div className="flex items-center gap-2">
                                         {isOnLeave ? (
                                             <span className="px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
-                                                请假
+                                                {record.leave_detail || '请假'}
                                             </span>
                                         ) : isCompleted || isCancelled ? (
                                             /* Completed/Cancelled: show status badge */

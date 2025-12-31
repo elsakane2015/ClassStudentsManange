@@ -12,6 +12,7 @@ class RollCallRecord extends Model
         'status',
         'leave_type_id',
         'leave_detail',
+        'leave_status',
         'marked_at',
         'marked_by',
     ];

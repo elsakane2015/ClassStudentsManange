@@ -4,6 +4,112 @@ import { format } from 'date-fns';
 import { Dialog, Transition } from '@headlessui/react';
 import { CheckIcon } from '@heroicons/react/24/outline'; // Adjust if not installed
 
+/**
+ * 格式化节次名称显示
+ * 将 period_ids 转换为可读的节次名称，智能合并连续的"第X节"
+ * 如果选择的节次刚好匹配某个时段配置，则直接显示时段名称
+ * 
+ * @param {Array} periodIds - 节次ID数组
+ * @param {Array} periods - 节次配置列表
+ * @param {Array} timeSlots - 时段配置列表（可选）
+ * @returns {string} 格式化后的显示文本，如 "(上午)" 或 "(早读、早操、第1-3节)"
+ */
+const formatPeriodNames = (periodIds, periods, timeSlots = []) => {
+    if (!periodIds || periodIds.length === 0 || !periods || periods.length === 0) {
+        return '(全天)';
+    }
+
+    // 标准化 periodIds 为整数数组
+    const normalizedIds = periodIds.map(id => parseInt(id)).sort((a, b) => a - b);
+
+    // 优先检查是否匹配某个时段配置
+    if (timeSlots && timeSlots.length > 0) {
+        for (const slot of timeSlots) {
+            const slotPeriodIds = (slot.period_ids || []).map(id => parseInt(id)).sort((a, b) => a - b);
+
+            // 检查是否完全匹配（数量相同且内容相同）
+            if (slotPeriodIds.length > 0 &&
+                slotPeriodIds.length === normalizedIds.length &&
+                slotPeriodIds.every((id, idx) => id === normalizedIds[idx])) {
+                return `(${slot.name})`;
+            }
+        }
+    }
+
+    // 如果选择了所有节次，直接显示"全天"
+    if (periodIds.length >= periods.length) {
+        return '(全天)';
+    }
+
+    // 获取节次对象，按在 periods 数组中的顺序排序
+    const selectedPeriods = periodIds
+        .map(id => {
+            const index = periods.findIndex(p => p.id === id || p.id === parseInt(id));
+            if (index === -1) return null;
+            return { ...periods[index], sortIndex: index };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.sortIndex - b.sortIndex);
+
+    if (selectedPeriods.length === 0) {
+        return `(${periodIds.length}节)`;
+    }
+
+    // 分离"第X节"格式的节次和特殊节次（早读、早操等）
+    const numberedPattern = /^第(\d+)节$/;
+    const result = [];
+    let numberedRun = []; // 连续的"第X节"
+
+    const flushNumberedRun = () => {
+        if (numberedRun.length === 0) return;
+
+        if (numberedRun.length === 1) {
+            result.push(numberedRun[0].name);
+        } else if (numberedRun.length === 2) {
+            result.push(numberedRun.map(p => p.name).join('、'));
+        } else {
+            // 合并为"第X-Y节"
+            const firstMatch = numberedRun[0].name.match(numberedPattern);
+            const lastMatch = numberedRun[numberedRun.length - 1].name.match(numberedPattern);
+            if (firstMatch && lastMatch) {
+                result.push(`第${firstMatch[1]}-${lastMatch[1]}节`);
+            } else {
+                result.push(numberedRun.map(p => p.name).join('、'));
+            }
+        }
+        numberedRun = [];
+    };
+
+    for (const period of selectedPeriods) {
+        const match = period.name.match(numberedPattern);
+        if (match) {
+            // 检查是否可以继续当前的连续序列
+            if (numberedRun.length > 0) {
+                const lastMatch = numberedRun[numberedRun.length - 1].name.match(numberedPattern);
+                if (lastMatch && parseInt(match[1]) === parseInt(lastMatch[1]) + 1) {
+                    // 连续的，添加到当前序列
+                    numberedRun.push(period);
+                } else {
+                    // 不连续，结束当前序列并开始新的
+                    flushNumberedRun();
+                    numberedRun.push(period);
+                }
+            } else {
+                numberedRun.push(period);
+            }
+        } else {
+            // 特殊节次（早读、早操等），先结束当前的数字序列
+            flushNumberedRun();
+            result.push(period.name);
+        }
+    }
+
+    // 处理最后剩余的数字序列
+    flushNumberedRun();
+
+    return `(${result.join('、')})`;
+};
+
 export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const formattedDate = date ? format(date, 'yyyy-MM-dd') : '';
     const [students, setStudents] = useState([]);
@@ -435,11 +541,23 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         let detailText = '';
         if (details) {
             if (details.time) detailText = `(${details.time})`;
-            // 优先使用 period_numbers（节次编号），否则使用 periods（ID）
-            if (details.period_numbers) {
-                detailText = `(第${details.period_numbers.join(',')}节)`;
-            } else if (details.periods) {
-                detailText = `(第${details.periods.join(',')}节)`; // 兼容旧数据
+            // 使用节次名称显示，而不是简单的数字
+            if (details.period_ids && Array.isArray(details.period_ids) && details.period_ids.length > 0) {
+                detailText = formatPeriodNames(details.period_ids, periods, timeSlots);
+            } else if (details.period_numbers && Array.isArray(details.period_numbers)) {
+                // 旧数据兼容：通过 period_numbers 查找对应的 period_ids
+                const periodIds = details.period_numbers.map(num => {
+                    const p = periods.find((_, idx) => idx + 1 === num);
+                    return p?.id;
+                }).filter(Boolean);
+                if (periodIds.length > 0) {
+                    detailText = formatPeriodNames(periodIds, periods, timeSlots);
+                } else {
+                    detailText = `(第${details.period_numbers.join(',')}节)`;
+                }
+            } else if (details.periods && Array.isArray(details.periods)) {
+                // 兼容旧数据：periods 可能是 ID 数组
+                detailText = formatPeriodNames(details.periods, periods, timeSlots);
             }
             if (details.option) {
                 // 优先使用保存的 option_label，然后从 leaveType 的 input_config 中获取 label
@@ -472,7 +590,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
 
         // 如果没有详细信息，且有时段ID，显示时段
         if (!detailText && periodId) {
-            detailText = `(${period?.name || `第${periodId}节`})`;
+            const periodObj = periods.find(p => p.id === periodId);
+            detailText = `(${periodObj?.name || `第${periodId}节`})`;
         }
 
         const s = status || 'unmarked';

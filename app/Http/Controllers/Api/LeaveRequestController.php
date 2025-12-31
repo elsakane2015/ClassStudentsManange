@@ -65,9 +65,9 @@ class LeaveRequestController extends Controller
         // Group by student_id, date, approval_status for list display
         $records = $query->orderBy('created_at', 'desc')->get();
         
-        // Group records into "requests" (by student + date range + approval_status)
+        // Group records into "requests" (by student + date + leave_type + approval_status)
         $groupedRequests = $records->groupBy(function($record) {
-            return $record->student_id . '_' . $record->date->format('Y-m-d') . '_' . $record->approval_status;
+            return $record->student_id . '_' . $record->date->format('Y-m-d') . '_' . $record->leave_type_id . '_' . $record->approval_status;
         })->map(function($group) {
             $first = $group->first();
             return [
@@ -368,10 +368,10 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Not your class'], 403);
         }
 
-        // Find all related records (same student, same date range, same source)
-        // For now, approve just this single record or all records for same student on same date
+        // Find all related records (same student, same date, same leave_type, same source)
         $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
             ->where('date', $record->date)
+            ->where('leave_type_id', $record->leave_type_id)
             ->where('approval_status', 'pending')
             ->where('is_self_applied', true)
             ->get();
@@ -407,9 +407,10 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Not your class'], 403);
         }
         
-        // Find and delete all related pending records
+        // Find and reject all related pending records (same leave_type)
         $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
             ->where('date', $record->date)
+            ->where('leave_type_id', $record->leave_type_id)
             ->where('approval_status', 'pending')
             ->where('is_self_applied', true)
             ->get();
@@ -446,9 +447,10 @@ class LeaveRequestController extends Controller
             }
         }
         
-        // Find and delete all related pending records for same date
+        // Find and delete all related pending records for same date and leave_type
         $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
             ->where('date', $record->date)
+            ->where('leave_type_id', $record->leave_type_id)
             ->where('approval_status', 'pending')
             ->where('is_self_applied', true);
             

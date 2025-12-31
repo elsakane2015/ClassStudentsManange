@@ -99,6 +99,7 @@ export default function RollCallPage() {
                     description: data.description,
                     absent_status: data.absent_status,
                     leave_type_id: data.leave_type_id,
+                    period_ids: data.period_ids,
                     is_active: data.is_active,
                 });
                 alert(res.data.message || '更新成功');

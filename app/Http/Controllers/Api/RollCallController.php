@@ -302,6 +302,7 @@ class RollCallController extends Controller
                         'status' => $leaveInfo ? 'on_leave' : 'pending',
                         'leave_type_id' => $leaveInfo['leave_type_id'] ?? null,
                         'leave_detail' => $leaveInfo['detail'] ?? null,
+                        'leave_status' => $leaveInfo['status'] ?? null,
                     ]);
                 }
 
@@ -510,47 +511,55 @@ class RollCallController extends Controller
                 // 如果配置了节次，为每个节次创建考勤记录
                 if (!empty($periodIds)) {
                     foreach ($periodIds as $index => $periodId) {
-                        AttendanceRecord::create([
+                        AttendanceRecord::updateOrCreate(
+                            [
+                                'student_id' => $record->student_id,
+                                'date' => $rollCall->roll_call_time->toDateString(),
+                                'period_id' => $periodId,
+                            ],
+                            [
+                                'school_id' => $rollCall->school_id,
+                                'class_id' => $rollCall->class_id,
+                                'status' => 'leave',
+                                'leave_type_id' => $type->leave_type_id,
+                                'source_type' => 'roll_call',
+                                'source_id' => $rollCall->id,
+                                'is_self_applied' => false,
+                                'details' => [
+                                    'roll_call_type' => $type->name,
+                                    'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                                    'original_status' => 'absent',
+                                    'roll_call_record_id' => $record->id,
+                                    'period_index' => $index + 1,
+                                    'total_periods' => count($periodIds),
+                                ],
+                            ]
+                        );
+                    }
+                } else {
+                    // 未配置节次时，创建一条无节次关联的考勤记录
+                    AttendanceRecord::updateOrCreate(
+                        [
                             'student_id' => $record->student_id,
-                            'school_id' => $rollCall->school_id,
-                            'class_id' => $rollCall->class_id,
                             'date' => $rollCall->roll_call_time->toDateString(),
-                            'period_id' => $periodId,  // 使用配置的节次 ID
-                            'status' => 'leave',
-                            'leave_type_id' => $type->leave_type_id,
+                            'period_id' => null,
                             'source_type' => 'roll_call',
                             'source_id' => $rollCall->id,
+                        ],
+                        [
+                            'school_id' => $rollCall->school_id,
+                            'class_id' => $rollCall->class_id,
+                            'status' => 'leave',
+                            'leave_type_id' => $type->leave_type_id,
                             'is_self_applied' => false,
                             'details' => [
                                 'roll_call_type' => $type->name,
                                 'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
                                 'original_status' => 'absent',
                                 'roll_call_record_id' => $record->id,
-                                'period_index' => $index + 1,
-                                'total_periods' => count($periodIds),
                             ],
-                        ]);
-                    }
-                } else {
-                    // 未配置节次时，创建一条无节次关联的考勤记录
-                    AttendanceRecord::create([
-                        'student_id' => $record->student_id,
-                        'school_id' => $rollCall->school_id,
-                        'class_id' => $rollCall->class_id,
-                        'date' => $rollCall->roll_call_time->toDateString(),
-                        'period_id' => null,
-                        'status' => 'leave',
-                        'leave_type_id' => $type->leave_type_id,
-                        'source_type' => 'roll_call',
-                        'source_id' => $rollCall->id,
-                        'is_self_applied' => false,
-                        'details' => [
-                            'roll_call_type' => $type->name,
-                            'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
-                            'original_status' => 'absent',
-                            'roll_call_record_id' => $record->id,
-                        ],
-                    ]);
+                        ]
+                    );
                 }
             }
 
@@ -700,47 +709,55 @@ class RollCallController extends Controller
                 // 如果配置了节次，为每个节次创建考勤记录
                 if (!empty($periodIds)) {
                     foreach ($periodIds as $index => $periodId) {
-                        AttendanceRecord::create([
+                        AttendanceRecord::updateOrCreate(
+                            [
+                                'student_id' => $record->student_id,
+                                'date' => $rollCall->roll_call_time->toDateString(),
+                                'period_id' => $periodId,
+                            ],
+                            [
+                                'school_id' => $rollCall->school_id,
+                                'class_id' => $rollCall->class_id,
+                                'status' => 'leave',
+                                'leave_type_id' => $type->leave_type_id,
+                                'source_type' => 'roll_call',
+                                'source_id' => $rollCall->id,
+                                'is_self_applied' => false,
+                                'details' => [
+                                    'roll_call_type' => $type->name,
+                                    'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                                    'original_status' => 'absent',
+                                    'roll_call_record_id' => $record->id,
+                                    'period_index' => $index + 1,
+                                    'total_periods' => count($periodIds),
+                                ],
+                            ]
+                        );
+                    }
+                } else {
+                    // 未配置节次时，创建一条无节次关联的考勤记录
+                    AttendanceRecord::updateOrCreate(
+                        [
                             'student_id' => $record->student_id,
-                            'school_id' => $rollCall->school_id,
-                            'class_id' => $rollCall->class_id,
                             'date' => $rollCall->roll_call_time->toDateString(),
-                            'period_id' => $periodId,
-                            'status' => 'leave',
-                            'leave_type_id' => $type->leave_type_id,
+                            'period_id' => null,
                             'source_type' => 'roll_call',
                             'source_id' => $rollCall->id,
+                        ],
+                        [
+                            'school_id' => $rollCall->school_id,
+                            'class_id' => $rollCall->class_id,
+                            'status' => 'leave',
+                            'leave_type_id' => $type->leave_type_id,
                             'is_self_applied' => false,
                             'details' => [
                                 'roll_call_type' => $type->name,
                                 'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
                                 'original_status' => 'absent',
                                 'roll_call_record_id' => $record->id,
-                                'period_index' => $index + 1,
-                                'total_periods' => count($periodIds),
                             ],
-                        ]);
-                    }
-                } else {
-                    // 未配置节次时，创建一条无节次关联的考勤记录
-                    AttendanceRecord::create([
-                        'student_id' => $record->student_id,
-                        'school_id' => $rollCall->school_id,
-                        'class_id' => $rollCall->class_id,
-                        'date' => $rollCall->roll_call_time->toDateString(),
-                        'period_id' => null,
-                        'status' => 'leave',
-                        'leave_type_id' => $type->leave_type_id,
-                        'source_type' => 'roll_call',
-                        'source_id' => $rollCall->id,
-                        'is_self_applied' => false,
-                        'details' => [
-                            'roll_call_type' => $type->name,
-                            'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
-                            'original_status' => 'absent',
-                            'roll_call_record_id' => $record->id,
-                        ],
-                    ]);
+                        ]
+                    );
                 }
             }
 
@@ -817,34 +834,112 @@ class RollCallController extends Controller
     }
 
     /**
-     * Get student leave info for a specific time
+     * Get student attendance info for roll call
+     * 
+     * Checks if the student already has an attendance record that covers any of the 
+     * periods associated with the current roll call type.
+     * 
+     * For late/early_leave: requires exact period match
+     * For absent/leave/excused: uses period intersection (any overlap counts)
      */
     private function getStudentLeaveInfo(Student $student, Carbon $rollCallTime, ?RollCallType $rollCallType = null): ?array
     {
-        // Find approved leave for this date (exclude roll_call source - those are absences, not leaves)
-        $leaveRecords = AttendanceRecord::where('student_id', $student->id)
+        // Get the period IDs for this roll call type
+        $rollCallPeriodIds = $rollCallType?->period_ids ?? [];
+        $rollCallPeriodIdsInt = !empty($rollCallPeriodIds) ? array_map('intval', $rollCallPeriodIds) : [];
+        
+        // Find all non-present attendance records for this date (exclude roll_call source to avoid duplicates)
+        $attendanceRecords = AttendanceRecord::where('student_id', $student->id)
             ->whereDate('date', $rollCallTime->toDateString())
-            ->whereIn('status', ['leave', 'excused'])
-            ->where('source_type', '!=', 'roll_call')  // Exclude roll call absences
+            ->whereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave'])
+            ->where('source_type', '!=', 'roll_call')  // Exclude roll call records
             ->where(function ($q) {
-                $q->where('approval_status', 'approved')
-                  ->orWhereNull('approval_status');
+                // For leave/excused, require approval; for others (absent, late, early_leave), always show
+                $q->whereIn('status', ['absent', 'late', 'early_leave'])
+                  ->orWhere(function ($q2) {
+                      $q2->whereIn('status', ['leave', 'excused'])
+                         ->where(function ($q3) {
+                             $q3->where('approval_status', 'approved')
+                                ->orWhereNull('approval_status');
+                         });
+                  });
             })
             ->with('leaveType')
             ->get();
 
         $rollCallTypeName = $rollCallType?->name ?? '';
 
-        foreach ($leaveRecords as $record) {
+        foreach ($attendanceRecords as $record) {
             $details = $record->details ?? [];
-            $leaveTypeName = $record->leaveType?->name ?? '请假';
+            $status = $record->status;
+            
+            // Get type name based on status
+            $typeName = $record->leaveType?->name ?? match($status) {
+                'absent' => '旷课',
+                'late' => '迟到',
+                'early_leave' => '早退',
+                default => '请假',
+            };
             $inputConfig = $record->leaveType?->input_config ?? [];
+            
+            // Get the period IDs from the record
+            // Priority: details.periods/period_ids (full list) > record.period_id (single)
+            $recordPeriodIds = [];
+            
+            // Check if details has period_ids array (time slot selection)
+            if (!empty($details['period_ids']) && is_array($details['period_ids'])) {
+                $recordPeriodIds = array_map('intval', $details['period_ids']);
+            }
+            // Check if details has periods array (旷课等)
+            elseif (!empty($details['periods']) && is_array($details['periods'])) {
+                $recordPeriodIds = array_map('intval', $details['periods']);
+            }
+            // Fallback: Check if record has period_id (single period)
+            elseif ($record->period_id) {
+                $recordPeriodIds = [(int)$record->period_id];
+            }
+            
+            // Get display label for this record
+            $displayLabel = $this->getLeaveDisplayLabel($record, $details, $inputConfig);
+            
+            // Different matching logic based on status
+            if (in_array($status, ['late', 'early_leave'])) {
+                // Late/Early Leave: require EXACT period match
+                // Only show if the record's period_id is in the roll call's period_ids
+                if (!empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
+                    $intersection = array_intersect($recordPeriodIds, $rollCallPeriodIdsInt);
+                    if (!empty($intersection)) {
+                        return [
+                            'leave_type_id' => $record->leave_type_id,
+                            'detail' => $typeName . '(' . $displayLabel . ')',
+                            'status' => $status,
+                        ];
+                    }
+                }
+                // No match - skip this record
+                continue;
+            }
+            
+            // For absent/leave/excused: use period intersection (any overlap counts)
+            if (!empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
+                $intersection = array_intersect($recordPeriodIds, $rollCallPeriodIdsInt);
+                
+                if (!empty($intersection)) {
+                    // Record covers at least one period of this roll call
+                    return [
+                        'leave_type_id' => $record->leave_type_id,
+                        'detail' => $typeName . '(' . $displayLabel . ')',
+                        'status' => $status,
+                    ];
+                }
+                // No intersection - this record doesn't cover the roll call periods
+                continue;
+            }
             
             // Format 1: Check for "option" field (e.g., {"option": "evening_exercise"})
             // This is used by leave types with duration_select input (like 生理假)
             $optionKey = $details['option'] ?? null;
             if ($optionKey && is_string($optionKey)) {
-                // First check if option_label is already saved in details
                 $optionLabel = $details['option_label'] ?? null;
                 
                 // Fallback: Find the label for this option from input_config (for old records)
@@ -858,72 +953,107 @@ class RollCallController extends Controller
                     }
                 }
                 
-                // If still no label, use the key itself
                 $optionLabel = $optionLabel ?: $optionKey;
                 
                 // Check if this option matches the current roll call type
-                // e.g., 晚操 option should match 晚操点名 roll call type
-                $normalizedOptionLabel = str_replace('操', '', $optionLabel); // 早/晚
-                $normalizedRollCallTypeName = str_replace(['点名', '操'], '', $rollCallTypeName); // 早/晚
+                $normalizedOptionLabel = str_replace('操', '', $optionLabel);
+                $normalizedRollCallTypeName = str_replace(['点名', '操'], '', $rollCallTypeName);
                 
                 if ($normalizedOptionLabel === $normalizedRollCallTypeName || 
                     str_contains($rollCallTypeName, $optionLabel)) {
                     return [
                         'leave_type_id' => $record->leave_type_id,
-                        'detail' => $leaveTypeName . '(' . $optionLabel . ')',
+                        'detail' => $typeName . '(' . $optionLabel . ')',
+                        'status' => $status,
                     ];
                 }
                 // Option doesn't match current roll call type - skip this record
                 continue;
             }
             
-            // Format 2: time_slot_id directly
+            // Format 2: time_slot_id - check if time slot's periods overlap with roll call
             $timeSlotId = $details['time_slot_id'] ?? null;
-            
-            // Format 3: input_value contains time_slot_X
-            $inputValue = $details['input_value'] ?? null;
-            if (!$timeSlotId && $inputValue && is_string($inputValue) && str_starts_with($inputValue, 'time_slot_')) {
-                $timeSlotId = (int) str_replace('time_slot_', '', $inputValue);
-            }
-            
-            // Format 4: half_day or duration label stored directly
-            $halfDay = $details['half_day'] ?? $details['option_label'] ?? null;
-            
-            // If we have a time slot ID, check if current time falls within
             if ($timeSlotId) {
                 $timeSlot = TimeSlot::find($timeSlotId);
                 if ($timeSlot) {
-                    $rollCallTimeOnly = $rollCallTime->format('H:i:s');
-                    $start = $timeSlot->time_start;
-                    $end = $timeSlot->time_end;
+                    $timeSlotPeriodIds = array_map('intval', $timeSlot->period_ids ?? []);
+                    
+                    // If roll call has periods, check intersection
+                    if (!empty($rollCallPeriodIdsInt)) {
+                        $intersection = array_intersect($timeSlotPeriodIds, $rollCallPeriodIdsInt);
+                        
+                        if (!empty($intersection)) {
+                            return [
+                                'leave_type_id' => $record->leave_type_id,
+                                'detail' => $typeName . '(' . $timeSlot->name . ')',
+                                'status' => $status,
+                            ];
+                        }
+                    } else {
+                        // No roll call periods configured, use time-based check
+                        $rollCallTimeOnly = $rollCallTime->format('H:i:s');
+                        $start = $timeSlot->time_start;
+                        $end = $timeSlot->time_end;
 
-                    // Check if roll call time falls within the time slot
-                    if ($rollCallTimeOnly >= $start && $rollCallTimeOnly <= $end) {
-                        return [
-                            'leave_type_id' => $record->leave_type_id,
-                            'detail' => $leaveTypeName . '(' . $timeSlot->name . ')',
-                        ];
+                        if ($rollCallTimeOnly >= $start && $rollCallTimeOnly <= $end) {
+                            return [
+                                'leave_type_id' => $record->leave_type_id,
+                                'detail' => $typeName . '(' . $timeSlot->name . ')',
+                                'status' => $status,
+                            ];
+                        }
                     }
-                    // Has time slot but doesn't match current time - skip this record
                     continue;
                 }
             }
             
-            // If we have a half_day label, use it directly
-            if ($halfDay) {
+            // Full day record (no specific period or time slot)
+            // If roll call has no periods configured, treat as matching
+            if (empty($recordPeriodIds) && empty($details['option']) && empty($details['time_slot_id'])) {
                 return [
                     'leave_type_id' => $record->leave_type_id,
-                    'detail' => $leaveTypeName . '(' . $halfDay . ')',
+                    'detail' => $typeName . '(' . $displayLabel . ')',
+                    'status' => $status,
                 ];
             }
-            
-            // Full day leave (no time slot or specific period)
-            return [
-                'leave_type_id' => $record->leave_type_id,
-                'detail' => $leaveTypeName . '(全天)',
-            ];
         }
 
         return null;
+    }
+    
+    /**
+     * Get display label for a leave record
+     */
+    private function getLeaveDisplayLabel($record, $details, $inputConfig): string
+    {
+        // Priority 1: display_label from details
+        if (!empty($details['display_label'])) {
+            return $details['display_label'];
+        }
+        
+        // Priority 2: time_slot_name from details
+        if (!empty($details['time_slot_name'])) {
+            return $details['time_slot_name'];
+        }
+        
+        // Priority 3: option_label from details
+        if (!empty($details['option_label'])) {
+            return $details['option_label'];
+        }
+        
+        // Priority 4: Look up option in input_config
+        $optionKey = $details['option'] ?? null;
+        if ($optionKey && is_string($optionKey)) {
+            $options = $inputConfig['options'] ?? [];
+            foreach ($options as $opt) {
+                if (($opt['key'] ?? '') === $optionKey) {
+                    return $opt['label'] ?? $optionKey;
+                }
+            }
+            return $optionKey;
+        }
+        
+        // Default
+        return '全天';
     }
 }
