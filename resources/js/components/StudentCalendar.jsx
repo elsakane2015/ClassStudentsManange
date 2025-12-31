@@ -197,7 +197,7 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
                                             return (
                                                 <div
                                                     key={day.toISOString()}
-                                                    className={`relative border-b border-r border-gray-100 p-1 cursor-pointer transition-colors hover:bg-indigo-50 ${!isCurrentMonth ? 'bg-gray-50/50 text-gray-400' : holiday ? 'bg-red-100 text-red-600' : 'bg-white'}`}
+                                                    className={`relative border-b border-r border-gray-100 p-1 cursor-pointer transition-colors hover:bg-indigo-50 min-w-0 overflow-hidden ${!isCurrentMonth ? 'bg-gray-50/50 text-gray-400' : holiday ? 'bg-red-100 text-red-600' : 'bg-white'}`}
                                                     onClick={() => handleDateClick(day)}
                                                     onMouseDown={() => handleMouseDown(day)}
                                                     onMouseUp={() => handleMouseUp(day)}
@@ -210,11 +210,11 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
                                                         {holiday && <span className="text-xs text-red-400">休</span>}
                                                     </div>
                                                     {/* Events */}
-                                                    <div className="space-y-0.5 overflow-hidden">
+                                                    <div className="space-y-0.5 overflow-hidden min-w-0">
                                                         {dayEvents.slice(0, 3).map((event, idx) => (
                                                             <div
                                                                 key={idx}
-                                                                className="text-xs px-1 py-0.5 rounded truncate text-white cursor-pointer hover:opacity-80 transition-opacity"
+                                                                className="text-xs px-1 py-0.5 rounded text-white cursor-pointer hover:opacity-80 transition-opacity overflow-hidden whitespace-nowrap text-ellipsis max-w-full"
                                                                 style={{ backgroundColor: event.color || '#6366f1' }}
                                                                 title="点击查看详情"
                                                                 onClick={(e) => {

@@ -214,9 +214,20 @@ export default function StudentDashboard() {
                         }
                     }
 
-                    // Add pending status indicator for self-applied leaves
-                    if (record.approval_status === 'pending') {
-                        title += '(待审)';
+                    // For self-applied leaves, add approval status prefix
+                    // Format: "待审:病假(xxx)" or "批准:病假(xxx)" or "驳回:病假(xxx)"
+                    if (record.is_self_applied) {
+                        let statusPrefix = '';
+                        if (record.approval_status === 'pending') {
+                            statusPrefix = '待审';
+                        } else if (record.approval_status === 'approved') {
+                            statusPrefix = '批准';
+                        } else if (record.approval_status === 'rejected') {
+                            statusPrefix = '驳回';
+                        }
+                        if (statusPrefix) {
+                            title = `${statusPrefix}:${title}`;
+                        }
                     }
 
                     // Color: gray for pending, otherwise based on status/leave_type

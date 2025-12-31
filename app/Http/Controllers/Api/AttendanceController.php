@@ -309,7 +309,7 @@ class AttendanceController extends Controller
         $studentIds = $students->pluck('id');
         $attendances = \App\Models\AttendanceRecord::whereIn('student_id', $studentIds)
                           ->where('date', $date)
-                          ->with(['leaveType', 'period'])
+                          ->with(['leaveType'])
                           ->orderByRaw('period_id IS NULL DESC') // NULL在前
                           ->orderBy('period_id')
                           ->get();
@@ -550,7 +550,7 @@ class AttendanceController extends Controller
         $records = AttendanceRecord::whereIn('class_id', $classIds)
             ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
             ->whereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave'])
-            ->with(['student.user', 'leaveType', 'period'])
+            ->with(['student.user', 'leaveType'])
             ->orderBy('created_at', 'desc')
             ->get();
         
@@ -1578,7 +1578,7 @@ class AttendanceController extends Controller
                             $q->where('leave_type_id', $leaveTypeId);
                         }
                     }
-                    $q->with(['leaveType', 'period']);
+                    $q->with(['leaveType']);
                 }
             ])
             ->get();
@@ -1737,7 +1737,7 @@ class AttendanceController extends Controller
         // Get all attendance records for this student in the date range
         $records = \App\Models\AttendanceRecord::where('student_id', $studentId)
             ->whereBetween('date', [$dateRange['start'], $dateRange['end']])
-            ->with(['leaveType', 'period'])
+            ->with(['leaveType'])
             ->orderBy('date', 'desc')
             ->orderBy('created_at', 'desc')
             ->get();

@@ -41,22 +41,24 @@ function CalendarDetailModal({ isOpen, onClose, date, records }) {
                                 <p className="text-gray-500 text-center py-4">暂无考勤记录</p>
                             ) : (
                                 records.map((record, idx) => {
-                                    // 生成审批状态标签
-                                    let approvalBadge = '';
+                                    // 生成审批状态前缀（针对自主请假）
+                                    let statusPrefix = '';
                                     if (record.is_self_applied) {
                                         if (record.approval_status === 'pending') {
-                                            approvalBadge = '(待审)';
+                                            statusPrefix = '待审:';
                                         } else if (record.approval_status === 'approved') {
-                                            approvalBadge = '(已审批)';
+                                            statusPrefix = '批准:';
                                         } else if (record.approval_status === 'rejected') {
-                                            approvalBadge = '(已驳回)';
+                                            statusPrefix = '驳回:';
                                         }
                                     }
+
+                                    const typeLabel = `${record.type}${record.option ? `(${record.option})` : ''}`;
 
                                     return (
                                         <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded text-sm">
                                             <span className={`font-medium ${statusColors[record.status] || 'text-gray-700'}`}>
-                                                {record.type}{record.option ? `(${record.option})` : ''}{approvalBadge}
+                                                {statusPrefix}{typeLabel}
                                             </span>
                                             <span className="text-gray-600">：</span>
                                             <span className="text-gray-800">{record.student_no ? `${record.student_no} ` : ''}{record.student_name}</span>
@@ -227,25 +229,30 @@ export default function AttendanceCalendar({ user }) {
         const remaining = records.length - maxDisplay;
 
         return (
-            <div className="mt-1 space-y-0.5">
+            <div className="mt-1 space-y-0.5 min-w-0">
                 {displayRecords.map((record, idx) => {
-                    // 生成审批状态标签
-                    let approvalBadge = '';
+                    // 生成审批状态前缀（针对自主请假）
+                    let statusPrefix = '';
                     if (record.is_self_applied) {
                         if (record.approval_status === 'pending') {
-                            approvalBadge = '(待审)';
+                            statusPrefix = '待审:';
                         } else if (record.approval_status === 'approved') {
-                            approvalBadge = '(已审批)';
+                            statusPrefix = '批准:';
+                        } else if (record.approval_status === 'rejected') {
+                            statusPrefix = '驳回:';
                         }
                     }
+
+                    const typeLabel = `${record.type}${record.option ? `(${record.option})` : ''}`;
+                    const displayText = `${statusPrefix}${typeLabel}: ${record.student_name}`;
 
                     return (
                         <div
                             key={idx}
-                            className={`text-[10px] leading-tight truncate ${statusColors[record.status] || 'text-gray-600'}`}
-                            title={`${record.type}${record.option ? `(${record.option})` : ''}${approvalBadge}: ${record.student_name} ${record.time}`}
+                            className={`text-[10px] leading-tight overflow-hidden whitespace-nowrap text-ellipsis ${statusColors[record.status] || 'text-gray-600'}`}
+                            title={`${statusPrefix}${typeLabel}: ${record.student_name} ${record.time}`}
                         >
-                            {record.type}{record.option ? `(${record.option})` : ''}{approvalBadge}: {record.student_name}
+                            {displayText}
                         </div>
                     );
                 })}

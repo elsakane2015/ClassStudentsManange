@@ -539,15 +539,33 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                             // 过滤掉 status='present' 的记录，只显示异常状态
                                                             const nonPresentRecords = records.filter(r => r.status !== 'present');
 
+                                                            // 去重：基于 id 去重（每个记录应有唯一id）
+                                                            const seenIds = new Set();
+                                                            const uniqueRecords = nonPresentRecords.filter(r => {
+                                                                // 解析 details
+                                                                const details = typeof r.details === 'string'
+                                                                    ? JSON.parse(r.details || '{}')
+                                                                    : (r.details || {});
+
+                                                                // 使用记录ID作为主键，如果没有ID则使用组合键
+                                                                const key = r.id
+                                                                    ? `id-${r.id}`
+                                                                    : `${r.status}-${r.period_id}-${details.option || 'none'}-${details.time_slot_id || 'none'}`;
+
+                                                                if (seenIds.has(key)) return false;
+                                                                seenIds.add(key);
+                                                                return true;
+                                                            });
+
                                                             // 如果没有异常记录，显示 "-"（出勤是默认状态，无需标记）
-                                                            if (nonPresentRecords.length === 0) {
+                                                            if (uniqueRecords.length === 0) {
                                                                 return <span className="text-gray-400">-</span>;
                                                             }
 
-                                                            // 显示所有异常记录
+                                                            // 显示所有异常记录（已去重）
                                                             return (
                                                                 <div className="flex flex-wrap items-center gap-1">
-                                                                    {nonPresentRecords.map((record, idx) => {
+                                                                    {uniqueRecords.map((record, idx) => {
                                                                         const details = typeof record.details === 'string'
                                                                             ? JSON.parse(record.details || '{}')
                                                                             : (record.details || {});
@@ -564,7 +582,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                                     period={record.period}
                                                                                     onClick={() => handleDeleteRecord(student.id, record)}
                                                                                 />
-                                                                                {idx < nonPresentRecords.length - 1 && (
+                                                                                {idx < uniqueRecords.length - 1 && (
                                                                                     <span className="text-gray-400">|</span>
                                                                                 )}
                                                                             </React.Fragment>
