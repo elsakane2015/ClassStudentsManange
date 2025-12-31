@@ -82,6 +82,7 @@ class LeaveRequestController extends Controller
                 'end_date' => $group->max('date')->format('Y-m-d'),
                 'half_day' => $first->details['option'] ?? null,
                 'half_day_label' => $this->getOptionLabel($first),
+                'details' => $first->details, // 添加完整的 details 字段
                 'reason' => $first->reason,
                 'images' => $first->images,
                 'status' => $first->approval_status ?? 'approved',
@@ -131,6 +132,13 @@ class LeaveRequestController extends Controller
         $student = $user->student;
         $images = $request->images ?? [];
         
+        // Debug: Log received parameters
+        \Log::info('LeaveRequest store received parameters', [
+            'time_slot_id' => $request->time_slot_id,
+            'sessions' => $request->sessions,
+            'details' => $request->details,
+        ]);
+        
         // Get leave type
         $leaveType = \App\Models\LeaveType::where('slug', $request->type)
             ->where('school_id', $student->school_id)
@@ -172,17 +180,78 @@ class LeaveRequestController extends Controller
             }
         }
         
-        // 处理时段：如果提供了 time_slot_id，获取其关联的节次
+        // 处理时段：优先使用用户自定义选择的节次，否则使用时段的默认节次
         $periodIds = $request->sessions ?? [];
         $timeSlotId = $request->time_slot_id;
+        $isCustomSelection = false; // 用户是否自定义选择了节次
         
         if ($timeSlotId) {
             $timeSlot = \App\Models\TimeSlot::find($timeSlotId);
-            if ($timeSlot && !empty($timeSlot->period_ids)) {
-                $periodIds = $timeSlot->period_ids;
+            if ($timeSlot) {
+                // 检查用户是否自定义选择了节次（与时段默认不同）
+                $defaultPeriodIds = $timeSlot->period_ids ?? [];
+                if (!empty($periodIds)) {
+                    // 用户有自定义选择 - 转换为整数并排序后比较
+                    $userPeriods = array_map('intval', $periodIds);
+                    $defaultPeriods = array_map('intval', $defaultPeriodIds);
+                    sort($userPeriods);
+                    sort($defaultPeriods);
+                    $isCustomSelection = ($userPeriods !== $defaultPeriods);
+                    $periodIds = $userPeriods; // 使用转换后的整数数组
+                    
+                    \Log::info('Leave request period check', [
+                        'user_periods' => $userPeriods,
+                        'default_periods' => $defaultPeriods,
+                        'is_custom' => $isCustomSelection
+                    ]);
+                } else {
+                    // 用户没有自定义选择，使用时段默认节次
+                    $periodIds = $defaultPeriodIds;
+                }
+                
                 $details['time_slot_id'] = $timeSlotId;
                 $details['time_slot_name'] = $timeSlot->name;
                 $details['period_ids'] = $periodIds;
+                
+                // 生成显示标签
+                if ($isCustomSelection && !empty($periodIds)) {
+                    // 从 SystemSetting 获取节次配置（不使用 ClassPeriod 表）
+                    $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                    $attendancePeriods = [];
+                    if ($attendancePeriodsJson) {
+                        try {
+                            $attendancePeriods = json_decode($attendancePeriodsJson, true) ?: [];
+                        } catch (\Exception $e) {
+                            $attendancePeriods = [];
+                        }
+                    }
+                    
+                    // 将节次配置转换为 id => name 映射
+                    $periodMap = collect($attendancePeriods)->keyBy('id');
+                    
+                    // 获取选中节次的名称列表
+                    $selectedPeriodNames = [];
+                    foreach ($periodIds as $periodId) {
+                        if (isset($periodMap[$periodId])) {
+                            $selectedPeriodNames[] = $periodMap[$periodId]['name'];
+                        }
+                    }
+                    
+                    // 生成显示标签
+                    $displayLabel = $this->generatePeriodDisplayLabel($selectedPeriodNames);
+                    $details['display_label'] = $displayLabel;
+                    $details['option_periods'] = count($periodIds);
+                    
+                    \Log::info('Custom selection display_label generated', [
+                        'display_label' => $displayLabel,
+                        'period_count' => count($periodIds),
+                        'period_names' => $selectedPeriodNames
+                    ]);
+                } else {
+                    // 使用时段默认名称
+                    $details['display_label'] = $timeSlot->name;
+                    $details['option_periods'] = count($periodIds);
+                }
             }
         }
 
@@ -196,6 +265,12 @@ class LeaveRequestController extends Controller
             while ($start->lte($end)) {
                 if (!empty($periodIds)) {
                     // 为每个节次创建独立的考勤记录
+                    \Log::info('Creating attendance record with details', [
+                        'display_label' => $details['display_label'] ?? 'NOT SET',
+                        'time_slot_name' => $details['time_slot_name'] ?? 'NOT SET',
+                        'option_label' => $details['option_label'] ?? 'NOT SET',
+                        'is_custom' => $isCustomSelection
+                    ]);
                     foreach ($periodIds as $periodId) {
                         $record = AttendanceRecord::create([
                             'student_id' => $student->id,
@@ -205,7 +280,7 @@ class LeaveRequestController extends Controller
                             'period_id' => $periodId,
                             'status' => 'leave',
                             'leave_type_id' => $leaveType?->id,
-                            'details' => !empty($details) ? $details : null,
+                            'details' => !empty($details) ? $details : null, // Log this below
                             'images' => !empty($images) ? $images : null,
                             'is_self_applied' => true,
                             'approval_status' => 'pending',
@@ -419,5 +494,59 @@ class LeaveRequestController extends Controller
         }
         
         return $option;
+    }
+
+    /**
+     * 生成节次显示标签
+     * 格式：第1,3-5节、晚操、晚自习
+     * 
+     * @param array $periodNames 节次名称数组
+     * @return string
+     */
+    protected function generatePeriodDisplayLabel(array $periodNames)
+    {
+        if (empty($periodNames)) {
+            return '';
+        }
+
+        $regularPeriods = [];  // 常规课节（有序号的）
+        $specialPeriods = [];  // 特殊课节（早读、早操、晚操、晚自习等）
+        
+        foreach ($periodNames as $name) {
+            // 判断是否是常规课节（名称是"第X节"格式）
+            if (preg_match('/^第(\d+)节$/', $name, $matches)) {
+                $regularPeriods[] = (int)$matches[1];
+            } else {
+                $specialPeriods[] = $name;
+            }
+        }
+        
+        $parts = [];
+        
+        // 处理常规课节，生成范围格式（如：1,3-5）
+        if (!empty($regularPeriods)) {
+            sort($regularPeriods);
+            $ranges = [];
+            $start = $regularPeriods[0];
+            $end = $start;
+            
+            for ($i = 1; $i < count($regularPeriods); $i++) {
+                if ($regularPeriods[$i] === $end + 1) {
+                    $end = $regularPeriods[$i];
+                } else {
+                    $ranges[] = ($start === $end) ? (string)$start : "{$start}-{$end}";
+                    $start = $regularPeriods[$i];
+                    $end = $start;
+                }
+            }
+            $ranges[] = ($start === $end) ? (string)$start : "{$start}-{$end}";
+            
+            $parts[] = '第' . implode(',', $ranges) . '节';
+        }
+        
+        // 添加特殊课节
+        $parts = array_merge($parts, $specialPeriods);
+        
+        return implode('、', $parts);
     }
 }

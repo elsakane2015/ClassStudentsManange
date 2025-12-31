@@ -845,7 +845,13 @@ export default function TeacherDashboard() {
                                             if (record.period && record.period.period_number) {
                                                 remarkText = `第${record.period.period_number}节`;
                                             } else if (details) {
-                                                if (details.roll_call_type) {
+                                                // 优先使用自定义显示标签（用户自定义选择节次时）
+                                                if (details.display_label) {
+                                                    remarkText = details.display_label;
+                                                    if (details.option_periods) {
+                                                        remarkText += ` (${details.option_periods}节)`;
+                                                    }
+                                                } else if (details.roll_call_type) {
                                                     remarkText = details.roll_call_type;
                                                 } else if (details.period_numbers && Array.isArray(details.period_numbers) && details.period_numbers.length > 0) {
                                                     remarkText = `第${details.period_numbers.join(',')}节`;

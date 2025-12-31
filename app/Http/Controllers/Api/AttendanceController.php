@@ -599,8 +599,15 @@ class AttendanceController extends Controller
             $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
             $timeSlotId = $details['time_slot_id'] ?? null;
             
-            // 优先使用时段名称（自主请假选择的时段，如"上午"、"下午"）
-            if (isset($details['time_slot_name'])) {
+            // 优先使用自定义的显示标签（用户自定义选择节次时生成）
+            if (isset($details['display_label'])) {
+                $optionLabel = $details['display_label'];
+                // 附加节次数量
+                if (isset($details['option_periods'])) {
+                    $optionLabel .= ' (' . $details['option_periods'] . '节)';
+                }
+            // 其次使用时段名称（自主请假选择的时段，如"上午"、"下午"）
+            } elseif (isset($details['time_slot_name'])) {
                 $optionLabel = $details['time_slot_name'];
             // 其次检查 period_id（老师/管理员直接标记的具体节次，如"第9节"）
             } elseif ($record->period_id && isset($periodMap[$record->period_id])) {
@@ -695,7 +702,15 @@ class AttendanceController extends Controller
                         $statusLabel = $leaveType ? $leaveType->name : $originalStatus;
                         $detailLabel = $statusLabel . '(' . $details['roll_call_type'] . ')';
                     }
-                    // 优先使用时段名称（自主请假选择的时段，如"上午"、"下午"）
+                    // 优先使用自定义的显示标签（用户自定义选择节次时生成）
+                    elseif (isset($details['display_label'])) {
+                        $detailLabel = $details['display_label'];
+                        // 附加节次数量
+                        if (isset($details['option_periods'])) {
+                            $detailLabel .= ' (' . $details['option_periods'] . '节)';
+                        }
+                    }
+                    // 其次使用时段名称（自主请假选择的时段，如"上午"、"下午"）
                     elseif (isset($details['time_slot_name'])) {
                         $detailLabel = $details['time_slot_name'];
                     }

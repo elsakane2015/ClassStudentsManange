@@ -190,6 +190,11 @@ export default function LeaveRequestForm() {
                 submitData.sessions = formData.details.period_ids;
             }
 
+            console.log('[LeaveRequest Submit] submitData:', submitData);
+            console.log('[LeaveRequest Submit] sessions:', submitData.sessions);
+            console.log('[LeaveRequest Submit] time_slot_id:', submitData.time_slot_id);
+            console.log('[LeaveRequest Submit] details:', submitData.details);
+
             await axios.post('/leave-requests', submitData);
             alert('请假申请提交成功！');
             navigate('/student/dashboard');
@@ -387,21 +392,64 @@ export default function LeaveRequestForm() {
                             ))}
                         </div>
 
-                        {selectedSlot && selectedSlot.period_ids && selectedSlot.period_ids.length > 0 && (
+                        {selectedSlot && (
                             <div className="mt-2">
                                 <button
                                     type="button"
                                     onClick={() => setShowPeriodDetail(!showPeriodDetail)}
                                     className="text-xs text-indigo-600 hover:text-indigo-800"
                                 >
-                                    {showPeriodDetail ? '▲ 收起节次详情' : '▼ 查看包含节次'}
+                                    {showPeriodDetail ? '▲ 收起自定义节次' : '▼ 自定义节次（可选）'}
                                 </button>
                                 {showPeriodDetail && (
-                                    <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-600">
-                                        包含节次：{selectedSlot.period_ids.map(pid => {
-                                            const period = periods.find(p => p.id === pid);
-                                            return period ? period.name : `节次${pid}`;
-                                        }).join('、')}
+                                    <div className="mt-2 p-3 bg-gray-50 rounded border border-gray-200">
+                                        <div className="text-xs text-gray-500 mb-2">
+                                            点击可单独选择/取消节次：
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {periods.map(period => {
+                                                const isSelected = formData.details.period_ids?.includes(period.id);
+                                                const isInSlot = selectedSlot.period_ids?.includes(period.id);
+                                                return (
+                                                    <label
+                                                        key={period.id}
+                                                        className={`px-3 py-1.5 rounded border text-sm cursor-pointer transition-colors ${isSelected
+                                                            ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
+                                                            : isInSlot
+                                                                ? 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-gray-200'
+                                                                : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
+                                                            }`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            className="sr-only"
+                                                            checked={isSelected}
+                                                            onChange={() => {
+                                                                const currentIds = formData.details.period_ids || [];
+                                                                let newIds;
+                                                                if (isSelected) {
+                                                                    newIds = currentIds.filter(id => id !== period.id);
+                                                                } else {
+                                                                    newIds = [...currentIds, period.id];
+                                                                }
+                                                                setFormData(prev => ({
+                                                                    ...prev,
+                                                                    details: {
+                                                                        ...prev.details,
+                                                                        period_ids: newIds,
+                                                                        option_periods: newIds.length
+                                                                    }
+                                                                }));
+                                                            }}
+                                                        />
+                                                        {period.name}
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                        <div className="mt-2 text-xs text-gray-500">
+                                            已选：{(formData.details.period_ids || []).length}节
+                                        </div>
                                     </div>
                                 )}
                             </div>

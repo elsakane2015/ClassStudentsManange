@@ -151,7 +151,29 @@ export default function ApprovalHistory() {
                                         <p className="flex items-center text-sm text-gray-500 mt-1">
                                             {request.leave_type?.name || request.type || '请假'}
                                             <span className="mx-2">•</span>
-                                            {request.half_day_label || (request.half_day ? request.half_day : '全天')}
+                                            {(() => {
+                                                // 解析 details
+                                                let details = null;
+                                                try {
+                                                    details = typeof request.details === 'string'
+                                                        ? JSON.parse(request.details)
+                                                        : request.details;
+                                                } catch (e) { }
+
+                                                // 优先使用 display_label
+                                                console.log('[ApprovalHistory] details:', details);
+                                                if (details?.display_label) {
+                                                    const label = details.display_label;
+                                                    const count = details.option_periods;
+                                                    return count ? `${label} (${count}节)` : label;
+                                                }
+                                                // 否则使用 time_slot_name
+                                                if (details?.time_slot_name) {
+                                                    return details.time_slot_name;
+                                                }
+                                                // 最后使用 half_day_label
+                                                return request.half_day_label || (request.half_day ? request.half_day : '全天');
+                                            })()}
                                         </p>
                                     </div>
                                     <div className="ml-2 flex-shrink-0 flex flex-col items-end gap-1">

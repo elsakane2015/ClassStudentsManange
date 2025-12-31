@@ -104,7 +104,28 @@ export default function LeaveHistory() {
                                             </span>
                                         </div>
                                         <div className="text-sm text-gray-500">
-                                            {leave.half_day_label ? `仅${leave.half_day_label}` : (leave.half_day ? `仅${leave.half_day}` : '全天')}
+                                            {(() => {
+                                                // 解析 details
+                                                let details = null;
+                                                try {
+                                                    details = typeof leave.details === 'string'
+                                                        ? JSON.parse(leave.details)
+                                                        : leave.details;
+                                                } catch (e) { }
+
+                                                // 优先使用 display_label（自定义选择）
+                                                if (details?.display_label) {
+                                                    const label = details.display_label;
+                                                    const count = details.option_periods;
+                                                    return count ? `${label} (${count}节)` : label;
+                                                }
+                                                // 否则使用 time_slot_name
+                                                if (details?.time_slot_name) {
+                                                    return `仅${details.time_slot_name}`;
+                                                }
+                                                // 最后使用 half_day_label
+                                                return leave.half_day_label ? `仅${leave.half_day_label}` : (leave.half_day ? `仅${leave.half_day}` : '全天');
+                                            })()}
                                         </div>
                                         <p className="mt-2 text-sm text-gray-700 italic">
                                             "{leave.reason}"

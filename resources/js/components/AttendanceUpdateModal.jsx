@@ -18,6 +18,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const [pendingAction, setPendingAction] = useState(null); // { status, leaveType, ... }
     const [inputModalOpen, setInputModalOpen] = useState(false);
     const [inputData, setInputData] = useState({});
+    const [showPeriodDetail, setShowPeriodDetail] = useState(false);
 
     useEffect(() => {
         if (isOpen && date) {
@@ -706,39 +707,135 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                             );
                                         })()}
 
-                                        {pendingAction?.leaveType?.input_type === 'duration_select' && (
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-2">选择时段</label>
-                                                <div className="space-y-2">
-                                                    {timeSlots.length === 0 ? (
-                                                        <p className="text-sm text-gray-400">暂无时段配置，请联系管理员配置</p>
-                                                    ) : (
-                                                        timeSlots.filter(slot => slot.is_active).map(slot => (
-                                                            <label key={slot.id} className="flex items-center">
-                                                                <input
-                                                                    type="radio"
-                                                                    name="duration_opt"
-                                                                    className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                                                                    checked={inputData.time_slot_id === slot.id}
-                                                                    onChange={() => setInputData({
-                                                                        ...inputData,
-                                                                        time_slot_id: slot.id,
-                                                                        option: `time_slot_${slot.id}`,
-                                                                        option_label: slot.name,
-                                                                        option_periods: (slot.period_ids || []).length || 1,
-                                                                        period_ids: slot.period_ids || []
-                                                                    })}
-                                                                />
-                                                                <span className="ml-2 text-sm text-gray-700">
-                                                                    {slot.name}
-                                                                    <span className="text-gray-400 text-xs ml-1">({(slot.period_ids || []).length || 1}节)</span>
+                                        {pendingAction?.leaveType?.input_type === 'duration_select' && (() => {
+                                            // 解析input_config获取配置的时段
+                                            let config = {};
+                                            try {
+                                                config = typeof pendingAction.leaveType.input_config === 'string'
+                                                    ? JSON.parse(pendingAction.leaveType.input_config)
+                                                    : pendingAction.leaveType.input_config || {};
+                                            } catch (e) {
+                                                console.error('Failed to parse input_config:', e);
+                                            }
+
+                                            // 严格按照配置的 options 过滤时段
+                                            if (!config.options || config.options.length === 0) {
+                                                return (
+                                                    <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
+                                                        该请假类型未配置可选时段
+                                                    </div>
+                                                );
+                                            }
+
+                                            const allowedSlotKeys = config.options.map(opt =>
+                                                typeof opt === 'object' ? opt.key : opt
+                                            );
+                                            const filteredSlots = timeSlots.filter(slot => {
+                                                const slotKey = `time_slot_${slot.id}`;
+                                                return allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id));
+                                            });
+
+                                            if (filteredSlots.length === 0) {
+                                                return (
+                                                    <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
+                                                        该请假类型配置的时段不存在于系统时段中
+                                                    </div>
+                                                );
+                                            }
+
+                                            return (
+                                                <div className="space-y-3">
+                                                    <label className="block text-sm font-medium text-gray-700">选择时段</label>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {filteredSlots.map(slot => (
+                                                            <button
+                                                                key={slot.id}
+                                                                type="button"
+                                                                onClick={() => setInputData({
+                                                                    ...inputData,
+                                                                    time_slot_id: slot.id,
+                                                                    time_slot_name: slot.name,
+                                                                    option: `time_slot_${slot.id}`,
+                                                                    option_label: slot.name,
+                                                                    option_periods: (slot.period_ids || []).length || 1,
+                                                                    period_ids: slot.period_ids || []
+                                                                })}
+                                                                className={`px-4 py-2 rounded-lg border text-sm transition-colors ${inputData.time_slot_id === slot.id
+                                                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                                                    : 'bg-white border-gray-300 hover:bg-gray-50'
+                                                                    }`}
+                                                            >
+                                                                {slot.name}
+                                                                <span className={`text-xs ml-1 ${inputData.time_slot_id === slot.id ? 'text-indigo-200' : 'text-gray-400'}`}>
+                                                                    ({(slot.period_ids || []).length || 1}节)
                                                                 </span>
-                                                            </label>
-                                                        ))
+                                                            </button>
+                                                        ))}
+                                                    </div>
+
+                                                    {inputData.time_slot_id && (
+                                                        <div className="mt-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setShowPeriodDetail(!showPeriodDetail)}
+                                                                className="text-xs text-indigo-600 hover:text-indigo-800"
+                                                            >
+                                                                {showPeriodDetail ? '▲ 收起自定义节次' : '▼ 自定义节次（可选）'}
+                                                            </button>
+                                                            {showPeriodDetail && (
+                                                                <div className="mt-2 p-3 bg-gray-50 rounded border border-gray-200">
+                                                                    <div className="text-xs text-gray-500 mb-2">
+                                                                        点击可单独选择/取消节次：
+                                                                    </div>
+                                                                    <div className="flex flex-wrap gap-2">
+                                                                        {periods.map(period => {
+                                                                            const isSelected = inputData.period_ids?.includes(period.id);
+                                                                            const selectedSlot = timeSlots.find(s => s.id === inputData.time_slot_id);
+                                                                            const isInSlot = selectedSlot?.period_ids?.includes(period.id);
+                                                                            return (
+                                                                                <label
+                                                                                    key={period.id}
+                                                                                    className={`px-3 py-1.5 rounded border text-sm cursor-pointer transition-colors ${isSelected
+                                                                                        ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
+                                                                                        : isInSlot
+                                                                                            ? 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-gray-200'
+                                                                                            : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
+                                                                                        }`}
+                                                                                >
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        className="sr-only"
+                                                                                        checked={isSelected}
+                                                                                        onChange={() => {
+                                                                                            const currentIds = inputData.period_ids || [];
+                                                                                            let newIds;
+                                                                                            if (isSelected) {
+                                                                                                newIds = currentIds.filter(id => id !== period.id);
+                                                                                            } else {
+                                                                                                newIds = [...currentIds, period.id];
+                                                                                            }
+                                                                                            setInputData({
+                                                                                                ...inputData,
+                                                                                                period_ids: newIds,
+                                                                                                option_periods: newIds.length
+                                                                                            });
+                                                                                        }}
+                                                                                    />
+                                                                                    {period.name}
+                                                                                </label>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                    <div className="mt-2 text-xs text-gray-500">
+                                                                        已选：{(inputData.period_ids || []).length}节
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
                                     </div>
 
                                     <div className="mt-6 flex justify-end space-x-2">

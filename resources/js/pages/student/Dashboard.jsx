@@ -170,8 +170,15 @@ export default function StudentDashboard() {
                                 ? JSON.parse(record.details)
                                 : record.details;
 
-                            // 优先使用时段名称（自主请假选择的时段，如"上午"、"下午"）
-                            if (details.time_slot_name) {
+                            // 优先使用自定义的显示标签（用户自定义选择节次时生成）
+                            if (details.display_label) {
+                                detailLabel = details.display_label;
+                                // 如果有节次数量，附加显示
+                                if (details.option_periods) {
+                                    detailLabel += ` (${details.option_periods}节)`;
+                                }
+                                // 否则使用时段名称（自主请假选择的时段，如"上午"、"下午"）
+                            } else if (details.time_slot_name) {
                                 detailLabel = details.time_slot_name;
                                 // 处理时间（迟到/早退）
                             } else if (details.time) {
