@@ -10,16 +10,29 @@ export default function AttendanceSettings() {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
 
+    // Dashboard stats config
+    const [dashboardConfig, setDashboardConfig] = useState({
+        student: { show_my_pending: true, show_normal_attendance: true, show_all_leave_types: true },
+        class_admin: { show_pending_approval: true, show_student_count: true, show_all_leave_types: true },
+        school_admin: { show_pending_approval: true, show_student_count: true, show_all_leave_types: true },
+    });
+    const [leaveTypes, setLeaveTypes] = useState([]);
+
     useEffect(() => {
         fetchData();
     }, []);
 
     const fetchData = async () => {
         try {
-            const res = await axios.get('/settings');
+            const [settingsRes, leaveTypesRes] = await Promise.all([
+                axios.get('/settings'),
+                axios.get('/leave-types')
+            ]);
+
             const settingsObj = {};
-            res.data.forEach(s => settingsObj[s.key] = s.value);
+            settingsRes.data.forEach(s => settingsObj[s.key] = s.value);
             setSettings(settingsObj);
+            setLeaveTypes(leaveTypesRes.data.filter(lt => lt.is_active));
 
             // 解析节次配置
             if (settingsObj.attendance_periods) {
@@ -31,6 +44,18 @@ export default function AttendanceSettings() {
                 } catch (e) {
                     console.warn('Failed to parse attendance_periods', e);
                     setAttendancePeriods([]);
+                }
+            }
+
+            // 解析仪表盘统计配置
+            if (settingsObj.dashboard_stats_config) {
+                try {
+                    const config = typeof settingsObj.dashboard_stats_config === 'string'
+                        ? JSON.parse(settingsObj.dashboard_stats_config)
+                        : settingsObj.dashboard_stats_config;
+                    setDashboardConfig(prev => ({ ...prev, ...config }));
+                } catch (e) {
+                    console.warn('Failed to parse dashboard_stats_config', e);
                 }
             }
         } catch (error) {
@@ -46,7 +71,8 @@ export default function AttendanceSettings() {
         try {
             const settingsToSave = {
                 ...settings,
-                attendance_periods: JSON.stringify(attendancePeriods)
+                attendance_periods: JSON.stringify(attendancePeriods),
+                dashboard_stats_config: JSON.stringify(dashboardConfig)
             };
 
             const settingsArray = Object.keys(settingsToSave).map(key => ({
@@ -200,6 +226,159 @@ export default function AttendanceSettings() {
 
                 <div className="mt-4 p-3 bg-gray-50 rounded-lg">
                     <p className="text-sm text-gray-600">💡 普通节次自动命名为"第N节"，特殊节次可自定义名称（如早操、晚操等）</p>
+                </div>
+            </div>
+
+            {/* 仪表盘统计配置卡片 */}
+            <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-2">仪表盘统计配置</h3>
+                <p className="text-sm text-gray-500 mb-4">配置各角色仪表盘显示的统计项目</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* 学生端配置 */}
+                    <div className="border rounded-lg p-4">
+                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                            <span className="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
+                            学生端
+                        </h4>
+                        <div className="space-y-3">
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.student?.show_my_pending ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        student: { ...prev.student, show_my_pending: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">我的待审批</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.student?.show_normal_attendance ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        student: { ...prev.student, show_normal_attendance: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">正常出勤</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.student?.show_all_leave_types ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        student: { ...prev.student, show_all_leave_types: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">显示所有请假类型</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* 班主任/学生管理员端配置 */}
+                    <div className="border rounded-lg p-4">
+                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                            <span className="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+                            班主任/学生管理员
+                        </h4>
+                        <div className="space-y-3">
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.class_admin?.show_pending_approval ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        class_admin: { ...prev.class_admin, show_pending_approval: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">班级待审批</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.class_admin?.show_student_count ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        class_admin: { ...prev.class_admin, show_student_count: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">学生总数</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.class_admin?.show_all_leave_types ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        class_admin: { ...prev.class_admin, show_all_leave_types: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">显示所有请假类型</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* 管理员端配置 */}
+                    <div className="border rounded-lg p-4">
+                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                            <span className="w-3 h-3 rounded-full bg-purple-500 mr-2"></span>
+                            系统管理员
+                        </h4>
+                        <div className="space-y-3">
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.school_admin?.show_pending_approval ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        school_admin: { ...prev.school_admin, show_pending_approval: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">待审批</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.school_admin?.show_student_count ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        school_admin: { ...prev.school_admin, show_student_count: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">学生总数</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.school_admin?.show_all_leave_types ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        school_admin: { ...prev.school_admin, show_all_leave_types: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">显示所有请假类型</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm text-blue-700">
+                        💡 <strong>待审批</strong>仅对有审核权限的用户（班主任、学生管理员）显示。
+                        请假类型统计会根据已启用的请假类型自动生成。
+                    </p>
                 </div>
             </div>
 

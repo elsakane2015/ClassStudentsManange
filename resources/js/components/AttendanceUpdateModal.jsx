@@ -356,7 +356,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         executeBulkUpdate(pendingAction.status, pendingAction.leaveType.id, enhancedInputData);
     };
 
-    const StatusBadge = ({ status, details, leaveTypeId, leaveType, onClick, periodId, period, displayLabel }) => {
+    const StatusBadge = ({ status, details, leaveTypeId, leaveType, onClick, periodId, period, displayLabel, isSelfApplied, approvalStatus }) => {
         const styles = {
             present: 'bg-green-100 text-green-800',
             absent: 'bg-red-100 text-red-800',
@@ -376,31 +376,54 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             unmarked: '出勤'
         };
 
-        // If displayLabel is provided (from roll_call), use it directly
+        // 生成审批状态前缀（针对自主请假或有审批状态的记录）
+        let statusPrefix = '';
+        // 如果有 approvalStatus，显示对应的前缀
+        if (approvalStatus) {
+            if (approvalStatus === 'pending') {
+                statusPrefix = '待审:';
+            } else if (approvalStatus === 'approved') {
+                statusPrefix = '批准:';
+            } else if (approvalStatus === 'rejected') {
+                statusPrefix = '驳回:';
+            }
+        }
+
+        // 获取请假类型名称
+        let leaveTypeName = '';
+        if (leaveType && leaveType.name) {
+            leaveTypeName = leaveType.name;
+        } else if (leaveTypeId) {
+            const lt = leaveTypes.find(l => l.id === leaveTypeId);
+            if (lt) leaveTypeName = lt.name;
+        }
+
+        // If displayLabel is provided (from roll_call or leave_request), use it directly
+        // But add leave type name if available
         if (displayLabel) {
             const s = status || 'leave';
             // Use red style for roll_call absents (旷课)
             const styleKey = displayLabel.includes('旷课') ? 'absent' : s;
-            const classes = `px-2 py-0.5 rounded text-xs font-medium ${styles[styleKey] || styles.unmarked} truncate max-w-[150px] ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
+            const classes = `px-2 py-0.5 rounded text-xs font-medium ${styles[styleKey] || styles.unmarked} truncate max-w-[200px] ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
+
+            // 构建完整标签：状态前缀 + 请假类型名称(节次信息)
+            // 例如：批准:病假(第1节、早读、早操)
+            let fullLabel = statusPrefix;
+            if (leaveTypeName && !displayLabel.includes(leaveTypeName)) {
+                fullLabel += `${leaveTypeName}(${displayLabel})`;
+            } else {
+                fullLabel += displayLabel;
+            }
+
             return (
                 <span className={classes} onClick={onClick} title={onClick ? "点击撤销此记录" : ""}>
-                    {displayLabel}
+                    {fullLabel}
                 </span>
             );
         }
 
         // Determine label: prefer leaveType object from record, then lookup by ID
         let label = labels[status] || status;
-        let leaveTypeName = '';
-
-        // Get leave type name from data
-        if (leaveType && leaveType.name) {
-            leaveTypeName = leaveType.name;
-        } else if (leaveTypeId) {
-            // Try to find leave type name from loaded leaveTypes
-            const lt = leaveTypes.find(l => l.id === leaveTypeId);
-            if (lt) leaveTypeName = lt.name;
-        }
 
         // 优先使用 leaveTypeName（请假类型名称），而不是硬编码的 labels
         // 这样 "旷课"、"迟到"、"早退" 等都会显示实际配置的名称
@@ -539,21 +562,34 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                             // 过滤掉 status='present' 的记录，只显示异常状态
                                                             const nonPresentRecords = records.filter(r => r.status !== 'present');
 
-                                                            // 去重：基于 id 去重（每个记录应有唯一id）
-                                                            const seenIds = new Set();
+                                                            // 去重：同一请假请求的多条记录只显示一次
+                                                            const seenKeys = new Set();
                                                             const uniqueRecords = nonPresentRecords.filter(r => {
                                                                 // 解析 details
                                                                 const details = typeof r.details === 'string'
                                                                     ? JSON.parse(r.details || '{}')
                                                                     : (r.details || {});
 
-                                                                // 使用记录ID作为主键，如果没有ID则使用组合键
-                                                                const key = r.id
-                                                                    ? `id-${r.id}`
-                                                                    : `${r.status}-${r.period_id}-${details.option || 'none'}-${details.time_slot_id || 'none'}`;
+                                                                // 获取 display_label 用于去重
+                                                                const displayLabel = r.display_label || details.display_label || '';
 
-                                                                if (seenIds.has(key)) return false;
-                                                                seenIds.add(key);
+                                                                // 对于自主请假（source_type = leave_request），按 source_id 去重
+                                                                // 或者按 display_label + leave_type_id 去重
+                                                                let key;
+                                                                if (r.source_type === 'leave_request' && r.source_id) {
+                                                                    // 优先用 source_id，确保同一请假请求只显示一次
+                                                                    key = `leave-${r.source_id}`;
+                                                                } else if (displayLabel) {
+                                                                    // 用 display_label + leave_type_id 去重
+                                                                    key = `label-${r.leave_type_id}-${displayLabel}`;
+                                                                } else if (r.id) {
+                                                                    key = `id-${r.id}`;
+                                                                } else {
+                                                                    key = `${r.status}-${r.period_id}-${details.option || 'none'}`;
+                                                                }
+
+                                                                if (seenKeys.has(key)) return false;
+                                                                seenKeys.add(key);
                                                                 return true;
                                                             });
 
@@ -570,6 +606,9 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                             ? JSON.parse(record.details || '{}')
                                                                             : (record.details || {});
 
+                                                                        // 获取 display_label：优先使用 record.display_label，其次使用 details.display_label
+                                                                        const displayLabel = record.display_label || details.display_label;
+
                                                                         return (
                                                                             <React.Fragment key={record.id || idx}>
                                                                                 <StatusBadge
@@ -577,9 +616,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                                     details={record.details}
                                                                                     leaveTypeId={record.leave_type_id}
                                                                                     leaveType={record.leave_type}
-                                                                                    displayLabel={record.display_label}
+                                                                                    displayLabel={displayLabel}
                                                                                     periodId={record.period_id}
                                                                                     period={record.period}
+                                                                                    isSelfApplied={record.source_type === 'leave_request'}
+                                                                                    approvalStatus={record.approval_status}
                                                                                     onClick={() => handleDeleteRecord(student.id, record)}
                                                                                 />
                                                                                 {idx < uniqueRecords.length - 1 && (

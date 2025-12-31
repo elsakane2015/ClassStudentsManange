@@ -22,11 +22,17 @@ export default function StudentDashboard() {
     const [scope, setScope] = useState('month'); // today, month, semester
     const [detailModal, setDetailModal] = useState({ isOpen: false, title: '', records: [] });
     const [statsExpanded, setStatsExpanded] = useState(true); // Stats section collapsed state
+    const [dashboardConfig, setDashboardConfig] = useState({
+        show_my_pending: true,
+        show_normal_attendance: true,
+        show_all_leave_types: true
+    });
 
     useEffect(() => {
         const init = async () => {
             await fetchLeaveTypes();
             await checkClassAdmin();
+            await fetchDashboardConfig();
         };
         init();
         // eslint-disable-next-line
@@ -100,6 +106,30 @@ export default function StudentDashboard() {
         } catch (error) {
             console.error("Failed to check class admin status", error);
             setIsClassAdmin(false);
+        }
+    };
+
+    const fetchDashboardConfig = async () => {
+        try {
+            const res = await axios.get('/settings');
+            const settingsObj = {};
+            res.data.forEach(s => settingsObj[s.key] = s.value);
+
+            if (settingsObj.dashboard_stats_config) {
+                try {
+                    const config = typeof settingsObj.dashboard_stats_config === 'string'
+                        ? JSON.parse(settingsObj.dashboard_stats_config)
+                        : settingsObj.dashboard_stats_config;
+                    // Use student config
+                    if (config.student) {
+                        setDashboardConfig(prev => ({ ...prev, ...config.student }));
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse dashboard_stats_config', e);
+                }
+            }
+        } catch (error) {
+            console.error("Failed to fetch dashboard config", error);
         }
     };
 
@@ -281,8 +311,8 @@ export default function StudentDashboard() {
     const statsEntries = useMemo(() => {
         const entries = [];
 
-        // Always show "present" first - display as "出勤天数/工作日天数"
-        if (stats.present !== undefined) {
+        // Show "present" if configured - display as "出勤天数/工作日天数"
+        if (dashboardConfig.show_normal_attendance && stats.present !== undefined) {
             const presentDays = stats.present || 0;
             const workingDays = stats.working_days || 0;
             entries.push({
@@ -293,26 +323,28 @@ export default function StudentDashboard() {
             });
         }
 
-        // Add all leave types (show even if count is 0)
-        leaveTypes.forEach(type => {
-            const colorMap = {
-                'sick_leave': 'purple',
-                'personal_leave': 'blue',
-                'health_leave': 'pink',
-                'absent': 'red',
-                'late': 'yellow',
-                'early_leave': 'orange',
-            };
-            entries.push({
-                key: type.slug,
-                name: type.name,
-                value: stats[type.slug] || 0,
-                color: type.color || colorMap[type.slug] || 'gray'
+        // Add all leave types if configured (show even if count is 0)
+        if (dashboardConfig.show_all_leave_types) {
+            leaveTypes.forEach(type => {
+                const colorMap = {
+                    'sick_leave': 'purple',
+                    'personal_leave': 'blue',
+                    'health_leave': 'pink',
+                    'absent': 'red',
+                    'late': 'yellow',
+                    'early_leave': 'orange',
+                };
+                entries.push({
+                    key: type.slug,
+                    name: type.name,
+                    value: stats[type.slug] || 0,
+                    color: type.color || colorMap[type.slug] || 'gray'
+                });
             });
-        });
+        }
 
         return entries;
-    }, [stats, leaveTypes]);
+    }, [stats, leaveTypes, dashboardConfig]);
 
     if (loading) {
         return (
@@ -386,7 +418,7 @@ export default function StudentDashboard() {
                         <div className="p-4">
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 {/* Pending Requests Card for Class Admin */}
-                                {isClassAdmin && stats.pending_requests !== undefined && (
+                                {isClassAdmin && dashboardConfig.show_my_pending !== false && stats.pending_requests !== undefined && (
                                     <Link
                                         to="/teacher/approvals?status=pending"
                                         className="bg-gray-50 p-4 rounded-lg border-l-4 border-amber-500 hover:bg-gray-100 transition cursor-pointer"

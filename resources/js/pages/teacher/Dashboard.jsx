@@ -27,6 +27,13 @@ export default function TeacherDashboard() {
     const [exportModalOpen, setExportModalOpen] = useState(false); // Export modal state
     const [statsExpanded, setStatsExpanded] = useState(true); // Stats section collapsed state
 
+    // Dashboard stats configuration
+    const [dashboardConfig, setDashboardConfig] = useState({
+        show_pending_approval: true,
+        show_student_count: true,
+        show_all_leave_types: true
+    });
+
     // 详情Modal状态
     const [detailModal, setDetailModal] = useState({
         isOpen: false,
@@ -106,6 +113,28 @@ export default function TeacherDashboard() {
                 }
             })
             .catch(err => console.error('Failed to fetch semesters:', err));
+
+        // Fetch dashboard config
+        axios.get('/settings')
+            .then(res => {
+                const settingsObj = {};
+                res.data.forEach(s => settingsObj[s.key] = s.value);
+
+                if (settingsObj.dashboard_stats_config) {
+                    try {
+                        const config = typeof settingsObj.dashboard_stats_config === 'string'
+                            ? JSON.parse(settingsObj.dashboard_stats_config)
+                            : settingsObj.dashboard_stats_config;
+                        // Use class_admin config for teacher/class admin
+                        if (config.class_admin) {
+                            setDashboardConfig(prev => ({ ...prev, ...config.class_admin }));
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse dashboard_stats_config', e);
+                    }
+                }
+            })
+            .catch(err => console.error('Failed to fetch settings:', err));
     }, []);
 
     // Fetch data whenever scope or selectedSemester changes
@@ -447,35 +476,37 @@ export default function TeacherDashboard() {
                             <div className="p-4">
                                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
                                     {/* 1. Student Total - 分层显示 */}
-                                    <StatCard
-                                        title="学生总数"
-                                        value={
-                                            // 班主任: 班级/系部/全校
-                                            stats.class_total_students !== null && stats.class_total_students !== undefined
-                                                ? `${stats.class_total_students}/${stats.department_total_students}/${stats.school_total_students}`
-                                                // 系部管理员: 系部/全校
-                                                : stats.department_total_students !== null && stats.department_total_students !== undefined
-                                                    ? `${stats.department_total_students}/${stats.school_total_students}`
-                                                    // 系统管理员: 全校
-                                                    : stats.school_total_students || stats.total_students
-                                        }
-                                        subtitle={
-                                            stats.class_total_students !== null && stats.class_total_students !== undefined
-                                                ? '班级/系部/全校'
-                                                : stats.department_total_students !== null && stats.department_total_students !== undefined
-                                                    ? '系部/全校'
-                                                    : null
-                                        }
-                                        icon={
-                                            <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                                            </svg>
-                                        }
-                                        color="bg-indigo-500"
-                                    />
+                                    {dashboardConfig.show_student_count && (
+                                        <StatCard
+                                            title="学生总数"
+                                            value={
+                                                // 班主任: 班级/系部/全校
+                                                stats.class_total_students !== null && stats.class_total_students !== undefined
+                                                    ? `${stats.class_total_students}/${stats.department_total_students}/${stats.school_total_students}`
+                                                    // 系部管理员: 系部/全校
+                                                    : stats.department_total_students !== null && stats.department_total_students !== undefined
+                                                        ? `${stats.department_total_students}/${stats.school_total_students}`
+                                                        // 系统管理员: 全校
+                                                        : stats.school_total_students || stats.total_students
+                                            }
+                                            subtitle={
+                                                stats.class_total_students !== null && stats.class_total_students !== undefined
+                                                    ? '班级/系部/全校'
+                                                    : stats.department_total_students !== null && stats.department_total_students !== undefined
+                                                        ? '系部/全校'
+                                                        : null
+                                            }
+                                            icon={
+                                                <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                </svg>
+                                            }
+                                            color="bg-indigo-500"
+                                        />
+                                    )}
 
                                     {/* 2. Pending Requests - 仅有审批权限的用户显示 */}
-                                    {canApproveLeave && (
+                                    {canApproveLeave && dashboardConfig.show_pending_approval && (
                                         <StatCard
                                             title="待审批"
                                             value={stats.pending_requests}
@@ -490,7 +521,7 @@ export default function TeacherDashboard() {
                                     )}
 
                                     {/* Dynamic Leave Types (including Absent, Late, Early Leave if they are configured as leave types) */}
-                                    {leaveTypes.map(type => {
+                                    {dashboardConfig.show_all_leave_types && leaveTypes.map(type => {
                                         const count = stats.details?.leaves?.[type.name] || '0人/0次';
                                         // Map icons and colors based on name/slug if possible, or generic
                                         let color = 'bg-blue-400'; // Default for generic leave
