@@ -20,7 +20,7 @@ return new class extends Migration
             $table->date('date');
             $table->unsignedBigInteger('period_id')->nullable(); // References SystemSetting attendance_periods ID, NULL = Whole day
             
-            $table->enum('status', ['present', 'absent', 'late', 'excused', 'early_leave'])->default('present');
+            $table->enum('status', ['present', 'absent', 'late', 'excused', 'early_leave', 'leave'])->default('present');
             
             $table->string('source_type')->default('manual'); // manual, leave_request, system
             $table->unsignedBigInteger('source_id')->nullable(); 

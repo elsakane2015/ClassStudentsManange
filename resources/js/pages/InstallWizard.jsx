@@ -92,7 +92,7 @@ const InstallWizard = () => {
     const [installing, setInstalling] = useState(false);
     const [failedStep, setFailedStep] = useState(null);
 
-    // Step 4: Run installation with progress display
+    // Step 4: Run installation with progress display using Server-Sent Events
     const runInstall = async () => {
         if (formData.admin_password !== formData.admin_password_confirm) {
             setError('两次输入的密码不一致');
@@ -124,25 +124,65 @@ const InstallWizard = () => {
         setInstallSteps(initialSteps);
 
         try {
-            const response = await axios.post('/install/run', formData);
-            if (response.data.success) {
-                setInstallSteps(response.data.steps || initialSteps.map(s => ({ ...s, status: 'done' })));
-                setSuccess('安装成功！正在跳转到登录页面...');
-                setStep(5);
-                setTimeout(() => {
-                    navigate('/login');
-                }, 3000);
+            // Use fetch with streaming for SSE
+            const response = await fetch('/api/install/run', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                },
+                body: JSON.stringify(formData),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '安装请求失败');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Parse SSE events
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+
+                            // Update steps
+                            if (data.steps) {
+                                setInstallSteps(data.steps);
+                            }
+
+                            // Check for completion
+                            if (data.success === true) {
+                                setSuccess('安装成功！正在跳转到登录页面...');
+                                setStep(5);
+                                setTimeout(() => {
+                                    navigate('/login');
+                                }, 3000);
+                            } else if (data.success === false) {
+                                setError(data.error || '安装失败');
+                            }
+                        } catch (e) {
+                            // Ignore JSON parse errors
+                        }
+                    }
+                }
             }
         } catch (err) {
-            const errorData = err.response?.data;
-            if (errorData?.steps) {
-                setInstallSteps(errorData.steps);
-            }
-            if (errorData?.failed_step) {
-                setFailedStep(errorData.failed_step);
-            }
-            setError('安装失败: ' + (errorData?.error || err.message) +
-                (errorData?.failed_step_name ? ` (步骤: ${errorData.failed_step_name})` : ''));
+            console.error('Installation error:', err);
+            setError('安装失败: ' + err.message);
         } finally {
             setLoading(false);
             setInstalling(false);
@@ -456,9 +496,9 @@ const InstallWizard = () => {
                                                 index + 1}
                                 </div>
                                 <span className={`text-sm ${stepItem.status === 'done' ? 'text-green-600' :
-                                        stepItem.status === 'running' ? 'text-blue-600 font-medium' :
-                                            stepItem.status === 'failed' ? 'text-red-600' :
-                                                'text-gray-500'
+                                    stepItem.status === 'running' ? 'text-blue-600 font-medium' :
+                                        stepItem.status === 'failed' ? 'text-red-600' :
+                                            'text-gray-500'
                                     }`}>
                                     {stepItem.name}
                                     {stepItem.status === 'running' && '...'}

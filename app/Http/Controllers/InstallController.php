@@ -88,7 +88,7 @@ class InstallController extends Controller
     }
 
     /**
-     * Run installation step by step
+     * Run installation step by step with Server-Sent Events for real-time progress
      */
     public function install(Request $request)
     {
@@ -125,121 +125,145 @@ class InstallController extends Controller
             ['name' => '完成安装', 'status' => 'pending'],
         ];
 
-        $currentStep = 0;
-        $errorStep = -1;
-        $errorMessage = '';
+        // Use streaming response for real-time updates
+        return response()->stream(function () use ($request, $steps) {
+            $currentStep = 0;
+            
+            // Helper function to send SSE event
+            $sendEvent = function ($steps, $success = null, $error = null) {
+                $data = ['steps' => $steps];
+                if ($success !== null) $data['success'] = $success;
+                if ($error !== null) $data['error'] = $error;
+                echo "data: " . json_encode($data, JSON_UNESCAPED_UNICODE) . "\n\n";
+                ob_flush();
+                flush();
+            };
 
-        try {
-            // Step 1: Update .env file and configure database
-            $steps[$currentStep]['status'] = 'running';
-            $this->updateEnvFile([
-                'DB_CONNECTION' => 'mysql',
-                'DB_HOST' => $request->db_host,
-                'DB_PORT' => $request->db_port,
-                'DB_DATABASE' => $request->db_database,
-                'DB_USERNAME' => $request->db_username,
-                'DB_PASSWORD' => $request->db_password ?? '',
-            ]);
-            Artisan::call('config:clear');
-            config(['database.default' => 'mysql']);
-            config([
-                'database.connections.mysql.host' => $request->db_host,
-                'database.connections.mysql.port' => $request->db_port,
-                'database.connections.mysql.database' => $request->db_database,
-                'database.connections.mysql.username' => $request->db_username,
-                'database.connections.mysql.password' => $request->db_password ?? '',
-            ]);
-            DB::purge('mysql');
-            DB::reconnect('mysql');
-            DB::setDefaultConnection('mysql');
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 2: Run fresh migrations
-            $steps[$currentStep]['status'] = 'running';
-            Artisan::call('migrate:fresh', ['--force' => true]);
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 3: Create school
-            $steps[$currentStep]['status'] = 'running';
-            $school = School::create(['name' => $request->school_name]);
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 4: Run PermissionSeeder
-            $steps[$currentStep]['status'] = 'running';
-            Artisan::call('db:seed', ['--class' => 'PermissionSeeder', '--force' => true]);
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 5: Run LeaveTypeSeeder
-            $steps[$currentStep]['status'] = 'running';
-            Artisan::call('db:seed', ['--class' => 'LeaveTypeSeeder', '--force' => true]);
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 6: Run SystemSettingsSeeder
-            $steps[$currentStep]['status'] = 'running';
-            Artisan::call('db:seed', ['--class' => 'SystemSettingsSeeder', '--force' => true]);
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 7: Create admin user
-            $steps[$currentStep]['status'] = 'running';
-            $admin = User::create([
-                'uuid' => (string) Str::uuid(),
-                'name' => $request->admin_name,
-                'email' => $request->admin_email,
-                'password' => Hash::make($request->admin_password),
-                'role' => 'system_admin',
-            ]);
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 8: Create storage link
-            $steps[$currentStep]['status'] = 'running';
             try {
-                Artisan::call('storage:link');
+                // Step 1: Update .env file and configure database
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                
+                $this->updateEnvFile([
+                    'DB_CONNECTION' => 'mysql',
+                    'DB_HOST' => $request->db_host,
+                    'DB_PORT' => $request->db_port,
+                    'DB_DATABASE' => $request->db_database,
+                    'DB_USERNAME' => $request->db_username,
+                    'DB_PASSWORD' => $request->db_password ?? '',
+                ]);
+                Artisan::call('config:clear');
+                config(['database.default' => 'mysql']);
+                config([
+                    'database.connections.mysql.host' => $request->db_host,
+                    'database.connections.mysql.port' => $request->db_port,
+                    'database.connections.mysql.database' => $request->db_database,
+                    'database.connections.mysql.username' => $request->db_username,
+                    'database.connections.mysql.password' => $request->db_password ?? '',
+                ]);
+                DB::purge('mysql');
+                DB::reconnect('mysql');
+                DB::setDefaultConnection('mysql');
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 2: Run fresh migrations
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                Artisan::call('migrate:fresh', ['--force' => true]);
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 3: Create school
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                $school = School::create(['name' => $request->school_name]);
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 4: Run PermissionSeeder
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                Artisan::call('db:seed', ['--class' => 'PermissionSeeder', '--force' => true]);
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 5: Run LeaveTypeSeeder
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                Artisan::call('db:seed', ['--class' => 'LeaveTypeSeeder', '--force' => true]);
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 6: Run SystemSettingsSeeder
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                Artisan::call('db:seed', ['--class' => 'SystemSettingsSeeder', '--force' => true]);
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 7: Create admin user
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                $admin = User::create([
+                    'uuid' => (string) Str::uuid(),
+                    'name' => $request->admin_name,
+                    'email' => $request->admin_email,
+                    'password' => Hash::make($request->admin_password),
+                    'role' => 'system_admin',
+                ]);
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 8: Create storage link
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                try {
+                    Artisan::call('storage:link');
+                } catch (\Exception $e) {
+                    // Ignore if already exists
+                }
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 9: Clear caches
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                Artisan::call('optimize:clear');
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps);
+                $currentStep++;
+
+                // Step 10: Create install lock file
+                $steps[$currentStep]['status'] = 'running';
+                $sendEvent($steps);
+                File::put(storage_path('installed'), date('Y-m-d H:i:s'));
+                $steps[$currentStep]['status'] = 'done';
+                $sendEvent($steps, true);
+
             } catch (\Exception $e) {
-                // Ignore if already exists
+                \Log::error('Installation failed at step ' . ($currentStep + 1) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+                
+                // Mark current step as failed
+                $steps[$currentStep]['status'] = 'failed';
+                $steps[$currentStep]['error'] = $e->getMessage();
+                
+                $sendEvent($steps, false, '安装失败: ' . $e->getMessage() . ' (步骤: ' . $steps[$currentStep]['name'] . ')');
             }
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 9: Clear caches
-            $steps[$currentStep]['status'] = 'running';
-            Artisan::call('optimize:clear');
-            $steps[$currentStep]['status'] = 'done';
-            $currentStep++;
-
-            // Step 10: Create install lock file
-            $steps[$currentStep]['status'] = 'running';
-            File::put(storage_path('installed'), date('Y-m-d H:i:s'));
-            $steps[$currentStep]['status'] = 'done';
-
-            return response()->json([
-                'success' => true,
-                'message' => '安装成功！',
-                'admin_email' => $request->admin_email,
-                'steps' => $steps
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('Installation failed at step ' . ($currentStep + 1) . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
-            
-            // Mark current step as failed
-            $steps[$currentStep]['status'] = 'failed';
-            $steps[$currentStep]['error'] = $e->getMessage();
-            
-            return response()->json([
-                'success' => false,
-                'error' => '安装失败: ' . $e->getMessage(),
-                'failed_step' => $currentStep + 1,
-                'failed_step_name' => $steps[$currentStep]['name'],
-                'steps' => $steps
-            ], 500);
-        }
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
     }
 
     /**
