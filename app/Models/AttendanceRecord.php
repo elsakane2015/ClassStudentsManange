@@ -23,11 +23,6 @@ class AttendanceRecord extends Model
     {
         return $this->belongsTo(Student::class);
     }
-
-    public function period()
-    {
-        return $this->belongsTo(ClassPeriod::class);
-    }
     
     public function school()
     {

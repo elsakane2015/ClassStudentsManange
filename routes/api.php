@@ -125,65 +125,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/options/classes', [OptionsController::class, 'classes']);
     
     Route::get('/class-periods', function(Request $request) {
-        // 获取考勤规则中的每日总课时数
-        $dailyPeriods = \App\Models\SystemSetting::where('key', 'daily_lessons_count')->value('value');
-        $dailyPeriods = $dailyPeriods ? (int)$dailyPeriods : 8; // 默认8节
+        // Periods are now managed via SystemSetting (attendance_periods)
+        $attendancePeriods = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
         
-        $schoolId = $request->user()->student->school_id ?? 1;
-        
-        // 获取所有节次，按序号排序
-        $allPeriods = \App\Models\ClassPeriod::where('school_id', $schoolId)
-            ->orderBy('ordinal')
-            ->get();
-        
-        // 过滤掉特殊节次（早操、晚操、午休等），只保留常规课程节次
-        $regularPeriods = $allPeriods->filter(function($period) {
-            return !in_array($period->name, ['早操', '晚操', 'Lunch', '午休']);
-        });
-        
-        // 检查是否需要创建新节次
-        $currentCount = $regularPeriods->count();
-        if ($currentCount < $dailyPeriods) {
-            // 找出已使用的ordinal值
-            $usedOrdinals = $allPeriods->pluck('ordinal')->toArray();
-            
-            // 创建缺失的节次
-            for ($i = $currentCount + 1; $i <= $dailyPeriods; $i++) {
-                // 找一个未使用的ordinal值（从10开始，避免与Lunch等冲突）
-                $ordinal = 10 + $i - 1;
-                while (in_array($ordinal, $usedOrdinals)) {
-                    $ordinal++;
-                }
-                
-                // 计算时间（假设每节课45分钟，课间10分钟）
-                $startHour = 8 + floor(($i - 1) * 55 / 60);
-                $startMinute = ($i - 1) * 55 % 60;
-                $endHour = 8 + floor((($i - 1) * 55 + 45) / 60);
-                $endMinute = (($i - 1) * 55 + 45) % 60;
-                
-                \App\Models\ClassPeriod::create([
-                    'school_id' => $schoolId,
-                    'name' => "Period {$i}",
-                    'ordinal' => $ordinal,
-                    'start_time' => sprintf('%02d:%02d:00', $startHour, $startMinute),
-                    'end_time' => sprintf('%02d:%02d:00', $endHour, $endMinute)
-                ]);
-                
-                $usedOrdinals[] = $ordinal;
-            }
-            
-            // 重新获取节次列表
-            $allPeriods = \App\Models\ClassPeriod::where('school_id', $schoolId)
-                ->orderBy('ordinal')
-                ->get();
-            
-            $regularPeriods = $allPeriods->filter(function($period) {
-                return !in_array($period->name, ['早操', '晚操', 'Lunch', '午休']);
-            });
+        if (!$attendancePeriods) {
+            return response()->json([]);
         }
         
-        // 只返回前N个节次（N = daily_periods）
-        return $regularPeriods->take($dailyPeriods)->values();
+        try {
+            $periods = json_decode($attendancePeriods, true) ?: [];
+            return response()->json(collect($periods)->values());
+        } catch (\Exception $e) {
+            return response()->json([]);
+        }
     });
     // System Settings
     Route::get('/settings', [\App\Http\Controllers\Api\SystemSettingController::class, 'index']);

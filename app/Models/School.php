@@ -23,9 +23,4 @@ class School extends Model
     {
         return $this->hasMany(SchoolClass::class);
     }
-    
-    public function periods()
-    {
-        return $this->hasMany(ClassPeriod::class)->orderBy('ordinal');
-    }
 }

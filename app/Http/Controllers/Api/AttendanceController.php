@@ -1210,7 +1210,7 @@ class AttendanceController extends Controller
         $data = $request->validate([
             'student_id' => 'required|exists:students,id',
             'date' => 'required|date',
-            'period_id' => 'nullable|exists:class_periods,id',
+            'period_id' => 'nullable|integer',
             'status' => 'required|in:present,absent,late,excused,early_leave',
             'note' => 'nullable|string',
             'informed_parent' => 'boolean'
@@ -1392,7 +1392,7 @@ class AttendanceController extends Controller
         $request->validate([
             'student_id' => 'required|exists:students,id',
             'date' => 'required|date',
-            'period_id' => 'nullable|exists:class_periods,id',
+            'period_id' => 'nullable|integer',
             'option' => 'nullable|string', // 用于删除带 option 的记录
             'source_type' => 'nullable|string', // 用于删除指定来源的记录
             'source_id' => 'nullable|integer', // 用于删除指定来源的记录

@@ -20,13 +20,14 @@ return new class extends Migration
         });
 
         // 2. 迁移数据：将 period_count 转换为 period_ids
-        // 如果 period_count = 2，则生成 [第1节ID, 第2节ID]
+        // Note: class_periods table is deprecated, period_ids will be empty initially
+        // They should be configured via SystemSetting (attendance_periods)
         $types = DB::table('roll_call_types')->whereNotNull('period_count')->get();
-        $periods = DB::table('class_periods')->orderBy('ordinal')->pluck('id')->toArray();
 
         foreach ($types as $type) {
             $count = $type->period_count ?? 1;
-            $periodIds = array_slice($periods, 0, $count);
+            // Initialize with sequential IDs (1, 2, 3...)
+            $periodIds = range(1, $count);
             
             DB::table('roll_call_types')
                 ->where('id', $type->id)

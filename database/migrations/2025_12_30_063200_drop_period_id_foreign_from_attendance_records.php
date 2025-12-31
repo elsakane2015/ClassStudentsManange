@@ -25,11 +25,11 @@ return new class extends Migration
 
     /**
      * Reverse the migrations.
+     * Note: class_periods table has been removed, so we can't restore the foreign key
      */
     public function down(): void
     {
-        Schema::table('attendance_records', function (Blueprint $table) {
-            $table->foreign('period_id')->references('id')->on('class_periods')->onDelete('set null');
-        });
+        // class_periods table no longer exists, period_id now references SystemSetting IDs
+        // No foreign key to restore
     }
 };

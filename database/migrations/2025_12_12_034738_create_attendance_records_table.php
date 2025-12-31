@@ -18,7 +18,7 @@ return new class extends Migration
             $table->foreignId('class_id')->nullable()->constrained()->nullOnDelete();
             
             $table->date('date');
-            $table->foreignId('period_id')->nullable()->constrained('class_periods')->nullOnDelete(); // NULL = Whole day
+            $table->unsignedBigInteger('period_id')->nullable(); // References SystemSetting attendance_periods ID, NULL = Whole day
             
             $table->enum('status', ['present', 'absent', 'late', 'excused', 'early_leave'])->default('present');
             
