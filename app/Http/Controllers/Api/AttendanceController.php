@@ -688,8 +688,11 @@ class AttendanceController extends Controller
                 if (isset($details['option_periods'])) {
                     $optionLabel .= ' (' . $details['option_periods'] . '节)';
                 }
-            // 其次使用时段名称（自主请假选择的时段，如"上午"、"下午"）
-            } elseif (isset($details['time_slot_name'])) {
+            // 其次使用 option_label（考勤标记时生成的自定义节次标签）
+            } elseif (isset($details['option_label'])) {
+                $optionLabel = $details['option_label'];
+            // 其次使用时段名称（自主请假选择的时段，如"上午"、"下午"）—— 但需检查不是自定义选择
+            } elseif (isset($details['time_slot_name']) && !($details['is_custom'] ?? false)) {
                 $optionLabel = $details['time_slot_name'];
             // 其次检查 period_id（老师/管理员直接标记的具体节次，如"第9节"）
             } elseif ($record->period_id && isset($periodMap[$record->period_id])) {
@@ -721,20 +724,88 @@ class AttendanceController extends Controller
                 $recordTime = $record->created_at->setTimezone('Asia/Shanghai')->format('H:i');
             }
             
-            // 创建合并键，用于去重同一学生同一时段的记录
-            $mergeKey = $record->student_id . '_' . ($timeSlotId ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
-            
-            $result[$dateKey][$mergeKey] = [
-                'id' => $record->id,
-                'type' => $typeLabel,
-                'option' => $optionLabel,
-                'student_name' => $record->student?->user?->name ?? '未知学生',
-                'student_no' => $record->student?->student_no ?? '',
-                'time' => $recordTime,
-                'status' => $record->status,
-                'is_self_applied' => $record->is_self_applied ?? false,
-                'approval_status' => $record->approval_status,
-            ];
+            // 创建合并键
+            // 对于有 period_id 但没有 time_slot_id 的记录，使用特殊键来收集所有节次
+            if ($record->period_id && !$timeSlotId && !isset($details['option_label'])) {
+                // 单独节次记录，需要合并
+                $mergeKey = $record->student_id . '_individual_periods_' . $record->leave_type_id . '_' . $record->status . '_' . $record->approval_status;
+                
+                if (!isset($result[$dateKey][$mergeKey])) {
+                    $result[$dateKey][$mergeKey] = [
+                        'id' => $record->id,
+                        'type' => $typeLabel,
+                        'option' => $optionLabel,
+                        'student_name' => $record->student?->user?->name ?? '未知学生',
+                        'student_no' => $record->student?->student_no ?? '',
+                        'time' => $recordTime,
+                        'status' => $record->status,
+                        'is_self_applied' => $record->is_self_applied ?? false,
+                        'approval_status' => $record->approval_status,
+                        '_period_ids' => [$record->period_id], // 收集节次ID
+                        '_period_names' => [$optionLabel], // 收集节次名称
+                    ];
+                } else {
+                    // 追加节次
+                    $result[$dateKey][$mergeKey]['_period_ids'][] = $record->period_id;
+                    $result[$dateKey][$mergeKey]['_period_names'][] = $optionLabel;
+                }
+            } else {
+                // 普通记录或已有 option_label 的记录
+                $mergeKey = $record->student_id . '_' . ($timeSlotId ?? $details['option_label'] ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
+                
+                $result[$dateKey][$mergeKey] = [
+                    'id' => $record->id,
+                    'type' => $typeLabel,
+                    'option' => $optionLabel,
+                    'student_name' => $record->student?->user?->name ?? '未知学生',
+                    'student_no' => $record->student?->student_no ?? '',
+                    'time' => $recordTime,
+                    'status' => $record->status,
+                    'is_self_applied' => $record->is_self_applied ?? false,
+                    'approval_status' => $record->approval_status,
+                ];
+            }
+        }
+        
+        // 处理合并后的单独节次记录，生成显示标签
+        foreach ($result as $dateKey => &$records) {
+            foreach ($records as $key => &$rec) {
+                if (isset($rec['_period_ids']) && count($rec['_period_ids']) > 1) {
+                    // 多个节次，生成范围显示
+                    $periodIds = array_unique($rec['_period_ids']);
+                    sort($periodIds);
+                    
+                    // 检查是否连续
+                    $isConsecutive = true;
+                    for ($i = 1; $i < count($periodIds); $i++) {
+                        if ($periodIds[$i] - $periodIds[$i-1] != 1) {
+                            $isConsecutive = false;
+                            break;
+                        }
+                    }
+                    
+                    if ($isConsecutive && count($periodIds) > 1) {
+                        // 连续节次，显示范围
+                        $firstPeriod = $periodMap[$periodIds[0]]['name'] ?? "第{$periodIds[0]}节";
+                        $lastPeriod = $periodMap[$periodIds[count($periodIds)-1]]['name'] ?? "第{$periodIds[count($periodIds)-1]}节";
+                        // 提取节次数字
+                        preg_match('/第?(\d+)节?/', $firstPeriod, $firstMatch);
+                        preg_match('/第?(\d+)节?/', $lastPeriod, $lastMatch);
+                        if ($firstMatch && $lastMatch) {
+                            $rec['option'] = "第{$firstMatch[1]}-{$lastMatch[1]}节";
+                        } else {
+                            $rec['option'] = $firstPeriod . '-' . $lastPeriod;
+                        }
+                    } else {
+                        // 非连续，列出所有节次
+                        $names = array_unique($rec['_period_names']);
+                        $rec['option'] = implode('、', $names);
+                    }
+                }
+                // 清理临时字段
+                unset($rec['_period_ids']);
+                unset($rec['_period_names']);
+            }
         }
         
         // 将合并后的结果转换为数组
@@ -1101,12 +1172,33 @@ class AttendanceController extends Controller
                     }
                 }
                 
-                // For status-based records (late, absent, early_leave), count by status
+                // For status-based records (late, absent, early_leave), count periods properly
                 if (in_array($lt->slug, ['late', 'absent', 'early_leave'])) {
-                    $statusCount = $query->clone()
+                    $statusRecords = $query->clone()
                         ->where('status', $lt->slug)
-                        ->count();
-                    $periodCount = max($periodCount, $statusCount);
+                        ->get();
+                    
+                    $statusPeriodCount = 0;
+                    foreach ($statusRecords as $rec) {
+                        $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
+                        
+                        // 优先检查 details 中的节次信息
+                        if (isset($recDetails['period_ids']) && is_array($recDetails['period_ids'])) {
+                            $statusPeriodCount += count($recDetails['period_ids']);
+                        } elseif (isset($recDetails['periods']) && is_array($recDetails['periods'])) {
+                            $statusPeriodCount += count($recDetails['periods']);
+                        } elseif (isset($recDetails['period_numbers']) && is_array($recDetails['period_numbers'])) {
+                            $statusPeriodCount += count($recDetails['period_numbers']);
+                        } elseif (isset($recDetails['option_periods']) && is_numeric($recDetails['option_periods'])) {
+                            $statusPeriodCount += (int)$recDetails['option_periods'];
+                        } elseif ($rec->period_id) {
+                            // 只有当 details 中没有节次信息时，才按单个节次计算
+                            $statusPeriodCount += 1;
+                        } else {
+                            $statusPeriodCount += 1;
+                        }
+                    }
+                    $periodCount = max($periodCount, $statusPeriodCount);
                 }
 
                 // Apply conversion if configured
@@ -1590,43 +1682,121 @@ class AttendanceController extends Controller
             $student = \App\Models\Student::find($recordData['student_id']);
             if (!$student) continue;
             
-            // 根据details中的option确定如何存储记录
-            // 使用 period_id = null，但通过 option 来区分不同的时段记录
-            $periodId = $basePeriodId;
             $details = $recordData['details'] ?? null;
-            $option = null;
-            
-            if ($details && isset($details['option'])) {
-                $option = $details['option'];
-                // 使用 period_id = null，记录由 option 区分
-                // 后端 AttendanceService 会处理去重逻辑
-                $periodId = null;
-            }
             
             // 使用AttendanceService创建时段记录
             $service = new \App\Services\AttendanceService();
             
-            $record = $service->record(
-                $student->id,
-                $date,
-                $periodId, // 根据option确定的period_id
-                $recordData['status'],
-                [
-                    'leave_type_id' => $recordData['leave_type_id'] ?? null,
-                    'details' => $recordData['details'] ?? null,
-                    'source_type' => 'manual_bulk',
-                ]
-            );
+            // 检查是否有 period_ids（时段选择或自定义节次）
+            $hasPeriodIds = $details && 
+                           isset($details['period_ids']) && 
+                           is_array($details['period_ids']) && 
+                           count($details['period_ids']) > 0;
             
-            if ($record) {
-                $updatedCount++;
+            if ($hasPeriodIds) {
+                // 有 period_ids：创建一条记录，period_id = null
+                // 通过 details 中的 period_ids 来记录具体节次
+                $periodIds = $details['period_ids'];
+                $isCustom = $details['is_custom'] ?? false;
+                $timeSlotId = $details['time_slot_id'] ?? null;
+                $timeSlotName = $details['time_slot_name'] ?? null;
+                
+                // 智能检测是否为自定义选择：
+                // 如果有 time_slot_id，检查 period_ids 是否与该时段的节次完全匹配
+                if ($timeSlotId && !$isCustom) {
+                    $timeSlot = \App\Models\TimeSlot::find($timeSlotId);
+                    if ($timeSlot) {
+                        $slotPeriodIds = $timeSlot->period_ids ?? [];
+                        // 比较节次是否完全匹配
+                        $currentSorted = collect($periodIds)->sort()->values()->toArray();
+                        $slotSorted = collect($slotPeriodIds)->sort()->values()->toArray();
+                        if ($currentSorted != $slotSorted) {
+                            // 不匹配，视为自定义选择
+                            $isCustom = true;
+                            $timeSlotName = null;
+                            \Log::info("Detected custom period selection: slot {$timeSlotId} has periods " . json_encode($slotSorted) . ", but user selected " . json_encode($currentSorted));
+                        }
+                    }
+                }
+                
+                // 获取节次名称列表
+                $periodNames = [];
+                $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                $periodsArray = json_decode($periodsConfig, true) ?: [];
+                foreach ($periodIds as $pid) {
+                    foreach ($periodsArray as $p) {
+                        if ((string)$p['id'] === (string)$pid) {
+                            $periodNames[] = $p['name'];
+                            break;
+                        }
+                    }
+                }
+                
+                // 生成显示标签
+                // 如果是自定义选择，显示具体节次名称
+                // 如果匹配时段，显示时段名称
+                $optionLabel = $isCustom || empty($timeSlotName)
+                    ? implode('、', $periodNames) 
+                    : $timeSlotName;
+                
+                // 创建或更新记录（使用 period_ids 作为唯一标识的一部分）
+                $periodIdsKey = implode(',', $periodIds);
+                
+                $record = $service->record(
+                    $student->id,
+                    $date,
+                    null, // period_id = null，通过 details 区分
+                    $recordData['status'],
+                    [
+                        'leave_type_id' => $recordData['leave_type_id'] ?? null,
+                        'details' => [
+                            'option' => $isCustom ? 'custom' : ($timeSlotName ?? 'custom'),
+                            'option_label' => $optionLabel,
+                            'option_periods' => count($periodIds),
+                            'period_ids' => $periodIds,
+                            'period_names' => $periodNames,
+                            'time_slot_id' => $isCustom ? null : $timeSlotId,
+                            'time_slot_name' => $isCustom ? null : $timeSlotName,
+                            'is_custom' => $isCustom,
+                        ],
+                        'source_type' => 'manual_bulk',
+                    ]
+                );
+                
+                if ($record) {
+                    $updatedCount++;
+                }
+            } else {
+                // 其他情况：使用原有逻辑
+                $periodId = $basePeriodId;
+                $option = null;
+                
+                if ($details && isset($details['option'])) {
+                    $option = $details['option'];
+                    $periodId = null;
+                }
+                
+                $record = $service->record(
+                    $student->id,
+                    $date,
+                    $periodId,
+                    $recordData['status'],
+                    [
+                        'leave_type_id' => $recordData['leave_type_id'] ?? null,
+                        'details' => $details,
+                        'source_type' => 'manual_bulk',
+                    ]
+                );
+                
+                if ($record) {
+                    $updatedCount++;
+                }
             }
         }
 
         return response()->json([
             'message' => 'Bulk attendance updated.',
-            'count' => $updatedCount,
-            'period_id' => $periodId
+            'count' => $updatedCount
         ]);
     }
     

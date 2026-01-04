@@ -49,6 +49,19 @@ class AttendanceService
         
         // 如果是全天记录
         if ($periodId === null) {
+            // 检查 details 中的 option 来确定是否是真正的"全天"
+            $detailsForCheck = $options['details'] ?? null;
+            $optionForCheck = null;
+            if (is_array($detailsForCheck)) {
+                $optionForCheck = $detailsForCheck['option'] ?? null;
+            } elseif (is_string($detailsForCheck)) {
+                $parsedDetails = json_decode($detailsForCheck, true);
+                $optionForCheck = $parsedDetails['option'] ?? null;
+            }
+            
+            // 只有当 option 明确是 '全天' 时，才考虑删除其他时段记录
+            $isRealFullDay = ($optionForCheck === '全天' || $optionForCheck === 'full_day');
+            
             // 检查是否已有具体时段记录
             $hasSpecific = AttendanceRecord::where('student_id', $studentId)
                 ->where('date', $date)
@@ -60,9 +73,9 @@ class AttendanceService
                 \Log::info("Student {$studentId} already has specific period records for {$date}, updating full-day record");
             }
             
-            // 特殊规则：全天病假/事假，删除所有时段记录
-            // 只对病假和事假的全天记录删除其他时段记录
-            if (isset($options['leave_type_id'])) {
+            // 特殊规则：只有真正的"全天"病假/事假才删除所有时段记录
+            // 时段选择（如"上午"、"下午"）不应该删除其他时段记录
+            if ($isRealFullDay && isset($options['leave_type_id'])) {
                 $leaveType = \App\Models\LeaveType::find($options['leave_type_id']);
                 
                 // 只对病假(sick_leave)和事假(personal_leave)的全天记录删除时段记录
@@ -73,30 +86,48 @@ class AttendanceService
                         ->whereNotNull('period_id')
                         ->delete();
                     
+                    // 同时删除其他时段选择记录（如上午、下午）
+                    AttendanceRecord::where('student_id', $studentId)
+                        ->where('date', $date)
+                        ->whereNull('period_id')
+                        ->where('id', '!=', $existingRecord->id ?? 0)
+                        ->delete();
+                    
                     \Log::info("Full-day {$leaveType->name} for student {$studentId} on {$date}, deleted all period records");
                 }
             }
         }
         
         // 创建或更新记录
-        // 对于有 option 的记录（duration_select类型），需要根据 option 区分
+        // 对于有 option 的记录（duration_select类型），需要根据 option 和 period_ids 区分
         $details = $options['details'] ?? null;
         $option = null;
-        if (is_array($details) && isset($details['option'])) {
-            $option = $details['option'];
+        $periodIds = null;
+        if (is_array($details)) {
+            $option = $details['option'] ?? null;
+            $periodIds = $details['period_ids'] ?? null;
         } elseif (is_string($details)) {
             $parsedDetails = json_decode($details, true);
             $option = $parsedDetails['option'] ?? null;
+            $periodIds = $parsedDetails['period_ids'] ?? null;
         }
         
         if ($option !== null && $periodId === null) {
-            // 有 option 的记录：先检查是否已有相同 option 的记录
-            $existingRecord = AttendanceRecord::where('student_id', $studentId)
+            // 有 option 的记录：先检查是否已有相同 option 和 period_ids 的记录
+            $query = AttendanceRecord::where('student_id', $studentId)
                 ->where('date', $date)
                 ->whereNull('period_id')
-                ->where('leave_type_id', $options['leave_type_id'] ?? null)
-                ->whereRaw("JSON_EXTRACT(details, '$.option') = ?", [$option])
-                ->first();
+                ->where('leave_type_id', $options['leave_type_id'] ?? null);
+            
+            // 如果有 period_ids，用它来匹配；否则只用 option
+            if ($periodIds && is_array($periodIds) && count($periodIds) > 0) {
+                $periodIdsJson = json_encode(array_map('intval', $periodIds));
+                $query->whereRaw("JSON_EXTRACT(details, '$.period_ids') = ?", [$periodIdsJson]);
+            } else {
+                $query->whereRaw("JSON_EXTRACT(details, '$.option') = ?", [$option]);
+            }
+            
+            $existingRecord = $query->first();
             
             if ($existingRecord) {
                 // 更新现有记录
@@ -147,79 +178,14 @@ class AttendanceService
         }
 
 
-        // 智能合并：如果同一天同一请假类型的多条记录的节数之和等于全天节数，合并为全天
-        // 只对病假和事假进行合并，生理假等其他类型不合并
+        // 智能合并功能已禁用
+        // 原因：当同一天存在不同状态的记录（如病假+旷课）时，合并会导致数据覆盖问题
+        // 现在保持各个时段的独立记录，不再自动合并为全天
+        /*
         if ($option !== null && isset($options['leave_type_id'])) {
-            // 获取请假类型，检查是否需要合并
-            $leaveType = \App\Models\LeaveType::find($options['leave_type_id']);
-            
-            // 只对病假(sick_leave)和事假(personal_leave)进行合并
-            if ($leaveType && in_array($leaveType->slug, ['sick_leave', 'personal_leave'])) {
-                // 获取该学生当天该类型的所有请假记录（有 option 的记录）
-                $dayRecords = AttendanceRecord::where('student_id', $studentId)
-                    ->where('date', $date)
-                    ->where('leave_type_id', $options['leave_type_id'])
-                    ->whereNull('period_id')
-                    ->whereRaw("JSON_EXTRACT(details, '$.option') IS NOT NULL")
-                    ->get();
-                
-                if ($dayRecords->count() >= 2) {
-                    // 计算所有记录的总节数
-                    $totalPeriods = 0;
-                    foreach ($dayRecords as $rec) {
-                        $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : $rec->details;
-                        $totalPeriods += $recDetails['option_periods'] ?? 1;
-                    }
-                    
-                    // 获取每日总课时数（从系统设置读取）
-                    $dailyLessons = (int) (\App\Models\SystemSetting::where('key', 'daily_lessons_count')->value('value') ?? 8);
-                    
-                    // 如果总节数达到全天节数，合并为全天
-                    if ($totalPeriods >= $dailyLessons) {
-                        // 收集所有选项标签用于记录
-                        $optionLabels = [];
-                        foreach ($dayRecords as $rec) {
-                            $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : $rec->details;
-                            if (isset($recDetails['option_label'])) {
-                                $optionLabels[] = $recDetails['option_label'];
-                            }
-                        }
-                        
-                        // 删除所有时段记录
-                        foreach ($dayRecords as $rec) {
-                            $rec->delete();
-                        }
-                        
-                        // 创建全天记录
-                        $fullDetails = [
-                            'option' => '全天',
-                            'option_label' => '全天',
-                            'option_periods' => $dailyLessons,
-                            'merged_from' => $optionLabels,
-                        ];
-                        
-                        $record = AttendanceRecord::updateOrCreate(
-                            [
-                                'student_id' => $studentId,
-                                'date' => $date,
-                                'period_id' => null
-                            ],
-                            [
-                                'status' => $status,
-                                'school_id' => $student->school_id,
-                                'class_id' => $student->class_id,
-                                'leave_type_id' => $options['leave_type_id'],
-                                'details' => $fullDetails,
-                                'source_type' => 'auto_merge',
-                                'note' => '自动合并: ' . implode(' + ', $optionLabels)
-                            ]
-                        );
-                        
-                        \Log::info("Merged {$leaveType->name} for student {$studentId} on {$date}: " . implode(' + ', $optionLabels) . " = 全天");
-                    }
-                }
-            }
+            // ... 原合并逻辑已移除 ...
         }
+        */
         
         return $record;
     }

@@ -383,10 +383,10 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
                                                     <label
                                                         key={period.id}
                                                         className={`px-3 py-1.5 rounded border text-sm cursor-pointer transition-colors ${isSelected
-                                                                ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
-                                                                : isInSlot
-                                                                    ? 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-gray-200'
-                                                                    : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
+                                                            ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
+                                                            : isInSlot
+                                                                ? 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-gray-200'
+                                                                : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
                                                             }`}
                                                     >
                                                         <input
@@ -401,11 +401,35 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
                                                                 } else {
                                                                     newIds = [...currentIds, period.id];
                                                                 }
-                                                                setInputData({
-                                                                    ...inputData,
-                                                                    period_ids: newIds,
-                                                                    option_periods: newIds.length
+
+                                                                // Check if new selection matches any time slot
+                                                                const matchingSlot = timeSlots.find(slot => {
+                                                                    const slotPeriods = slot.period_ids || [];
+                                                                    return slotPeriods.length === newIds.length &&
+                                                                        slotPeriods.every(id => newIds.includes(id));
                                                                 });
+
+                                                                if (matchingSlot) {
+                                                                    // Matches a time slot, use its name
+                                                                    setInputData({
+                                                                        ...inputData,
+                                                                        period_ids: newIds,
+                                                                        option_periods: newIds.length,
+                                                                        time_slot_id: matchingSlot.id,
+                                                                        time_slot_name: matchingSlot.name,
+                                                                        is_custom: false
+                                                                    });
+                                                                } else {
+                                                                    // Custom selection, clear time slot info
+                                                                    setInputData({
+                                                                        ...inputData,
+                                                                        period_ids: newIds,
+                                                                        option_periods: newIds.length,
+                                                                        time_slot_id: null,
+                                                                        time_slot_name: null,
+                                                                        is_custom: true
+                                                                    });
+                                                                }
                                                             }}
                                                         />
                                                         {period.name}
@@ -415,6 +439,7 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
                                         </div>
                                         <div className="mt-2 text-xs text-gray-500">
                                             已选：{(inputData.period_ids || []).length}节
+                                            {inputData.is_custom && <span className="ml-2 text-indigo-600">(自定义)</span>}
                                         </div>
                                     </div>
                                 )}
