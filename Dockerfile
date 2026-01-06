@@ -1,5 +1,8 @@
 FROM serversideup/php:8.4-fpm-nginx
 
+# 切换到 root 以进行安装 (必须在 apt-get 之前)
+USER root
+
 # 安装 Node.js 和 NPM (用于前端构建)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -7,9 +10,6 @@ RUN apt-get update \
     npm \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-# 切换到 root 以进行安装
-USER root
 
 # 复制项目文件
 COPY . /var/www/html
