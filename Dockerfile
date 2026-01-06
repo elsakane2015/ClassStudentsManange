@@ -3,6 +3,10 @@ FROM serversideup/php:8.4-fpm-nginx
 # 切换到 root 以进行安装 (必须在 apt-get 之前)
 USER root
 
+# 设置时区为东八区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # 安装 Node.js、NPM 和 GD 扩展依赖
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
