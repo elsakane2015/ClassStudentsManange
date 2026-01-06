@@ -11,11 +11,8 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制项目文件
-COPY . /var/www/html
-
-# 设置权限
-RUN chown -R webuser:webuser /var/www/html
+# 复制项目文件并设置权限
+COPY --chown=webuser:webuser . /var/www/html
 
 # 切换回 webuser 运行应用
 USER webuser
