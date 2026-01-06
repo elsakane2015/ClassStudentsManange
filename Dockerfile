@@ -3,11 +3,16 @@ FROM serversideup/php:8.4-fpm-nginx
 # 切换到 root 以进行安装 (必须在 apt-get 之前)
 USER root
 
-# 安装 Node.js 和 NPM (用于前端构建)
+# 安装 Node.js、NPM 和 GD 扩展依赖
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     nodejs \
     npm \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) gd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
