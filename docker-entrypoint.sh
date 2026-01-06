@@ -28,5 +28,3 @@ else
     echo "Warning: .env file not found, skipping Laravel initialization"
 fi
 
-# 启动原始的入口点 (PHP-FPM + Nginx)
-exec /init

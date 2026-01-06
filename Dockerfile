@@ -16,12 +16,12 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# 复制 Laravel 初始化脚本到 S6 启动目录
+COPY docker-entrypoint.sh /etc/entrypoint.d/99-laravel-init.sh
+RUN chmod +x /etc/entrypoint.d/99-laravel-init.sh
+
 # 复制项目文件并设置权限 (serversideup/php v3 使用 www-data 用户)
 COPY --chown=www-data:www-data . /var/www/html
-
-# 复制并设置入口点脚本权限
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
 
 # 切换回 www-data 运行应用
 USER www-data
@@ -34,6 +34,3 @@ RUN npm install && npm run build
 
 # 暴露端口 (serversideup/php 使用 8080，因为非 root 用户无法绑定 80)
 EXPOSE 8080
-
-# 使用自定义入口点脚本
-ENTRYPOINT ["/docker-entrypoint.sh"]
