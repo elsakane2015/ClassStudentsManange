@@ -92,6 +92,7 @@ APP_ENV=production
 APP_KEY=base64:你的KEY...  # 务必生成一个新的或复制本地的
 APP_DEBUG=false
 APP_URL=https://你的域名.com
+APP_TIMEZONE=Asia/Shanghai
 
 # 数据库配置
 DB_CONNECTION=mysql
