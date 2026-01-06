@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ["php84", "php84Extensions.pdo_mysql", "php84Extensions.bcmath", "php84Extensions.fileinfo", "php84Extensions.tokenizer", "php84Extensions.xml", "php84Extensions.ctype", "php84Extensions.mbstring", "php84Extensions.openssl", "php84Extensions.curl", "php84Extensions.gd", "nodejs_20", "npm"]
+
+[phases.build]
+cmds = [
+    "npm install",
+    "npm run build",
+    "composer install --no-dev --optimize-autoloader --no-interaction --no-progress"
+]
+
+[start]
+cmd = "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=80"
