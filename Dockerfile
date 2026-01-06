@@ -11,11 +11,11 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制项目文件并设置权限
-COPY --chown=webuser:webuser . /var/www/html
+# 复制项目文件并设置权限 (serversideup/php v3 使用 www-data 用户)
+COPY --chown=www-data:www-data . /var/www/html
 
-# 切换回 webuser 运行应用
-USER webuser
+# 切换回 www-data 运行应用
+USER www-data
 
 # 安装 PHP 依赖
 RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress
@@ -23,5 +23,5 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progre
 # 安装前端依赖并构建
 RUN npm install && npm run build
 
-# 暴露端口 (Coolify 默认需要 80)
-EXPOSE 80
+# 暴露端口 (serversideup/php 使用 8080，因为非 root 用户无法绑定 80)
+EXPOSE 8080
