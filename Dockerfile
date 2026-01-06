@@ -22,8 +22,8 @@ COPY --chown=www-data:www-data . /var/www/html
 # 切换回 www-data 运行应用
 USER www-data
 
-# 安装 PHP 依赖
-RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+# 安装 PHP 依赖 (--no-scripts 跳过 artisan 命令，因为构建时没有 .env)
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress --no-scripts
 
 # 安装前端依赖并构建
 RUN npm install && npm run build
