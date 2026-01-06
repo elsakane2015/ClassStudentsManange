@@ -12,6 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        // 信任所有代理（Coolify/Traefik 反向代理）
+        $middleware->trustProxies(at: '*');
+        
         // Redirect to install wizard if not installed
         $middleware->web(append: [
             \App\Http\Middleware\CheckInstalled::class,
