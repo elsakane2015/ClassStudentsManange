@@ -1,0 +1,40 @@
+# 依赖目录 - 会在容器内重新安装
+node_modules
+vendor
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# 开发和测试文件
+tests
+phpunit.xml
+.phpunit.result.cache
+
+# 日志和缓存
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+bootstrap/cache/*
+
+# 环境文件
+.env
+.env.local
+.env.*.local
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# 其他
+README.md
+*.md
