@@ -149,7 +149,8 @@ export default function RollCallPage() {
         try {
             const res = await axios.post('/roll-calls', {
                 roll_call_type_id: typeId,
-                roll_call_time: new Date().toISOString(),
+                // 发送不带时区的本地时间字符串，让后端直接按配置的时区(Asia/Shanghai)解析
+                roll_call_time: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
             });
             navigate(`/roll-call/${res.data.id}`);
         } catch (err) {
@@ -168,7 +169,8 @@ export default function RollCallPage() {
         try {
             const res = await axios.post('/roll-calls', {
                 roll_call_type_id: batchTypeId,
-                roll_call_time: new Date().toISOString(),
+                // 发送不带时区的本地时间字符串
+                roll_call_time: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
                 class_ids: selectedClassIds,
             });
 
