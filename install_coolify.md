@@ -61,6 +61,12 @@ curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
     *   Build Command: (通常为空，或者与上面合并)
     *   Start Command: `php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=80`
     *   *提示：如果使用默认 Nixpacks 配置，它可能会自动处理启动。如果启动失败，请填入上述 Start Command。*
+*   **Storage (存储/挂载)**:
+    *   点击 **Storage** 标签页。
+    *   添加一个新的 Volume：
+        *   **Source path** (服务器路径): `/etc/localtime`
+        *   **Destination path** (容器内路径): `/etc/localtime`
+        *   此操作可让容器直接同步宿主机的系统时间。
 
 ## 5. 配置数据库
 

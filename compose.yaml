@@ -19,6 +19,7 @@ services:
             IGNITION_LOCAL_SITES_PATH: '${PWD}'
         volumes:
             - '.:/var/www/html'
+            - '/etc/localtime:/etc/localtime:ro'
         networks:
             - sail
         depends_on:
