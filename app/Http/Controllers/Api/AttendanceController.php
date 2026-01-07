@@ -2060,29 +2060,80 @@ class AttendanceController extends Controller
                 
                 // Calculate details based on scope
                 if ($scope === 'today') {
-                    // For today, show period details
-                    $detailText = '';
-                    if ($records->isNotEmpty()) {
-                        $record = $records->first();
-                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+                    // 来源类型标签映射
+                    $sourceLabels = [
+                        'roll_call' => '点名',
+                        'manual' => '标记',
+                        'leave_request' => '申请',
+                    ];
+                    
+                    // For today, show all records with source labels, separated by |
+                    $detailParts = [];
+                    foreach ($records as $record) {
+                        $sourceType = $record->source_type ?? 'manual';
+                        $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
                         
-                        if (is_array($details)) {
-                            if (isset($details['period_numbers'])) {
-                                $detailText = '第' . implode(',', $details['period_numbers']) . '节';
-                            } elseif (isset($details['periods'])) {
-                                $detailText = '第' . implode(',', $details['periods']) . '节';
-                            } elseif (isset($details['time'])) {
-                                $detailText = $details['time'];
-                            } elseif (isset($details['option'])) {
-                                $optionMap = [
-                                    'morning_half' => '上午',
-                                    'afternoon_half' => '下午',
-                                    'full_day' => '全天'
-                                ];
-                                $detailText = $optionMap[$details['option']] ?? $details['option'];
+                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+                        $detailContent = '';
+                        
+                        if ($sourceType === 'roll_call') {
+                            // 点名来源：显示点名类型名称 + 时间
+                            if (is_array($details) && isset($details['roll_call_type'])) {
+                                $detailContent = $details['roll_call_type'];
+                                if (isset($details['roll_call_time'])) {
+                                    $detailContent .= '(' . $details['roll_call_time'] . ')';
+                                }
+                            } else {
+                                $detailContent = '点名记录';
+                            }
+                        } elseif ($sourceType === 'leave_request') {
+                            // 请假申请来源：显示请假类型 + 时段
+                            if ($record->leaveType) {
+                                $detailContent = $record->leaveType->name;
+                            }
+                            if (is_array($details)) {
+                                if (isset($details['display_label'])) {
+                                    $detailContent .= '(' . $details['display_label'] . ')';
+                                } elseif (isset($details['option_label'])) {
+                                    $detailContent .= '(' . $details['option_label'] . ')';
+                                } elseif (isset($details['option'])) {
+                                    $optionMap = [
+                                        'morning_half' => '上午',
+                                        'afternoon_half' => '下午',
+                                        'full_day' => '全天',
+                                        'morning_exercise' => '早操',
+                                        'evening_exercise' => '晚操'
+                                    ];
+                                    $optionText = $optionMap[$details['option']] ?? $details['option'];
+                                    $detailContent .= '(' . $optionText . ')';
+                                }
+                            }
+                        } else {
+                            // 手动标记来源：显示节次
+                            if (is_array($details)) {
+                                if (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
+                                    $detailContent = '第' . implode(',', $details['period_numbers']) . '节';
+                                } elseif (isset($details['periods']) && !empty($details['periods'])) {
+                                    $detailContent = '第' . implode(',', $details['periods']) . '节';
+                                } elseif (isset($details['display_label'])) {
+                                    $detailContent = $details['display_label'];
+                                }
+                            }
+                            if (!$detailContent && $record->period_id) {
+                                // 尝试从关联的 period 获取
+                                $period = $record->period;
+                                if ($period) {
+                                    $detailContent = '第' . $period->period_number . '节';
+                                }
+                            }
+                            if (!$detailContent) {
+                                $detailContent = '考勤记录';
                             }
                         }
+                        
+                        $detailParts[] = $sourceLabel . '：' . $detailContent;
                     }
+                    $detailText = implode(' | ', $detailParts);
                 } else {
                     // For week/month/semester, show count
                     $detailText = $records->count() . '次';

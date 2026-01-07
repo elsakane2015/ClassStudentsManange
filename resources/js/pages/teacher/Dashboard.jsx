@@ -769,7 +769,9 @@ export default function TeacherDashboard() {
                                                         )}
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">次数</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                            {scope === 'today' ? '详情' : '次数'}
+                                                        </th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="bg-white divide-y divide-gray-200">
@@ -797,10 +799,16 @@ export default function TeacherDashboard() {
                                                                 <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                                                     {student.name || '-'}
                                                                 </td>
-                                                                <td className="px-4 py-4 whitespace-nowrap text-sm">
-                                                                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
-                                                                        {recordCount}次
-                                                                    </span>
+                                                                <td className="px-4 py-4 text-sm">
+                                                                    {scope === 'today' ? (
+                                                                        <span className="text-gray-700">
+                                                                            {student.detail || '-'}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                                                                            {recordCount}次
+                                                                        </span>
+                                                                    )}
                                                                 </td>
                                                             </tr>
                                                         );
