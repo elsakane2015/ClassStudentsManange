@@ -92,8 +92,17 @@ class AttendanceController extends Controller
         if ($user->role === 'teacher' || $user->role === 'manager') {
              $pendingQuery->whereIn('class_id', $classIds);
         }
-        // Count unique pending requests (by student_id + date + leave_type_id = each submission)
-        $pendingRequests = $pendingQuery->selectRaw('COUNT(DISTINCT student_id, date, leave_type_id) as count')->value('count') ?? 0;
+        // 按 leave_batch_id 统计请假申请次数（一次申请计为1）
+        // 对于有 leave_batch_id 的记录按 batch 分组，没有的按旧逻辑
+        $pendingWithBatch = $pendingQuery->clone()
+            ->whereNotNull('leave_batch_id')
+            ->distinct('leave_batch_id')
+            ->count('leave_batch_id');
+        $pendingWithoutBatch = $pendingQuery->clone()
+            ->whereNull('leave_batch_id')
+            ->selectRaw('COUNT(DISTINCT student_id, date, leave_type_id) as count')
+            ->value('count') ?? 0;
+        $pendingRequests = $pendingWithBatch + $pendingWithoutBatch;
 
         // Efficient breakdown query
         $attendanceStats = $attendanceQuery->clone()
@@ -1220,13 +1229,24 @@ class AttendanceController extends Controller
             // For class admin: add pending requests count
             if ($user->student->is_class_admin) {
                 $classId = $user->student->class_id;
-                // Count unique pending leave requests (by student_id + date + leave_type_id = each submission)
-                $pendingCount = AttendanceRecord::where('class_id', $classId)
+                // 按 leave_batch_id 统计请假申请次数（一次申请计为1）
+                $baseQuery = AttendanceRecord::where('class_id', $classId)
                     ->where('approval_status', 'pending')
-                    ->where('is_self_applied', true)
+                    ->where('is_self_applied', true);
+                
+                // 有 leave_batch_id 的按 batch 统计
+                $pendingWithBatch = $baseQuery->clone()
+                    ->whereNotNull('leave_batch_id')
+                    ->distinct('leave_batch_id')
+                    ->count('leave_batch_id');
+                
+                // 没有 leave_batch_id 的按旧逻辑统计（兼容旧数据）
+                $pendingWithoutBatch = $baseQuery->clone()
+                    ->whereNull('leave_batch_id')
                     ->selectRaw('COUNT(DISTINCT student_id, date, leave_type_id) as count')
                     ->value('count') ?? 0;
-                $stats['pending_requests'] = $pendingCount;
+                
+                $stats['pending_requests'] = $pendingWithBatch + $pendingWithoutBatch;
             }
 
             // Include leave types config for frontend
