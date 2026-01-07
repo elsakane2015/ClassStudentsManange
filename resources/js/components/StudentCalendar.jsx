@@ -87,8 +87,8 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
     const getEventsForDate = (date) => {
         const dateStr = format(date, 'yyyy-MM-dd');
         return events.filter(event => {
-            const eventStart = event.start?.split('T')[0] || event.start;
-            const eventEnd = event.end?.split('T')[0] || eventStart;
+            const eventStart = event.start?.split(/[T ]/)[0] || event.start;
+            const eventEnd = event.end?.split(/[T ]/)[0] || eventStart;
             return dateStr >= eventStart && dateStr <= eventEnd;
         });
     };
