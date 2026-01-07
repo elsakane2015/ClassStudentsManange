@@ -432,6 +432,9 @@ class LeaveRequestController extends Controller
     /**
      * Cancel/Delete a pending leave request (student can only cancel their own)
      */
+    /**
+     * Cancel/Delete a leave request
+     */
     public function destroy(Request $request, $id)
     {
         $user = $request->user();
@@ -445,19 +448,36 @@ class LeaveRequestController extends Controller
             if ($record->approval_status !== 'pending') {
                 return response()->json(['error' => 'Only pending requests can be cancelled'], 400);
             }
+        } elseif (in_array($user->role, ['teacher', 'admin', 'manager', 'school_admin', 'system_admin'])) {
+             // Teachers/Admins can delete any request
+             if ($user->role === 'teacher') {
+                  // check class ownership
+                  $ownsClass = $user->teacherClasses()->where('id', $record->class_id)->exists();
+                  if (!$ownsClass) return response()->json(['error' => 'Unauthorized'], 403);
+             }
+        } else {
+             return response()->json(['error' => 'Unauthorized'], 403);   
         }
         
-        // Find and delete all related pending records for same date and leave_type
-        $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+        // Find and delete related records
+        // Match the group: student, date, leave_type, is_self_applied
+        $query = AttendanceRecord::where('student_id', $record->student_id)
             ->where('date', $record->date)
             ->where('leave_type_id', $record->leave_type_id)
-            ->where('approval_status', 'pending')
             ->where('is_self_applied', true);
             
-        $count = $relatedRecords->count();
-        $relatedRecords->delete();
+        // If student, strictly only delete pending.
+        if ($user->role === 'student') {
+             $query->where('approval_status', 'pending');
+        } else {
+             // For teachers/admins, match the status of the target record to ensure we delete the correct group
+             $query->where('approval_status', $record->approval_status);
+        }
+            
+        $count = $query->count();
+        $query->delete();
         
-        return response()->json(['message' => 'Leave request cancelled successfully.', 'deleted_count' => $count]);
+        return response()->json(['message' => 'Leave request deleted successfully.', 'deleted_count' => $count]);
     }
 
     /**

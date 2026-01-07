@@ -3,7 +3,7 @@ import Layout from '../../components/Layout';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { useSearchParams } from 'react-router-dom';
-import { PhotoIcon, ChevronDownIcon, ChevronUpIcon, XMarkIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { PhotoIcon, ChevronDownIcon, ChevronUpIcon, XMarkIcon, CheckIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 export default function ApprovalHistory() {
     const [searchParams, setSearchParams] = useSearchParams();
@@ -43,6 +43,18 @@ export default function ApprovalHistory() {
     };
 
     const handleAction = async (id, action) => {
+        if (action === 'delete') {
+            if (!confirm('确定要删除这条记录吗？删除后不仅审批记录会消失，对应的考勤（如病假/旷课）也会被清除。')) return;
+            try {
+                await axios.delete(`/leave-requests/${id}`);
+                // Refresh the list
+                fetchRequests();
+            } catch (error) {
+                alert('操作失败: ' + (error.response?.data?.error || error.message));
+            }
+            return;
+        }
+
         if (!confirm(`确定要 ${action === 'approve' ? '通过' : '驳回'} 这条申请吗?`)) return;
 
         try {
@@ -263,6 +275,19 @@ export default function ApprovalHistory() {
                                         >
                                             <CheckIcon className="h-4 w-4 mr-1" />
                                             批准
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Delete button for non-pending requests */}
+                                {request.status !== 'pending' && (
+                                    <div className="mt-4 flex justify-end space-x-3">
+                                        <button
+                                            onClick={() => handleAction(request.id, 'delete')}
+                                            className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-full shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                        >
+                                            <TrashIcon className="h-4 w-4 mr-1 text-gray-500" />
+                                            删除
                                         </button>
                                     </div>
                                 )}
