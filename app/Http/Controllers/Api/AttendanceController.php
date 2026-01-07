@@ -2123,12 +2123,15 @@ class AttendanceController extends Controller
                                 }
                             }
                         } else {
-                            // 手动标记来源：优先显示display_label，否则显示option_label，再否则显示节次
+                            // 手动标记来源：优先显示display_label，否则显示option_label/time_slot_name，再否则显示节次
                             if (is_array($details)) {
                                 if (isset($details['display_label']) && !empty($details['display_label'])) {
                                     $detailContent = $details['display_label'];
                                 } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                                     $detailContent = $details['option_label'];
+                                } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
+                                    // 时段名称（如早读、晚操等）
+                                    $detailContent = $details['time_slot_name'];
                                 } elseif (isset($details['option']) && !empty($details['option'])) {
                                     // 尝试映射option为中文
                                     $optionMap = [
@@ -2139,6 +2142,9 @@ class AttendanceController extends Controller
                                         'evening_exercise' => '晚操'
                                     ];
                                     $detailContent = $optionMap[$details['option']] ?? $details['option'];
+                                } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
+                                    // 使用 period_names（如 ["早读", "第1节"]）
+                                    $detailContent = implode('、', $details['period_names']);
                                 } elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
                                     $detailContent = '第' . implode(',', $details['period_numbers']) . '节';
                                 } elseif (isset($details['periods']) && !empty($details['periods'])) {
