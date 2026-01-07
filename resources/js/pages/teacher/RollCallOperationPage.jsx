@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CheckIcon, XMarkIcon, ArrowLeftIcon, CheckCircleIcon, PencilIcon } from '@heroicons/react/24/outline';
 import useAuthStore from '../../store/authStore';
@@ -171,7 +171,7 @@ export default function RollCallOperationPage() {
                                 {rollCall.roll_call_type?.name} - {rollCall.class?.name}
                             </h2>
                             <p className="text-sm text-gray-500">
-                                {format(new Date(rollCall.roll_call_time), 'yyyy-MM-dd HH:mm')}
+                                {format(parseISO(rollCall.roll_call_time), 'yyyy-MM-dd HH:mm')}
                                 {isCompleted && <span className="ml-2 text-green-600">(已完成)</span>}
                                 {isCancelled && <span className="ml-2 text-red-600">(已取消)</span>}
                             </p>
@@ -287,7 +287,7 @@ export default function RollCallOperationPage() {
                                             <div className="font-medium text-gray-900">{displayName}</div>
                                             {isPresent && record.marked_at && (
                                                 <div className="text-xs text-gray-400">
-                                                    签到于 {format(new Date(record.marked_at), 'HH:mm')}
+                                                    签到于 {format(parseISO(record.marked_at), 'HH:mm')}
                                                 </div>
                                             )}
                                         </div>

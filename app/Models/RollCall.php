@@ -25,6 +25,14 @@ class RollCall extends Model
         'completed_at' => 'datetime',
     ];
 
+    /**
+     * 序列化日期时使用东八区时区
+     */
+    protected function serializeDate(\DateTimeInterface $date): string
+    {
+        return $date->setTimezone(new \DateTimeZone('Asia/Shanghai'))->format('Y-m-d H:i:s');
+    }
+
     public function class()
     {
         return $this->belongsTo(SchoolClass::class, 'class_id');
