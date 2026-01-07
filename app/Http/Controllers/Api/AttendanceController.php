@@ -2145,10 +2145,40 @@ class AttendanceController extends Controller
                                 } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
                                     // 使用 period_names（如 ["早读", "第1节"]）
                                     $detailContent = implode('、', $details['period_names']);
-                                } elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
-                                    $detailContent = '第' . implode(',', $details['period_numbers']) . '节';
                                 } elseif (isset($details['periods']) && !empty($details['periods'])) {
-                                    $detailContent = '第' . implode(',', $details['periods']) . '节';
+                                    // 根据 periods（节次ID数组）查询系统配置获取节次名称
+                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
+                                    $periodNames = [];
+                                    foreach ($details['periods'] as $periodId) {
+                                        foreach ($periodsArray as $p) {
+                                            if ((string)$p['id'] === (string)$periodId) {
+                                                $periodNames[] = $p['name'];
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (!empty($periodNames)) {
+                                        $detailContent = implode('、', $periodNames);
+                                    } else {
+                                        // 如果找不到配置，fallback 显示节次编号
+                                        $detailContent = '第' . implode(',', $details['periods']) . '节';
+                                    }
+                                } elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
+                                    // 根据 period_numbers（节次编号）查询系统配置获取节次名称
+                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
+                                    $periodNames = [];
+                                    foreach ($details['period_numbers'] as $periodNum) {
+                                        // period_number 从1开始，数组索引从0开始
+                                        $index = (int)$periodNum - 1;
+                                        if ($index >= 0 && $index < count($periodsArray)) {
+                                            $periodNames[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
+                                        } else {
+                                            $periodNames[] = "第{$periodNum}节";
+                                        }
+                                    }
+                                    $detailContent = implode('、', $periodNames);
                                 }
                             }
                             if (!$detailContent && $record->period_id) {
