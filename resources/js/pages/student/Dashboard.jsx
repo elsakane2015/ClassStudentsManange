@@ -448,29 +448,40 @@ export default function StudentDashboard() {
         }
 
         // Add all leave types if configured (show even if count is 0)
+        // Filter by gender restriction based on student's gender
         if (dashboardConfig.show_all_leave_types) {
-            leaveTypes.forEach(type => {
-                const colorMap = {
-                    'sick_leave': 'purple',
-                    'personal_leave': 'blue',
-                    'health_leave': 'pink',
-                    'absent': 'red',
-                    'late': 'yellow',
-                    'early_leave': 'orange',
-                };
+            const studentGender = user?.student?.gender;
 
-                // Get display config for this leave type
-                const typeConfig = leaveTypesConfig[type.slug] || {};
-                const displayUnit = typeConfig.display_unit || '节';
-                const count = stats[type.slug] || 0;
+            leaveTypes
+                .filter(type => {
+                    // Filter by gender restriction
+                    if (!type.gender_restriction || type.gender_restriction === 'all') return true;
+                    if (type.gender_restriction === 'female' && studentGender === 'female') return true;
+                    if (type.gender_restriction === 'male' && studentGender === 'male') return true;
+                    return false;
+                })
+                .forEach(type => {
+                    const colorMap = {
+                        'sick_leave': 'purple',
+                        'personal_leave': 'blue',
+                        'health_leave': 'pink',
+                        'absent': 'red',
+                        'late': 'yellow',
+                        'early_leave': 'orange',
+                    };
 
-                entries.push({
-                    key: type.slug,
-                    name: type.name,
-                    value: `${count}${displayUnit}`,
-                    color: type.color || colorMap[type.slug] || 'gray'
+                    // Get display config for this leave type
+                    const typeConfig = leaveTypesConfig[type.slug] || {};
+                    const displayUnit = typeConfig.display_unit || '节';
+                    const count = stats[type.slug] || 0;
+
+                    entries.push({
+                        key: type.slug,
+                        name: type.name,
+                        value: `${count}${displayUnit}`,
+                        color: type.color || colorMap[type.slug] || 'gray'
+                    });
                 });
-            });
         }
 
         return entries;
