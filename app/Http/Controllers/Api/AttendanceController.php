@@ -2217,6 +2217,65 @@ class AttendanceController extends Controller
                     $detailText = $records->count() . '次';
                 }
 
+                // 为每条记录添加 detail 字段（与 studentRecords 方法保持一致）
+                $enrichedRecords = [];
+                foreach ($records as $index => $record) {
+                    $recordArray = $record->toArray();
+                    // 复用上面循环中已经计算的 detailParts（如果是 today scope）
+                    if ($scope === 'today' && isset($detailParts[$index])) {
+                        $recordArray['detail'] = $detailParts[$index];
+                    } else {
+                        // Fallback: 重新计算 detail（与 studentRecords 逻辑一致）
+                        $sourceType = $record->source_type ?? 'manual';
+                        $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
+                        
+                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+                        $detailContent = '';
+                        
+                        if ($sourceType === 'roll_call') {
+                            if (is_array($details) && isset($details['roll_call_type'])) {
+                                $detailContent = $details['roll_call_type'];
+                                if (isset($details['roll_call_time'])) {
+                                    $detailContent .= '(' . $details['roll_call_time'] . ')';
+                                }
+                            } else {
+                                $detailContent = '点名记录';
+                            }
+                        } elseif ($sourceType === 'leave_request') {
+                            if ($record->leaveType) {
+                                $detailContent = $record->leaveType->name;
+                            }
+                            if (is_array($details)) {
+                                if (isset($details['display_label'])) {
+                                    $detailContent .= '(' . $details['display_label'] . ')';
+                                } elseif (isset($details['option_label'])) {
+                                    $detailContent .= '(' . $details['option_label'] . ')';
+                                }
+                            }
+                        } else {
+                            if (is_array($details)) {
+                                if (isset($details['display_label']) && !empty($details['display_label'])) {
+                                    $detailContent = $details['display_label'];
+                                } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
+                                    $detailContent = $details['option_label'];
+                                } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
+                                    $detailContent = $details['time_slot_name'];
+                                } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
+                                    $detailContent = implode('、', $details['period_names']);
+                                }
+                            }
+                            if (!$detailContent && $record->leaveType) {
+                                $detailContent = $record->leaveType->name;
+                            }
+                            if (!$detailContent) {
+                                $detailContent = '考勤记录';
+                            }
+                        }
+                        $recordArray['detail'] = $sourceLabel . '：' . $detailContent;
+                    }
+                    $enrichedRecords[] = $recordArray;
+                }
+
                 $studentData = [
                     'id' => $student->id,
                     'student_no' => $student->student_no ?? '',
@@ -2224,7 +2283,7 @@ class AttendanceController extends Controller
                     'department' => $student->schoolClass?->department?->name ?? '-',
                     'class' => $student->schoolClass?->name ?? '-',
                     'detail' => $detailText ?? '-',
-                    'records' => $records->toArray()
+                    'records' => $enrichedRecords
                 ];
                 
                 \Log::info('[details] Student data:', [
