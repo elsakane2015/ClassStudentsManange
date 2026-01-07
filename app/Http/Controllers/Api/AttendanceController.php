@@ -2347,70 +2347,132 @@ class AttendanceController extends Controller
         $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
         $periodsArray = json_decode($periodsConfig, true) ?: [];
         
-        // 为每条记录添加 period_names_display 字段
-        $records = $records->map(function($record) use ($periodsArray) {
-            $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
-            $periodNamesDisplay = null;
+        // 来源类型标签映射（与 details 方法一致）
+        $sourceLabels = [
+            'roll_call' => '点名',
+            'manual' => '标记',
+            'manual_bulk' => '标记',
+            'leave_request' => '申请',
+        ];
+        
+        // 为每条记录添加 detail 字段（使用与 details 方法完全相同的逻辑）
+        $records = $records->map(function($record) use ($periodsArray, $sourceLabels) {
+            $sourceType = $record->source_type ?? 'manual';
+            $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
             
-            if (is_array($details)) {
-                // 优先使用 period_names
-                if (isset($details['period_names']) && !empty($details['period_names'])) {
-                    $periodNamesDisplay = implode('、', $details['period_names']);
+            $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+            $detailContent = '';
+            
+            if ($sourceType === 'roll_call') {
+                // 点名来源：显示点名类型名称 + 时间
+                if (is_array($details) && isset($details['roll_call_type'])) {
+                    $detailContent = $details['roll_call_type'];
+                    if (isset($details['roll_call_time'])) {
+                        $detailContent .= '(' . $details['roll_call_time'] . ')';
+                    }
+                } else {
+                    $detailContent = '点名记录';
                 }
-                // 其次根据 periods ID 查询
-                elseif (isset($details['periods']) && !empty($details['periods'])) {
-                    $names = [];
-                    foreach ($details['periods'] as $periodId) {
-                        foreach ($periodsArray as $p) {
-                            if ((string)$p['id'] === (string)$periodId) {
-                                $names[] = $p['name'];
-                                break;
+            } elseif ($sourceType === 'leave_request') {
+                // 请假申请来源：显示请假类型 + 时段
+                if ($record->leaveType) {
+                    $detailContent = $record->leaveType->name;
+                }
+                if (is_array($details)) {
+                    if (isset($details['display_label'])) {
+                        $detailContent .= '(' . $details['display_label'] . ')';
+                    } elseif (isset($details['option_label'])) {
+                        $detailContent .= '(' . $details['option_label'] . ')';
+                    } elseif (isset($details['option'])) {
+                        $optionMap = [
+                            'morning_half' => '上午',
+                            'afternoon_half' => '下午',
+                            'full_day' => '全天',
+                            'morning_exercise' => '早操',
+                            'evening_exercise' => '晚操'
+                        ];
+                        $optionText = $optionMap[$details['option']] ?? $details['option'];
+                        $detailContent .= '(' . $optionText . ')';
+                    }
+                }
+            } else {
+                // 手动标记来源：优先显示display_label，否则显示option_label/time_slot_name，再否则显示节次
+                if (is_array($details)) {
+                    if (isset($details['display_label']) && !empty($details['display_label'])) {
+                        $detailContent = $details['display_label'];
+                    } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
+                        $detailContent = $details['option_label'];
+                    } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
+                        $detailContent = $details['time_slot_name'];
+                    } elseif (isset($details['option']) && !empty($details['option'])) {
+                        $optionMap = [
+                            'morning_half' => '上午',
+                            'afternoon_half' => '下午',
+                            'full_day' => '全天',
+                            'morning_exercise' => '早操',
+                            'evening_exercise' => '晚操'
+                        ];
+                        $detailContent = $optionMap[$details['option']] ?? $details['option'];
+                    } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
+                        $detailContent = implode('、', $details['period_names']);
+                    } elseif (isset($details['periods']) && !empty($details['periods'])) {
+                        // 根据 periods（节次ID数组）查询系统配置获取节次名称
+                        $periodNames = [];
+                        foreach ($details['periods'] as $periodId) {
+                            foreach ($periodsArray as $p) {
+                                if ((string)$p['id'] === (string)$periodId) {
+                                    $periodNames[] = $p['name'];
+                                    break;
+                                }
                             }
                         }
-                    }
-                    if (!empty($names)) {
-                        $periodNamesDisplay = implode('、', $names);
-                    }
-                }
-                // 再次根据 period_numbers 编号查询
-                // period_numbers 可能是：1. 节次ID  2. 节次在数组中的位置（1-based）
-                elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
-                    $names = [];
-                    foreach ($details['period_numbers'] as $periodNum) {
-                        $found = false;
-                        // 首先尝试按 ID 匹配（因为 period_numbers 可能实际上存的是 ID）
-                        foreach ($periodsArray as $p) {
-                            if ((string)$p['id'] === (string)$periodNum) {
-                                $names[] = $p['name'];
-                                $found = true;
-                                break;
+                        if (!empty($periodNames)) {
+                            $detailContent = implode('、', $periodNames);
+                        } else {
+                            $detailContent = '第' . implode(',', $details['periods']) . '节';
+                        }
+                    } elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
+                        // 根据 period_numbers 查询
+                        $periodNames = [];
+                        foreach ($details['period_numbers'] as $periodNum) {
+                            $found = false;
+                            foreach ($periodsArray as $p) {
+                                if ((string)$p['id'] === (string)$periodNum) {
+                                    $periodNames[] = $p['name'];
+                                    $found = true;
+                                    break;
+                                }
+                            }
+                            if (!$found) {
+                                $index = (int)$periodNum - 1;
+                                if ($index >= 0 && $index < count($periodsArray)) {
+                                    $periodNames[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
+                                } else {
+                                    $periodNames[] = "第{$periodNum}节";
+                                }
                             }
                         }
-                        // 如果没找到，按索引匹配（period_number 从1开始，数组索引从0开始）
-                        if (!$found) {
-                            $index = (int)$periodNum - 1;
-                            if ($index >= 0 && $index < count($periodsArray)) {
-                                $names[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
-                            } else {
-                                $names[] = "第{$periodNum}节";
-                            }
-                        }
+                        $detailContent = implode('、', $periodNames);
                     }
-                    $periodNamesDisplay = implode('、', $names);
                 }
-                // 尝试使用 option_label 或 display_label
-                elseif (isset($details['option_label']) && !empty($details['option_label'])) {
-                    $periodNamesDisplay = $details['option_label'];
+                if (!$detailContent && $record->period_id) {
+                    // 尝试从period关联获取
+                    $period = $record->period;
+                    if ($period) {
+                        $detailContent = '第' . $period->period_number . '节';
+                    }
                 }
-                elseif (isset($details['display_label']) && !empty($details['display_label'])) {
-                    $periodNamesDisplay = $details['display_label'];
+                if (!$detailContent && $record->leaveType) {
+                    $detailContent = $record->leaveType->name;
                 }
-                elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
-                    $periodNamesDisplay = $details['time_slot_name'];
+                if (!$detailContent) {
+                    $detailContent = '考勤记录';
                 }
             }
             
-            $record->period_names_display = $periodNamesDisplay;
+            // 生成完整的 detail 文本（与 details API 格式一致）
+            $record->detail = $sourceLabel . '：' . $detailContent;
+            $record->period_names_display = $detailContent;
             return $record;
         });
 
