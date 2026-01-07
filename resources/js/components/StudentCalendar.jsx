@@ -84,12 +84,28 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
     };
 
     // Get events for a specific date
+    // Get events for a specific date
     const getEventsForDate = (date) => {
         const dateStr = format(date, 'yyyy-MM-dd');
         return events.filter(event => {
-            const eventStart = event.start?.split(/[T ]/)[0] || event.start;
-            const eventEnd = event.end?.split(/[T ]/)[0] || eventStart;
-            return dateStr >= eventStart && dateStr <= eventEnd;
+            let eventStart = event.start;
+            let eventEnd = event.end;
+
+            // Helper to extract local date string
+            const getLocalDateStr = (timeStr) => {
+                if (!timeStr) return '';
+                // If it's a UTC ISO string (e.g., ...T16:00:00.000Z), parse it to local Date
+                if (timeStr.includes('T') && timeStr.endsWith('Z')) {
+                    return format(new Date(timeStr), 'yyyy-MM-dd');
+                }
+                // Otherwise (e.g., '2026-01-07 00:00:00' or '2026-01-07'), just split
+                return timeStr.split(/[T ]/)[0];
+            };
+
+            const startDateStr = getLocalDateStr(eventStart) || eventStart;
+            const endDateStr = getLocalDateStr(eventEnd) || startDateStr;
+
+            return dateStr >= startDateStr && dateStr <= endDateStr;
         });
     };
 
