@@ -2165,17 +2165,29 @@ class AttendanceController extends Controller
                                         $detailContent = '第' . implode(',', $details['periods']) . '节';
                                     }
                                 } elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
-                                    // 根据 period_numbers（节次编号）查询系统配置获取节次名称
+                                    // 根据 period_numbers 查询系统配置获取节次名称
+                                    // period_numbers 可能是：1. 节次ID  2. 节次在数组中的位置（1-based）
                                     $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
                                     $periodsArray = json_decode($periodsConfig, true) ?: [];
                                     $periodNames = [];
                                     foreach ($details['period_numbers'] as $periodNum) {
-                                        // period_number 从1开始，数组索引从0开始
-                                        $index = (int)$periodNum - 1;
-                                        if ($index >= 0 && $index < count($periodsArray)) {
-                                            $periodNames[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
-                                        } else {
-                                            $periodNames[] = "第{$periodNum}节";
+                                        $found = false;
+                                        // 首先尝试按 ID 匹配
+                                        foreach ($periodsArray as $p) {
+                                            if ((string)$p['id'] === (string)$periodNum) {
+                                                $periodNames[] = $p['name'];
+                                                $found = true;
+                                                break;
+                                            }
+                                        }
+                                        // 如果没找到，按索引匹配
+                                        if (!$found) {
+                                            $index = (int)$periodNum - 1;
+                                            if ($index >= 0 && $index < count($periodsArray)) {
+                                                $periodNames[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
+                                            } else {
+                                                $periodNames[] = "第{$periodNum}节";
+                                            }
                                         }
                                     }
                                     $detailContent = implode('、', $periodNames);
@@ -2361,14 +2373,27 @@ class AttendanceController extends Controller
                     }
                 }
                 // 再次根据 period_numbers 编号查询
+                // period_numbers 可能是：1. 节次ID  2. 节次在数组中的位置（1-based）
                 elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
                     $names = [];
                     foreach ($details['period_numbers'] as $periodNum) {
-                        $index = (int)$periodNum - 1;
-                        if ($index >= 0 && $index < count($periodsArray)) {
-                            $names[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
-                        } else {
-                            $names[] = "第{$periodNum}节";
+                        $found = false;
+                        // 首先尝试按 ID 匹配（因为 period_numbers 可能实际上存的是 ID）
+                        foreach ($periodsArray as $p) {
+                            if ((string)$p['id'] === (string)$periodNum) {
+                                $names[] = $p['name'];
+                                $found = true;
+                                break;
+                            }
+                        }
+                        // 如果没找到，按索引匹配（period_number 从1开始，数组索引从0开始）
+                        if (!$found) {
+                            $index = (int)$periodNum - 1;
+                            if ($index >= 0 && $index < count($periodsArray)) {
+                                $names[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
+                            } else {
+                                $names[] = "第{$periodNum}节";
+                            }
                         }
                     }
                     $periodNamesDisplay = implode('、', $names);
