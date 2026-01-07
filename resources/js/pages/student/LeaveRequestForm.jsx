@@ -323,7 +323,7 @@ export default function LeaveRequestForm() {
                     );
                 }
 
-                if (formData.start_date && formData.end_date && formData.start_date !== formData.end_date) return null;
+                // 多天请假也可以选择时段，所有天都使用相同的时段
 
                 // 严格按照请假类型配置的 options 显示时段
                 // inputConfig.options 格式: [{key: "time_slot_1", label: "早操"}, ...]
