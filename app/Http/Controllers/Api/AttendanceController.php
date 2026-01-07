@@ -2356,7 +2356,7 @@ class AttendanceController extends Controller
         ];
         
         // 为每条记录添加 detail 字段（使用与 details 方法完全相同的逻辑）
-        $records = $records->map(function($record) use ($periodsArray, $sourceLabels) {
+        $result = $records->map(function($record) use ($periodsArray, $sourceLabels) {
             $sourceType = $record->source_type ?? 'manual';
             $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
             
@@ -2470,13 +2470,14 @@ class AttendanceController extends Controller
                 }
             }
             
-            // 生成完整的 detail 文本（与 details API 格式一致）
-            $record->detail = $sourceLabel . '：' . $detailContent;
-            $record->period_names_display = $detailContent;
-            return $record;
+            // 转换为数组并添加 detail 字段（确保能被 JSON 序列化）
+            $recordArray = $record->toArray();
+            $recordArray['detail'] = $sourceLabel . '：' . $detailContent;
+            $recordArray['period_names_display'] = $detailContent;
+            return $recordArray;
         });
 
-        return response()->json($records);
+        return response()->json($result);
     }
 
     public function batchStore(Request $request)
