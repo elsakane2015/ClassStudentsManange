@@ -2061,6 +2061,7 @@ class AttendanceController extends Controller
                     $q->with(['leaveType']);
                 }
             ])
+            ->orderBy('student_no')
             ->get();
         
         // Load department separately to avoid table name issues
@@ -2122,22 +2123,38 @@ class AttendanceController extends Controller
                                 }
                             }
                         } else {
-                            // 手动标记来源：显示节次
+                            // 手动标记来源：优先显示display_label，否则显示option_label，再否则显示节次
                             if (is_array($details)) {
-                                if (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
+                                if (isset($details['display_label']) && !empty($details['display_label'])) {
+                                    $detailContent = $details['display_label'];
+                                } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
+                                    $detailContent = $details['option_label'];
+                                } elseif (isset($details['option']) && !empty($details['option'])) {
+                                    // 尝试映射option为中文
+                                    $optionMap = [
+                                        'morning_half' => '上午',
+                                        'afternoon_half' => '下午',
+                                        'full_day' => '全天',
+                                        'morning_exercise' => '早操',
+                                        'evening_exercise' => '晚操'
+                                    ];
+                                    $detailContent = $optionMap[$details['option']] ?? $details['option'];
+                                } elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
                                     $detailContent = '第' . implode(',', $details['period_numbers']) . '节';
                                 } elseif (isset($details['periods']) && !empty($details['periods'])) {
                                     $detailContent = '第' . implode(',', $details['periods']) . '节';
-                                } elseif (isset($details['display_label'])) {
-                                    $detailContent = $details['display_label'];
                                 }
                             }
                             if (!$detailContent && $record->period_id) {
-                                // 尝试从关联的 period 获取
+                                // 尝试从period关联获取
                                 $period = $record->period;
                                 if ($period) {
                                     $detailContent = '第' . $period->period_number . '节';
                                 }
+                            }
+                            // 如果仍然没有内容，尝试使用leave_type名称
+                            if (!$detailContent && $record->leaveType) {
+                                $detailContent = $record->leaveType->name;
                             }
                             if (!$detailContent) {
                                 $detailContent = '考勤记录';
