@@ -482,9 +482,14 @@ class RollCallController extends Controller
 
                     if ($record && $record->status !== 'on_leave') {
                         // Only update if not on_leave (preserve leave status)
+                        // Parse marked_at and ensure it's in correct timezone
+                        $markedAt = null;
+                        if ($recordData['marked_at']) {
+                            $markedAt = Carbon::parse($recordData['marked_at'])->setTimezone('Asia/Shanghai');
+                        }
                         $record->update([
                             'status' => $recordData['status'],
-                            'marked_at' => $recordData['marked_at'] ? Carbon::parse($recordData['marked_at']) : null,
+                            'marked_at' => $markedAt,
                             'marked_by' => $recordData['status'] === 'present' ? $user->id : null,
                         ]);
                     }

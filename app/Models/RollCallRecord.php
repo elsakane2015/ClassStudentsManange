@@ -21,13 +21,26 @@ class RollCallRecord extends Model
         'marked_at' => 'datetime',
     ];
 
+    protected $appends = ['marked_at_local'];
+
+    /**
+     * 返回本地时区的 marked_at 时间字符串
+     */
+    public function getMarkedAtLocalAttribute(): ?string
+    {
+        if (!$this->marked_at) {
+            return null;
+        }
+        return $this->marked_at->setTimezone('Asia/Shanghai')->format('H:i');
+    }
+
     /**
      * 序列化日期时使用东八区时区
      * 避免前端解析 UTC 时间后再次转换导致时间错误
      */
     protected function serializeDate(\DateTimeInterface $date): string
     {
-        return $date->setTimezone(new \DateTimeZone('Asia/Shanghai'))->format('Y-m-d H:i:s');
+        return \Carbon\Carbon::instance($date)->setTimezone('Asia/Shanghai')->format('Y-m-d H:i:s');
     }
 
     public function rollCall()

@@ -40,9 +40,11 @@ export default function RollCallOperationPage() {
 
     // Toggle student - only update local state (no network request)
     const toggleStudent = (studentId, isPresent) => {
+        const now = new Date();
+        const localTime = format(now, 'HH:mm');
         setRecords(prev => prev.map(r =>
             r.student_id === studentId
-                ? { ...r, status: isPresent ? 'present' : 'pending', marked_at: isPresent ? new Date().toISOString() : null }
+                ? { ...r, status: isPresent ? 'present' : 'pending', marked_at: isPresent ? now.toISOString() : null, marked_at_local: isPresent ? localTime : null }
                 : r
         ));
     };
@@ -55,9 +57,10 @@ export default function RollCallOperationPage() {
                 status: newStatus,
             });
             // Update local state
+            const now = new Date();
             setRecords(prev => prev.map(r =>
                 r.id === recordId
-                    ? { ...r, status: newStatus, marked_at: new Date().toISOString() }
+                    ? { ...r, status: newStatus, marked_at: now.toISOString(), marked_at_local: format(now, 'HH:mm') }
                     : r
             ));
             setEditingRecord(null);
@@ -70,9 +73,11 @@ export default function RollCallOperationPage() {
 
     // Mark all pending students as present - only update local state
     const markAllPresent = () => {
+        const now = new Date();
+        const localTime = format(now, 'HH:mm');
         setRecords(prev => prev.map(r =>
             r.status === 'pending'
-                ? { ...r, status: 'present', marked_at: new Date().toISOString() }
+                ? { ...r, status: 'present', marked_at: now.toISOString(), marked_at_local: localTime }
                 : r
         ));
     };
@@ -285,9 +290,9 @@ export default function RollCallOperationPage() {
                                         </div>
                                         <div>
                                             <div className="font-medium text-gray-900">{displayName}</div>
-                                            {isPresent && record.marked_at && (
+                                            {isPresent && record.marked_at_local && (
                                                 <div className="text-xs text-gray-400">
-                                                    签到于 {format(parseISO(record.marked_at), 'HH:mm')}
+                                                    签到于 {record.marked_at_local}
                                                 </div>
                                             )}
                                         </div>
