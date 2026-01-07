@@ -200,10 +200,13 @@ class AttendanceController extends Controller
         $lateLeaveType = \App\Models\LeaveType::where('slug', 'late')->first();
         $lateDisplayUnit = $lateLeaveType->display_unit ?? '次';
         if (isset($attendanceStats['late']) && $attendanceStats['late'] > 0) {
-            $latePeopleCount = $attendanceStats['late'];
-            $lateRecordCount = $attendanceQuery->clone()
+            // 人数：去重的学生数
+            $latePeopleCount = $attendanceQuery->clone()
                 ->where('status', 'late')
-                ->count();
+                ->distinct('student_id')
+                ->count('student_id');
+            // 记录数
+            $lateRecordCount = $attendanceStats['late'];
             $leaveStats['迟到'] = "{$latePeopleCount}人/{$lateRecordCount}{$lateDisplayUnit}";
         }
         
@@ -211,10 +214,13 @@ class AttendanceController extends Controller
         $earlyLeaveType = \App\Models\LeaveType::where('slug', 'early_leave')->first();
         $earlyDisplayUnit = $earlyLeaveType->display_unit ?? '次';
         if (isset($attendanceStats['early_leave']) && $attendanceStats['early_leave'] > 0) {
-            $earlyPeopleCount = $attendanceStats['early_leave'];
-            $earlyRecordCount = $attendanceQuery->clone()
+            // 人数：去重的学生数
+            $earlyPeopleCount = $attendanceQuery->clone()
                 ->where('status', 'early_leave')
-                ->count();
+                ->distinct('student_id')
+                ->count('student_id');
+            // 记录数
+            $earlyRecordCount = $attendanceStats['early_leave'];
             $leaveStats['早退'] = "{$earlyPeopleCount}人/{$earlyRecordCount}{$earlyDisplayUnit}";
         }
         
@@ -222,20 +228,23 @@ class AttendanceController extends Controller
         // 旷课来源有两种：
         // 1. status='absent' - 手动标记的旷课
         // 2. status='leave' + leave_type.slug='absent' + source_type='roll_call' - 点名产生的旷课
-        $absentPeopleCount = $attendanceStats['absent'] ?? 0;
+        $absentStudentIds = [];  // 收集所有旷课学生ID用于去重
         $absentPeriodCount = 0;
         
         // 查找旷课leave_type的ID
         $absenceLeaveType = \App\Models\LeaveType::where('slug', 'absent')->first();
         
         // 获取手动标记的旷课记录
-        if ($absentPeopleCount > 0) {
+        $manualAbsentCount = $attendanceStats['absent'] ?? 0;
+        if ($manualAbsentCount > 0) {
             $absentRecords = $attendanceQuery->clone()
                 ->where('status', 'absent')
-                ->get(['details']);
+                ->get(['student_id', 'details']);
             
-            // 统计总节次数
+            // 统计学生ID和总节次数
             foreach ($absentRecords as $record) {
+                $absentStudentIds[] = $record->student_id;
+                
                 $details = $record->details;
                 
                 // 如果 details 是字符串，解析为数组
@@ -269,15 +278,19 @@ class AttendanceController extends Controller
             $rollCallAbsents = $attendanceQuery->clone()
                 ->where('source_type', 'roll_call')
                 ->where('leave_type_id', $absenceLeaveType->id)
-                ->get();
+                ->get(['student_id']);
             
-            $rollCallAbsentStudents = $rollCallAbsents->pluck('student_id')->unique()->count();
+            foreach ($rollCallAbsents as $record) {
+                $absentStudentIds[] = $record->student_id;
+            }
             $rollCallAbsentCount = $rollCallAbsents->count();
             
-            // 合并统计
-            $absentPeopleCount += $rollCallAbsentStudents;
+            // 合并节次统计
             $absentPeriodCount += $rollCallAbsentCount;
         }
+        
+        // 人数：去重后的学生数
+        $absentPeopleCount = count(array_unique($absentStudentIds));
         
         // 显示格式：2人/6{单位}
         $absentDisplayUnit = $absenceLeaveType ? ($absenceLeaveType->display_unit ?? '节') : '节';
