@@ -7,6 +7,7 @@ use App\Models\AttendanceRecord;
 use App\Services\LeaveConflictService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Carbon\Carbon;
 use Illuminate\Validation\Rule;
 
@@ -62,27 +63,51 @@ class LeaveRequestController extends Controller
             $query->where('approval_status', $request->status);
         }
 
-        // Group by student_id, date, approval_status for list display
+        // 只获取有 leave_batch_id 的记录（新版请假申请）和无 batch_id 的旧记录
         $records = $query->orderBy('created_at', 'desc')->get();
         
-        // Group records into "requests" (by student + date + leave_type + approval_status)
+        // 按 leave_batch_id 分组（同一次申请的所有记录归为一组）
+        // 如果没有 batch_id（旧数据），则按 student_id + date + leave_type_id + approval_status 分组
         $groupedRequests = $records->groupBy(function($record) {
+            if ($record->leave_batch_id) {
+                return 'batch_' . $record->leave_batch_id;
+            }
+            // 兼容旧数据：按单日分组
             return $record->student_id . '_' . $record->date->format('Y-m-d') . '_' . $record->leave_type_id . '_' . $record->approval_status;
         })->map(function($group) {
             $first = $group->first();
+            $dates = $group->pluck('date')->sort();
+            $startDate = $dates->first();
+            $endDate = $dates->last();
+            $totalDays = $startDate->diffInDays($endDate) + 1;
+            
+            // 生成日期范围显示文本
+            $dateRangeText = $startDate->format('Y年m月d日');
+            if ($startDate->format('Y-m-d') !== $endDate->format('Y-m-d')) {
+                // 如果同年同月，只显示结束日期的日
+                if ($startDate->format('Y-m') === $endDate->format('Y-m')) {
+                    $dateRangeText .= '-' . $endDate->format('d日');
+                } else {
+                    $dateRangeText .= '-' . $endDate->format('m月d日');
+                }
+            }
+            
             return [
                 'id' => $first->id, // Use first record's id as request id
+                'leave_batch_id' => $first->leave_batch_id,
                 'student_id' => $first->student_id,
                 'student' => $first->student,
                 'class' => $first->class,
                 'class_id' => $first->class_id,
                 'type' => $first->leaveType?->slug ?? 'leave',
                 'leave_type' => $first->leaveType,
-                'start_date' => $first->date->format('Y-m-d'),
-                'end_date' => $group->max('date')->format('Y-m-d'),
+                'start_date' => $startDate->format('Y-m-d'),
+                'end_date' => $endDate->format('Y-m-d'),
+                'date_range_text' => $dateRangeText,
+                'total_days' => $totalDays,
                 'half_day' => $first->details['option'] ?? null,
                 'half_day_label' => $this->getOptionLabel($first),
-                'details' => $first->details, // 添加完整的 details 字段
+                'details' => $first->details,
                 'reason' => $first->reason,
                 'images' => $first->images,
                 'status' => $first->approval_status ?? 'approved',
@@ -259,6 +284,9 @@ class LeaveRequestController extends Controller
         $start = Carbon::parse($request->start_date);
         $end = Carbon::parse($request->end_date);
         $createdRecords = [];
+        
+        // 生成唯一的 batch_id，用于关联同一次请假申请的所有记录
+        $leaveBatchId = Str::uuid()->toString();
 
         DB::beginTransaction();
         try {
@@ -280,7 +308,8 @@ class LeaveRequestController extends Controller
                             'period_id' => $periodId,
                             'status' => 'leave',
                             'leave_type_id' => $leaveType?->id,
-                            'details' => !empty($details) ? $details : null, // Log this below
+                            'leave_batch_id' => $leaveBatchId, // 关联同一次申请
+                            'details' => !empty($details) ? $details : null,
                             'images' => !empty($images) ? $images : null,
                             'is_self_applied' => true,
                             'approval_status' => 'pending',
@@ -299,6 +328,7 @@ class LeaveRequestController extends Controller
                         'period_id' => null,
                         'status' => 'leave',
                         'leave_type_id' => $leaveType?->id,
+                        'leave_batch_id' => $leaveBatchId, // 关联同一次申请
                         'details' => !empty($details) ? $details : null,
                         'images' => !empty($images) ? $images : null,
                         'is_self_applied' => true,
@@ -332,6 +362,7 @@ class LeaveRequestController extends Controller
         
         return response()->json([
             'id' => $firstRecord?->id,
+            'leave_batch_id' => $leaveBatchId,
             'student_id' => $student->id,
             'type' => $request->type,
             'start_date' => $request->start_date,
@@ -368,13 +399,20 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Not your class'], 403);
         }
 
-        // Find all related records (same student, same date, same leave_type, same source)
-        $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
-            ->where('date', $record->date)
-            ->where('leave_type_id', $record->leave_type_id)
-            ->where('approval_status', 'pending')
-            ->where('is_self_applied', true)
-            ->get();
+        // 按 leave_batch_id 批量审批（如果有），否则按旧逻辑处理
+        if ($record->leave_batch_id) {
+            $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+                ->where('approval_status', 'pending')
+                ->get();
+        } else {
+            // 兼容旧数据：按单日分组
+            $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+                ->where('date', $record->date)
+                ->where('leave_type_id', $record->leave_type_id)
+                ->where('approval_status', 'pending')
+                ->where('is_self_applied', true)
+                ->get();
+        }
 
         foreach ($relatedRecords as $r) {
             $r->update([
@@ -407,13 +445,20 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Not your class'], 403);
         }
         
-        // Find and reject all related pending records (same leave_type)
-        $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
-            ->where('date', $record->date)
-            ->where('leave_type_id', $record->leave_type_id)
-            ->where('approval_status', 'pending')
-            ->where('is_self_applied', true)
-            ->get();
+        // 按 leave_batch_id 批量拒绝（如果有），否则按旧逻辑处理
+        if ($record->leave_batch_id) {
+            $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+                ->where('approval_status', 'pending')
+                ->get();
+        } else {
+            // 兼容旧数据
+            $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+                ->where('date', $record->date)
+                ->where('leave_type_id', $record->leave_type_id)
+                ->where('approval_status', 'pending')
+                ->where('is_self_applied', true)
+                ->get();
+        }
         
         foreach ($relatedRecords as $r) {
             $r->update([
@@ -423,9 +468,6 @@ class LeaveRequestController extends Controller
             ]);
         }
         
-        // Optionally delete rejected records
-        // AttendanceRecord::whereIn('id', $relatedRecords->pluck('id'))->delete();
-
         return response()->json(['message' => 'Rejected', 'rejected_count' => $relatedRecords->count()]);
     }
 
@@ -459,19 +501,26 @@ class LeaveRequestController extends Controller
              return response()->json(['error' => 'Unauthorized'], 403);   
         }
         
-        // Find and delete related records
-        // Match the group: student, date, leave_type, is_self_applied
-        $query = AttendanceRecord::where('student_id', $record->student_id)
-            ->where('date', $record->date)
-            ->where('leave_type_id', $record->leave_type_id)
-            ->where('is_self_applied', true);
+        // 按 leave_batch_id 批量删除（如果有），否则按旧逻辑处理
+        if ($record->leave_batch_id) {
+            $query = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id);
             
-        // If student, strictly only delete pending.
-        if ($user->role === 'student') {
-             $query->where('approval_status', 'pending');
+            // If student, strictly only delete pending.
+            if ($user->role === 'student') {
+                $query->where('approval_status', 'pending');
+            }
         } else {
-             // For teachers/admins, match the status of the target record to ensure we delete the correct group
-             $query->where('approval_status', $record->approval_status);
+            // 兼容旧数据
+            $query = AttendanceRecord::where('student_id', $record->student_id)
+                ->where('date', $record->date)
+                ->where('leave_type_id', $record->leave_type_id)
+                ->where('is_self_applied', true);
+                
+            if ($user->role === 'student') {
+                $query->where('approval_status', 'pending');
+            } else {
+                $query->where('approval_status', $record->approval_status);
+            }
         }
             
         $count = $query->count();

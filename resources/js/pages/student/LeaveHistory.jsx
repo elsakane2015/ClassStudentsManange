@@ -100,7 +100,8 @@ export default function LeaveHistory() {
                                             {getTypeLabel(leave)}
                                             <span className="text-gray-400 mx-2">•</span>
                                             <span className="text-gray-600">
-                                                {format(new Date(leave.start_date), 'yyyy-MM-dd')} 至 {format(new Date(leave.end_date), 'yyyy-MM-dd')}
+                                                {leave.date_range_text || `${format(new Date(leave.start_date), 'yyyy-MM-dd')} 至 ${format(new Date(leave.end_date), 'yyyy-MM-dd')}`}
+                                                {leave.total_days > 1 && ` (共${leave.total_days}天)`}
                                             </span>
                                         </div>
                                         <div className="text-sm text-gray-500">

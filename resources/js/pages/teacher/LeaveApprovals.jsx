@@ -89,7 +89,12 @@ export default function LeaveApprovals() {
                                     </div>
                                     <div className="mt-2 text-sm text-gray-700">
                                         <p>
-                                            日期: <span className="font-semibold">{format(new Date(request.start_date), 'MMM d, yyyy')}</span> - <span className="font-semibold">{format(new Date(request.end_date), 'MMM d, yyyy')}</span>
+                                            日期: <span className="font-semibold">
+                                                {request.date_range_text || `${format(new Date(request.start_date), 'yyyy年MM月dd日')} - ${format(new Date(request.end_date), 'yyyy年MM月dd日')}`}
+                                            </span>
+                                            {request.total_days > 1 && (
+                                                <span className="ml-2 text-gray-500">（共{request.total_days}天）</span>
+                                            )}
                                             {request.created_at && (
                                                 <span className="ml-3 text-gray-400">
                                                     提交于 {format(new Date(request.created_at), 'HH:mm')}
