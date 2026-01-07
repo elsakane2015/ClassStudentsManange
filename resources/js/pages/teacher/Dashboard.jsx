@@ -881,7 +881,10 @@ export default function TeacherDashboard() {
                                             let detailText = '';
 
                                             // 备注：显示节次或时段
-                                            if (record.period && record.period.period_number) {
+                                            // 优先使用后端返回的 period_names_display（已转换为节次名称）
+                                            if (record.period_names_display) {
+                                                remarkText = record.period_names_display;
+                                            } else if (record.period && record.period.period_number) {
                                                 remarkText = `第${record.period.period_number}节`;
                                             } else if (details) {
                                                 // 优先使用自定义显示标签（用户自定义选择节次时）
@@ -892,7 +895,14 @@ export default function TeacherDashboard() {
                                                     }
                                                 } else if (details.roll_call_type) {
                                                     remarkText = details.roll_call_type;
+                                                } else if (details.option_label) {
+                                                    remarkText = details.option_label;
+                                                } else if (details.time_slot_name) {
+                                                    remarkText = details.time_slot_name;
+                                                } else if (details.period_names && Array.isArray(details.period_names) && details.period_names.length > 0) {
+                                                    remarkText = details.period_names.join('、');
                                                 } else if (details.period_numbers && Array.isArray(details.period_numbers) && details.period_numbers.length > 0) {
+                                                    // fallback: 显示第X节（如果后端没返回名称）
                                                     remarkText = `第${details.period_numbers.join(',')}节`;
                                                 } else if (details.periods && Array.isArray(details.periods) && details.periods.length > 0) {
                                                     remarkText = `第${details.periods.join(',')}节`;

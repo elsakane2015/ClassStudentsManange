@@ -2331,6 +2331,64 @@ class AttendanceController extends Controller
             'student_id' => $studentId
         ]);
 
+        // 获取节次配置，用于转换ID/编号为名称
+        $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+        $periodsArray = json_decode($periodsConfig, true) ?: [];
+        
+        // 为每条记录添加 period_names_display 字段
+        $records = $records->map(function($record) use ($periodsArray) {
+            $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+            $periodNamesDisplay = null;
+            
+            if (is_array($details)) {
+                // 优先使用 period_names
+                if (isset($details['period_names']) && !empty($details['period_names'])) {
+                    $periodNamesDisplay = implode('、', $details['period_names']);
+                }
+                // 其次根据 periods ID 查询
+                elseif (isset($details['periods']) && !empty($details['periods'])) {
+                    $names = [];
+                    foreach ($details['periods'] as $periodId) {
+                        foreach ($periodsArray as $p) {
+                            if ((string)$p['id'] === (string)$periodId) {
+                                $names[] = $p['name'];
+                                break;
+                            }
+                        }
+                    }
+                    if (!empty($names)) {
+                        $periodNamesDisplay = implode('、', $names);
+                    }
+                }
+                // 再次根据 period_numbers 编号查询
+                elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
+                    $names = [];
+                    foreach ($details['period_numbers'] as $periodNum) {
+                        $index = (int)$periodNum - 1;
+                        if ($index >= 0 && $index < count($periodsArray)) {
+                            $names[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
+                        } else {
+                            $names[] = "第{$periodNum}节";
+                        }
+                    }
+                    $periodNamesDisplay = implode('、', $names);
+                }
+                // 尝试使用 option_label 或 display_label
+                elseif (isset($details['option_label']) && !empty($details['option_label'])) {
+                    $periodNamesDisplay = $details['option_label'];
+                }
+                elseif (isset($details['display_label']) && !empty($details['display_label'])) {
+                    $periodNamesDisplay = $details['display_label'];
+                }
+                elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
+                    $periodNamesDisplay = $details['time_slot_name'];
+                }
+            }
+            
+            $record->period_names_display = $periodNamesDisplay;
+            return $record;
+        });
+
         return response()->json($records);
     }
 
