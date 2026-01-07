@@ -1081,14 +1081,21 @@ class AttendanceController extends Controller
             if ($absentLessonsAsDay < 1) $absentLessonsAsDay = 6;
             if ($leaveLessonsAsDay < 1) $leaveLessonsAsDay = 6;
 
-            // Count full-day leaves (period_id is null, approved)
+            // Count full-day leaves (period_id is null AND no period_ids in details, approved)
             // Exclude: absent(旷课), late(迟到), early_leave(早退), health_leave/period_leave(生理假)
+            // Also exclude records that have period_ids in details (those are period-based, not full-day)
             $fullDayLeaveDates = $query->clone()
                 ->whereIn('status', ['leave', 'excused'])
                 ->whereNull('period_id')
                 ->where(function($q) {
                     $q->where('approval_status', 'approved')
                       ->orWhereNull('approval_status');
+                })
+                // Exclude records that have period_ids in details (these are period-based leaves stored differently)
+                ->where(function($q) {
+                    $q->whereNull('details')
+                      ->orWhereRaw("JSON_LENGTH(JSON_EXTRACT(details, '$.period_ids')) IS NULL")
+                      ->orWhereRaw("JSON_LENGTH(JSON_EXTRACT(details, '$.period_ids')) = 0");
                 })
                 // Exclude non-leave types
                 ->whereHas('leaveType', function($q) {
@@ -1098,8 +1105,8 @@ class AttendanceController extends Controller
                 ->pluck('date')
                 ->count();
 
-            // Count period-based leaves (period_id is NOT null, approved)
-            // These are partial-day leaves
+            // Count period-based leaves
+            // 1. Records with period_id NOT null (one record per period)
             $periodLeavePeriods = $query->clone()
                 ->whereIn('status', ['leave', 'excused'])
                 ->whereNotNull('period_id')
@@ -1112,6 +1119,29 @@ class AttendanceController extends Controller
                     $q->whereNotIn('slug', ['absent', 'late', 'early_leave', 'period_leave', 'health_leave']);
                 })
                 ->count();
+            
+            // 2. Records with period_id = null BUT period_ids in details (stored differently)
+            // Need to count the number of periods stored in details.period_ids
+            $detailsBasedLeaves = $query->clone()
+                ->whereIn('status', ['leave', 'excused'])
+                ->whereNull('period_id')
+                ->where(function($q) {
+                    $q->where('approval_status', 'approved')
+                      ->orWhereNull('approval_status');
+                })
+                ->whereRaw("JSON_LENGTH(JSON_EXTRACT(details, '$.period_ids')) > 0")
+                ->whereHas('leaveType', function($q) {
+                    $q->whereNotIn('slug', ['absent', 'late', 'early_leave', 'period_leave', 'health_leave']);
+                })
+                ->get();
+            
+            // Sum up period_ids counts from these records
+            foreach ($detailsBasedLeaves as $record) {
+                $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                if (isset($details['period_ids']) && is_array($details['period_ids'])) {
+                    $periodLeavePeriods += count($details['period_ids']);
+                }
+            }
 
             // Convert period leaves to days
             $leaveDaysFromPeriods = intval(floor($periodLeavePeriods / $leaveLessonsAsDay));
