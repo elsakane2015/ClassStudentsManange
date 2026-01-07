@@ -276,6 +276,39 @@ php artisan migrate --force
 mysql -h 数据库Host -u root -p数据库密码 default < /path/to/data.sql
 ```
 
+### 9.4 创建存储链接
+
+Laravel 需要创建符号链接才能访问上传的文件（如请假附件图片）：
+
+```bash
+cd /var/www/html
+php artisan storage:link
+```
+
+### 9.5 修复存储目录权限
+
+确保上传目录有正确的写入权限：
+
+```bash
+chown -R www-data:www-data /var/www/html/storage
+chmod -R 775 /var/www/html/storage
+```
+
+### 9.6 配置文件上传持久化（重要）
+
+⚠️ **每次重新部署容器，上传的文件会丢失！** 需要配置 Volume 持久化：
+
+1. 在应用的 **Storages** 标签页
+2. 点击 **+ Add** 添加存储卷
+3. 配置：
+   - **Volume Name**: `smart-campus-storage`
+   - **Source Path**: `/data/smart-campus/storage`（服务器路径）
+   - **Destination Path**: `/var/www/html/storage/app/public`（容器内路径）
+4. 点击 **Save**
+5. **重新部署**应用使配置生效
+
+配置后，上传的图片和文件会保存在服务器的 `/data/smart-campus/storage` 目录，重新部署也不会丢失。
+
 ---
 
 ## 10. 常见问题排查
@@ -379,6 +412,36 @@ mysql -h 数据库Host -u root -p数据库密码 default < /path/to/data.sql
 2. 添加 Volume:
    - Source: `/data/storage/smart-campus`
    - Destination: `/var/www/html/storage/app/public`
+
+### 10.7 上传的图片不显示
+
+**症状**: 请假时上传的附件图片显示为损坏的图标。
+
+**原因**: Storage 符号链接未创建，或目录权限不正确。
+
+**解决方案**:
+
+1. **进入容器**:
+   ```bash
+   docker exec -it 容器ID bash
+   cd /var/www/html
+   ```
+
+2. **创建存储链接**:
+   ```bash
+   php artisan storage:link
+   ```
+
+3. **修复权限**:
+   ```bash
+   chown -R www-data:www-data storage
+   chmod -R 775 storage
+   ```
+
+4. **清除缓存**:
+   ```bash
+   php artisan config:cache
+   ```
 
 ---
 
