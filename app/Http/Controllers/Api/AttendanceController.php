@@ -2299,9 +2299,11 @@ class AttendanceController extends Controller
         
         // Apply filter if specified
         if ($filterType === 'present') {
+            // 出勤：没有达到缺勤阈值的学生
             $result = $result->filter(fn($s) => $s['is_present']);
-        } elseif ($filterType === 'has_record') {
-            $result = $result->filter(fn($s) => $s['has_records']);
+        } elseif ($filterType === 'absent') {
+            // 缺勤：有达到缺勤阈值的学生
+            $result = $result->filter(fn($s) => !$s['is_present']);
         }
         
         // Get available departments and classes for filters

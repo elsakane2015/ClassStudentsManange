@@ -894,8 +894,8 @@ export default function TeacherDashboard() {
                                             }}
                                         >
                                             <option value="all">全部学生</option>
-                                            <option value="present">仅出勤（无缺勤记录）</option>
-                                            <option value="has_record">有考勤记录</option>
+                                            <option value="present">出勤</option>
+                                            <option value="absent">缺勤</option>
                                         </select>
 
                                         {/* 统计信息 */}
