@@ -207,7 +207,9 @@ export default function TeacherDashboard() {
                 isOpen: true,
                 title: `${title} - 加载中...`,
                 students: [],
-                type: status
+                type: status,
+                filters: null,
+                totalDays: 0
             });
 
             // 调用API获取详细数据
@@ -222,13 +224,25 @@ export default function TeacherDashboard() {
 
             console.log('[Detail Modal] API response:', response.data);
 
-            // 更新Modal数据
-            setDetailModal({
-                isOpen: true,
-                title: title,
-                students: response.data || [],
-                type: status
-            });
+            // 更新Modal数据 - 处理 present 状态的特殊格式
+            if (status === 'present' && response.data.students) {
+                setDetailModal({
+                    isOpen: true,
+                    title: title,
+                    students: response.data.students || [],
+                    type: status,
+                    filters: response.data.filters || null,
+                    totalDays: response.data.total_days || 0,
+                    userRole: response.data.user_role
+                });
+            } else {
+                setDetailModal({
+                    isOpen: true,
+                    title: title,
+                    students: response.data || [],
+                    type: status
+                });
+            }
         } catch (error) {
             console.error('Failed to fetch details:', error);
             setDetailModal({
@@ -804,9 +818,16 @@ export default function TeacherDashboard() {
                                                         )}
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
                                                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
-                                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                            {scope === 'today' ? '详情' : '次数'}
-                                                        </th>
+                                                        {detailModal.type === 'present' ? (
+                                                            <>
+                                                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">出勤天数</th>
+                                                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">出勤率</th>
+                                                            </>
+                                                        ) : (
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                                {scope === 'today' ? '详情' : '次数'}
+                                                            </th>
+                                                        )}
                                                     </tr>
                                                 </thead>
                                                 <tbody className="bg-white divide-y divide-gray-200">
@@ -817,16 +838,19 @@ export default function TeacherDashboard() {
                                                         return (
                                                             <tr
                                                                 key={index}
-                                                                onClick={() => handleStudentClick(student)}
+                                                                onClick={() => detailModal.type === 'present'
+                                                                    ? handleStudentNameClick({ id: student.id, name: student.name, student_no: student.student_no })
+                                                                    : handleStudentClick(student)
+                                                                }
                                                                 className="hover:bg-gray-50 cursor-pointer transition-colors"
                                                             >
                                                                 {/* 系部列 */}
                                                                 {['system_admin', 'school_admin', 'admin'].includes(user?.role) && (
-                                                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{student.department || '-'}</td>
+                                                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{student.department_name || student.department || '-'}</td>
                                                                 )}
                                                                 {/* 班级列 */}
                                                                 {['system_admin', 'school_admin', 'admin', 'department_manager', 'manager'].includes(user?.role) && (
-                                                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{student.class || '-'}</td>
+                                                                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{student.class_name || student.class || '-'}</td>
                                                                 )}
                                                                 <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
                                                                     {student.student_no || 'N/A'}
@@ -834,17 +858,33 @@ export default function TeacherDashboard() {
                                                                 <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                                                     {student.name || '-'}
                                                                 </td>
-                                                                <td className="px-4 py-4 text-sm">
-                                                                    {scope === 'today' ? (
-                                                                        <span className="text-gray-700">
-                                                                            {student.detail || '-'}
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
-                                                                            {recordCount}次
-                                                                        </span>
-                                                                    )}
-                                                                </td>
+                                                                {detailModal.type === 'present' ? (
+                                                                    <>
+                                                                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-700">
+                                                                            {student.present_days}/{student.total_days}天
+                                                                        </td>
+                                                                        <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
+                                                                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${student.attendance_rate >= 95 ? 'bg-green-100 text-green-800' :
+                                                                                    student.attendance_rate >= 80 ? 'bg-yellow-100 text-yellow-800' :
+                                                                                        'bg-red-100 text-red-800'
+                                                                                }`}>
+                                                                                {student.attendance_rate}%
+                                                                            </span>
+                                                                        </td>
+                                                                    </>
+                                                                ) : (
+                                                                    <td className="px-4 py-4 text-sm">
+                                                                        {scope === 'today' ? (
+                                                                            <span className="text-gray-700">
+                                                                                {student.detail || '-'}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                                                                                {recordCount}次
+                                                                            </span>
+                                                                        )}
+                                                                    </td>
+                                                                )}
                                                             </tr>
                                                         );
                                                     })}
