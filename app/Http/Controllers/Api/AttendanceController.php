@@ -2059,6 +2059,112 @@ class AttendanceController extends Controller
     }
 
     /**
+     * Get attendance details for 'present' status card
+     * Returns all students with their attendance count and rate
+     */
+    private function getAttendanceDetails($request, $classIds, $dateRange, $scope, $filterType = null)
+    {
+        $user = $request->user();
+        
+        // Get absence threshold
+        $absentThreshold = (int) (\App\Models\SystemSetting::where('key', 'absent_lessons_as_day')->value('value') ?? 6);
+        
+        // Get all students in the classes
+        $students = \App\Models\Student::whereIn('class_id', $classIds)
+            ->with(['user', 'schoolClass.department'])
+            ->orderBy('student_no')
+            ->get();
+        
+        // Get all active dates in the range (dates with any attendance records)
+        $activeDates = \DB::table('attendance_records')
+            ->whereIn('class_id', $classIds)
+            ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
+            ->distinct('date')
+            ->pluck('date');
+        
+        $totalDays = $activeDates->count();
+        
+        // Get absence records grouped by student and date
+        $absenceData = \DB::table('attendance_records')
+            ->whereIn('class_id', $classIds)
+            ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
+            ->whereIn('status', ['absent', 'leave', 'excused'])
+            ->select('student_id', 'date', \DB::raw('COUNT(*) as period_count'))
+            ->groupBy('student_id', 'date')
+            ->having('period_count', '>=', $absentThreshold)
+            ->get();
+        
+        // Calculate absent days per student
+        $absentDaysByStudent = $absenceData->groupBy('student_id')->map->count();
+        
+        // Get any attendance record count per student (for "has_record" filter)
+        $recordsByStudent = \DB::table('attendance_records')
+            ->whereIn('class_id', $classIds)
+            ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
+            ->select('student_id', \DB::raw('COUNT(*) as record_count'))
+            ->groupBy('student_id')
+            ->pluck('record_count', 'student_id');
+        
+        // Build result
+        $result = $students->map(function($student) use ($totalDays, $absentDaysByStudent, $recordsByStudent, $user) {
+            $absentDays = $absentDaysByStudent->get($student->id, 0);
+            $presentDays = max(0, $totalDays - $absentDays);
+            $attendanceRate = $totalDays > 0 ? round(($presentDays / $totalDays) * 100, 1) : 100;
+            $hasRecords = $recordsByStudent->get($student->id, 0) > 0;
+            
+            $data = [
+                'id' => $student->id,
+                'student_no' => $student->student_no,
+                'name' => $student->user->name ?? '未知',
+                'class_name' => $student->schoolClass->name ?? '-',
+                'department_name' => $student->schoolClass->department->name ?? '-',
+                'present_days' => $presentDays,
+                'total_days' => $totalDays,
+                'attendance_rate' => $attendanceRate,
+                'is_present' => $absentDays == 0, // No absent days = fully present
+                'has_records' => $hasRecords,
+            ];
+            
+            return $data;
+        });
+        
+        // Apply filter if specified
+        if ($filterType === 'present') {
+            $result = $result->filter(fn($s) => $s['is_present']);
+        } elseif ($filterType === 'has_record') {
+            $result = $result->filter(fn($s) => $s['has_records']);
+        }
+        
+        // Get available departments and classes for filters
+        $availableDepartments = [];
+        $availableClasses = [];
+        
+        if (in_array($user->role, ['system_admin', 'school_admin', 'admin'])) {
+            $availableDepartments = \App\Models\Department::select('id', 'name')->get();
+            $availableClasses = \App\Models\SchoolClass::whereIn('id', $classIds)
+                ->select('id', 'name', 'department_id')
+                ->with('department:id,name')
+                ->get();
+        } elseif (in_array($user->role, ['department_manager', 'manager'])) {
+            $deptIds = $user->managedDepartments->pluck('id');
+            $availableClasses = \App\Models\SchoolClass::whereIn('department_id', $deptIds)
+                ->select('id', 'name', 'department_id')
+                ->with('department:id,name')
+                ->get();
+        }
+        
+        return response()->json([
+            'students' => $result->values(),
+            'total_days' => $totalDays,
+            'filters' => [
+                'departments' => $availableDepartments,
+                'classes' => $availableClasses,
+            ],
+            'user_role' => $user->role,
+        ]);
+    }
+
+    /**
      * Get detailed student list for a specific status type and time scope
      */
     public function details(Request $request)
@@ -2072,6 +2178,11 @@ class AttendanceController extends Controller
         $status = $request->input('status');
         $leaveTypeId = $request->input('leave_type_id');
         $semesterId = $request->input('semester_id');
+        
+        // Optional filters for present status
+        $departmentId = $request->input('department_id');
+        $classId = $request->input('class_id');
+        $filterType = $request->input('filter_type'); // 'all', 'present', 'has_record'
 
         // Get date range based on scope and optional semester_id
         $dateRange = $this->getDateRangeForScope($scope, $semesterId);
@@ -2086,6 +2197,19 @@ class AttendanceController extends Controller
             $classIds = \App\Models\SchoolClass::pluck('id');
         } else {
             return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        
+        // Apply optional filters
+        if ($classId) {
+            $classIds = collect([$classId])->intersect($classIds);
+        } elseif ($departmentId) {
+            $deptClassIds = \App\Models\SchoolClass::where('department_id', $departmentId)->pluck('id');
+            $classIds = $classIds->intersect($deptClassIds);
+        }
+
+        // Special handling for status='present' - attendance list
+        if ($status === 'present') {
+            return $this->getAttendanceDetails($request, $classIds, $dateRange, $scope, $filterType);
         }
 
         // For 'absent' status, we need to include roll_call source records with leave_type.slug='absent'
