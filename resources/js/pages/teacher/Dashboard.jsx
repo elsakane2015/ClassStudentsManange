@@ -50,6 +50,13 @@ export default function TeacherDashboard() {
         records: []
     });
 
+    // 出勤详情筛选状态
+    const [attendanceFilters, setAttendanceFilters] = useState({
+        departmentId: '',
+        classId: '',
+        filterType: 'all' // 'all', 'present', 'has_record'
+    });
+
     const toggleDept = (id) => {
         setExpandedDepts(prev => ({ ...prev, [id]: !prev[id] }));
     };
@@ -202,6 +209,9 @@ export default function TeacherDashboard() {
     // 处理统计卡片点击
     const handleStatCardClick = async (title, status, leaveTypeId = null) => {
         try {
+            // 重置筛选状态
+            setAttendanceFilters({ departmentId: '', classId: '', filterType: 'all' });
+
             // 显示加载状态
             setDetailModal({
                 isOpen: true,
@@ -251,6 +261,35 @@ export default function TeacherDashboard() {
                 students: [],
                 type: status
             });
+        }
+    };
+
+    // 刷新出勤详情（带筛选参数）
+    const refreshAttendanceDetails = async (filters = {}) => {
+        if (detailModal.type !== 'present') return;
+
+        try {
+            const response = await axios.get('/attendance/details', {
+                params: {
+                    scope: scope,
+                    status: 'present',
+                    semester_id: selectedSemester || undefined,
+                    department_id: filters.departmentId || undefined,
+                    class_id: filters.classId || undefined,
+                    filter_type: filters.filterType || undefined
+                }
+            });
+
+            if (response.data.students) {
+                setDetailModal(prev => ({
+                    ...prev,
+                    students: response.data.students || [],
+                    filters: response.data.filters || null,
+                    totalDays: response.data.total_days || 0
+                }));
+            }
+        } catch (error) {
+            console.error('Failed to refresh attendance details:', error);
         }
     };
 
@@ -802,6 +841,70 @@ export default function TeacherDashboard() {
                                     </button>
                                 </div>
 
+                                {/* 筛选区域 - 仅出勤详情显示 */}
+                                {detailModal.type === 'present' && detailModal.filters && (
+                                    <div className="flex flex-wrap gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+                                        {/* 系部筛选 - 仅校管可见 */}
+                                        {['system_admin', 'school_admin', 'admin'].includes(user?.role) && detailModal.filters.departments?.length > 0 && (
+                                            <select
+                                                className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                value={attendanceFilters.departmentId}
+                                                onChange={(e) => {
+                                                    const newFilters = { ...attendanceFilters, departmentId: e.target.value, classId: '' };
+                                                    setAttendanceFilters(newFilters);
+                                                    refreshAttendanceDetails(newFilters);
+                                                }}
+                                            >
+                                                <option value="">全部系部</option>
+                                                {detailModal.filters.departments.map(d => (
+                                                    <option key={d.id} value={d.id}>{d.name}</option>
+                                                ))}
+                                            </select>
+                                        )}
+
+                                        {/* 班级筛选 - 系管+校管可见 */}
+                                        {['system_admin', 'school_admin', 'admin', 'department_manager', 'manager'].includes(user?.role) && detailModal.filters.classes?.length > 0 && (
+                                            <select
+                                                className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                value={attendanceFilters.classId}
+                                                onChange={(e) => {
+                                                    const newFilters = { ...attendanceFilters, classId: e.target.value };
+                                                    setAttendanceFilters(newFilters);
+                                                    refreshAttendanceDetails(newFilters);
+                                                }}
+                                            >
+                                                <option value="">全部班级</option>
+                                                {detailModal.filters.classes
+                                                    .filter(c => !attendanceFilters.departmentId || c.department_id == attendanceFilters.departmentId)
+                                                    .map(c => (
+                                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                                    ))
+                                                }
+                                            </select>
+                                        )}
+
+                                        {/* 状态筛选 */}
+                                        <select
+                                            className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            value={attendanceFilters.filterType}
+                                            onChange={(e) => {
+                                                const newFilters = { ...attendanceFilters, filterType: e.target.value };
+                                                setAttendanceFilters(newFilters);
+                                                refreshAttendanceDetails(newFilters);
+                                            }}
+                                        >
+                                            <option value="all">全部学生</option>
+                                            <option value="present">仅出勤（无缺勤记录）</option>
+                                            <option value="has_record">有考勤记录</option>
+                                        </select>
+
+                                        {/* 统计信息 */}
+                                        <span className="ml-auto text-sm text-gray-500 self-center">
+                                            统计天数: {detailModal.totalDays}天
+                                        </span>
+                                    </div>
+                                )}
+
                                 <div className="mt-4">
                                     {detailModal.students.length > 0 ? (
                                         <div className="overflow-x-auto">
@@ -865,8 +968,8 @@ export default function TeacherDashboard() {
                                                                         </td>
                                                                         <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
                                                                             <span className={`px-2 py-1 text-xs font-medium rounded-full ${student.attendance_rate >= 95 ? 'bg-green-100 text-green-800' :
-                                                                                    student.attendance_rate >= 80 ? 'bg-yellow-100 text-yellow-800' :
-                                                                                        'bg-red-100 text-red-800'
+                                                                                student.attendance_rate >= 80 ? 'bg-yellow-100 text-yellow-800' :
+                                                                                    'bg-red-100 text-red-800'
                                                                                 }`}>
                                                                                 {student.attendance_rate}%
                                                                             </span>
