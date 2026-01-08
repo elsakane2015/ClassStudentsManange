@@ -475,16 +475,42 @@ class AttendanceController extends Controller
                 return collect($records)->pluck('student_id')->unique()->count();
             });
             
-            // 获取有考勤活动的日期（只统计有记录的工作日）
-            $activeDates = \DB::table('attendance_records')
-                ->whereIn('class_id', $classIds)
-                ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
-                ->distinct('date')
-                ->pluck('date');
+            // 获取假日配置
+            $holidays = [];
+            if ($semester && $semester->holidays) {
+                $holidays = is_string($semester->holidays) 
+                    ? json_decode($semester->holidays, true) ?? []
+                    : $semester->holidays ?? [];
+            }
             
-            $totalDays = $activeDates->count();
+            // 计算工作日函数
+            $countWorkingDays = function($start, $end) use ($holidays) {
+                if (!$start || !$end) return 0;
+                $count = 0;
+                $current = \Carbon\Carbon::parse($start)->startOfDay();
+                $endDate = \Carbon\Carbon::parse($end)->endOfDay();
+                $maxDays = 400;
+                $dayCount = 0;
+                while ($current <= $endDate && $dayCount < $maxDays) {
+                    $dayOfWeek = $current->dayOfWeek;
+                    if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
+                        $dateStr = $current->format('Y-m-d');
+                        if (!in_array($dateStr, $holidays)) {
+                            $count++;
+                        }
+                    }
+                    $current->addDay();
+                    $dayCount++;
+                }
+                return $count;
+            };
+            
+            // 计算到今天为止的工作日天数
+            $actualEndDate = min($endDate, now()->format('Y-m-d'));
+            $totalDays = $countWorkingDays($startDate, $actualEndDate);
+            
             if ($totalDays > 0) {
-                // 总应出勤人天数 = 总人数 × 有考勤活动的天数
+                // 总应出勤人天数 = 总人数 × 工作日天数
                 $totalPersonDays = $totalStudents * $totalDays;
                 
                 // 出勤人天数 = 总应出勤人天数 - 缺勤人天数
@@ -2180,20 +2206,53 @@ class AttendanceController extends Controller
         // Get absence threshold
         $absentThreshold = (int) (\App\Models\SystemSetting::where('key', 'absent_lessons_as_day')->value('value') ?? 6);
         
+        // Get semester for holiday calendar
+        $semesterId = $request->input('semester_id');
+        $semester = $semesterId 
+            ? \App\Models\Semester::find($semesterId) 
+            : \App\Models\Semester::where('is_current', true)->first();
+        
+        // Get holidays from semester
+        $holidays = [];
+        if ($semester && $semester->holidays) {
+            $holidays = is_string($semester->holidays) 
+                ? json_decode($semester->holidays, true) ?? []
+                : $semester->holidays ?? [];
+        }
+        
+        // Helper function to count working days in a range
+        $countWorkingDays = function($start, $end) use ($holidays) {
+            if (!$start || !$end) return 0;
+            $count = 0;
+            $current = \Carbon\Carbon::parse($start)->startOfDay();
+            $endDate = \Carbon\Carbon::parse($end)->endOfDay();
+            $maxDays = 400;
+            $dayCount = 0;
+            while ($current <= $endDate && $dayCount < $maxDays) {
+                $dayOfWeek = $current->dayOfWeek;
+                // Skip weekends (0=Sunday, 6=Saturday)
+                if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
+                    $dateStr = $current->format('Y-m-d');
+                    // Skip holidays from semester config
+                    if (!in_array($dateStr, $holidays)) {
+                        $count++;
+                    }
+                }
+                $current->addDay();
+                $dayCount++;
+            }
+            return $count;
+        };
+        
         // Get all students in the classes
         $students = \App\Models\Student::whereIn('class_id', $classIds)
             ->with(['user', 'schoolClass.department'])
             ->orderBy('student_no')
             ->get();
         
-        // Get all active dates in the range (dates with any attendance records)
-        $activeDates = \DB::table('attendance_records')
-            ->whereIn('class_id', $classIds)
-            ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
-            ->distinct('date')
-            ->pluck('date');
-        
-        $totalDays = $activeDates->count();
+        // Calculate total working days in the scope (截至今天)
+        $endDate = min($dateRange['end'], now()->format('Y-m-d'));
+        $totalDays = $countWorkingDays($dateRange['start'], $endDate);
         
         // Get all period_id = NULL absence records
         $nullPeriodRecords = \DB::table('attendance_records')
