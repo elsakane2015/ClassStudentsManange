@@ -294,7 +294,39 @@ chown -R www-data:www-data /var/www/html/storage
 chmod -R 775 /var/www/html/storage
 ```
 
-### 9.6 配置文件上传持久化（重要）
+### 9.6 清除应用缓存
+
+每次部署新代码后，建议清除 Laravel 缓存以确保新功能生效：
+
+```bash
+cd /var/www/html
+php artisan optimize:clear
+```
+
+成功执行后会显示：
+```
+Compiled views cleared successfully.
+Application cache cleared successfully.
+Route cache cleared successfully.
+Configuration cache cleared successfully.
+Compiled services and packages cleared successfully.
+Caches cleared successfully.
+```
+
+**也可以在容器外一条命令执行**：
+```bash
+docker exec -it 容器ID php artisan optimize:clear --chdir=/var/www/html
+```
+
+**何时需要清除缓存**：
+| 修改类型 | 是否需要 | 命令 |
+|---------|---------|------|
+| PHP 控制器/模型代码 | 建议执行 | `optimize:clear` |
+| 路由文件 (api.php/web.php) | 需要 | `route:clear` |
+| 配置文件 (.env) | 需要 | `config:clear` |
+| 前端代码 (JSX/JS) | 需要重新构建 | 自动执行 `npm run build` |
+
+### 9.7 配置文件上传持久化（重要）
 
 ⚠️ **每次重新部署容器，上传的文件会丢失！** 需要配置 Volume 持久化：
 
