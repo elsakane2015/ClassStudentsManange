@@ -306,6 +306,12 @@ class AttendanceController extends Controller
         $early = $attendanceStats['early_leave'] ?? 0;
         $effectiveAttendance = $present + $late + $early;
         
+        // 今日出勤人数：有 present/late/early_leave 状态的去重学生数
+        $presentStudentsCount = $attendanceQuery->clone()
+            ->whereIn('status', ['present', 'late', 'early_leave'])
+            ->distinct('student_id')
+            ->count('student_id');
+        
         // Period-based statistics (时段统计)
         $periodStats = $attendanceQuery->clone()
             ->whereNotNull('period_id')
@@ -330,6 +336,7 @@ class AttendanceController extends Controller
             'department_total_students' => $departmentTotalStudents,
             'class_total_students' => $classTotalStudents,
             'present_count' => $effectiveAttendance,
+            'present_students_count' => $presentStudentsCount, // 今日出勤人数
             'pending_requests' => $pendingRequests,
             'scope' => $scope,
             'details' => [

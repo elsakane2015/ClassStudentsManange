@@ -31,6 +31,7 @@ export default function TeacherDashboard() {
     const [dashboardConfig, setDashboardConfig] = useState({
         show_pending_approval: true,
         show_student_count: true,
+        show_present_count: true, // 今日出勤
         show_all_leave_types: true
     });
 
@@ -505,7 +506,27 @@ export default function TeacherDashboard() {
                                         />
                                     )}
 
-                                    {/* 2. Pending Requests - 仅有审批权限的用户显示 */}
+                                    {/* 2. Today's Attendance - 今日出勤人数/总人数 */}
+                                    {dashboardConfig.show_present_count && (
+                                        <StatCard
+                                            title={`${scopeLabels[scope]}出勤`}
+                                            value={`${stats.present_students_count || 0}/${stats.class_total_students || stats.department_total_students || stats.total_students || 0}`}
+                                            subtitle="出勤人数/总人数"
+                                            icon={
+                                                <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                            }
+                                            color="bg-green-500"
+                                            onClick={(stats.present_students_count > 0) ? () => handleStatCardClick(
+                                                `${scopeLabels[scope]}出勤`,
+                                                'present',
+                                                null
+                                            ) : null}
+                                        />
+                                    )}
+
+                                    {/* 3. Pending Requests - 仅有审批权限的用户显示 */}
                                     {canApproveLeave && dashboardConfig.show_pending_approval && (
                                         <StatCard
                                             title="待审批"

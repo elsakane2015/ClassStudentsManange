@@ -13,8 +13,8 @@ export default function AttendanceSettings() {
     // Dashboard stats config
     const [dashboardConfig, setDashboardConfig] = useState({
         student: { show_my_pending: true, show_normal_attendance: true, show_all_leave_types: true },
-        class_admin: { show_pending_approval: true, show_student_count: true, show_all_leave_types: true },
-        school_admin: { show_pending_approval: true, show_student_count: true, show_all_leave_types: true },
+        class_admin: { show_pending_approval: true, show_student_count: true, show_present_count: true, show_all_leave_types: true },
+        school_admin: { show_pending_approval: true, show_student_count: true, show_present_count: true, show_all_leave_types: true },
     });
     const [leaveTypes, setLeaveTypes] = useState([]);
 
@@ -315,6 +315,18 @@ export default function AttendanceSettings() {
                             <label className="flex items-center">
                                 <input
                                     type="checkbox"
+                                    checked={dashboardConfig.class_admin?.show_present_count ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        class_admin: { ...prev.class_admin, show_present_count: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">今日出勤</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
                                     checked={dashboardConfig.class_admin?.show_all_leave_types ?? true}
                                     onChange={(e) => setDashboardConfig(prev => ({
                                         ...prev,
@@ -357,6 +369,18 @@ export default function AttendanceSettings() {
                                     className="rounded border-gray-300 text-indigo-600 mr-2"
                                 />
                                 <span className="text-sm">学生总数</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.school_admin?.show_present_count ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        school_admin: { ...prev.school_admin, show_present_count: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">今日出勤</span>
                             </label>
                             <label className="flex items-center">
                                 <input
