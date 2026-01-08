@@ -315,20 +315,31 @@ class AttendanceController extends Controller
         $attendanceRate = 0;
         
         if ($scope === 'today') {
-            // 今日：统计缺勤人数（旷课或请假节数 >= 阈值的学生）
+            // 今日：统计缺勤人数（旷课或请假节数 >= 阈值的学生，或有全天假的学生）
             $today = now()->format('Y-m-d');
             
-            // 获取今日有缺勤记录的学生及其节数
-            $absentStudents = \DB::table('attendance_records')
+            // 方式1：有全天假的学生（period_id IS NULL 表示全天）直接算缺勤
+            $fullDayAbsentStudents = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->where('date', $today)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
+                ->whereNull('period_id')
+                ->distinct('student_id')
+                ->pluck('student_id');
+            
+            // 方式2：分节假累计达到阈值的学生
+            $periodAbsentStudents = \DB::table('attendance_records')
+                ->whereIn('class_id', $classIds)
+                ->where('date', $today)
+                ->whereIn('status', ['absent', 'leave', 'excused'])
+                ->whereNotNull('period_id')
                 ->select('student_id', \DB::raw('COUNT(*) as period_count'))
                 ->groupBy('student_id')
                 ->having('period_count', '>=', $absentThreshold)
-                ->pluck('student_id')
-                ->unique()
-                ->count();
+                ->pluck('student_id');
+            
+            // 合并两种缺勤学生（去重）
+            $absentStudents = $fullDayAbsentStudents->merge($periodAbsentStudents)->unique()->count();
             
             $presentStudentsCount = max(0, $totalStudents - $absentStudents);
         } else {
@@ -352,17 +363,35 @@ class AttendanceController extends Controller
             }
             
             // 统计每天的缺勤人数，计算出勤人天数
-            $dailyAbsences = \DB::table('attendance_records')
+            // 方式1：全天假（period_id IS NULL）
+            $fullDayAbsences = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
                 ->whereIn('status', ['absent', 'leave', 'excused'])
+                ->whereNull('period_id')
+                ->select('date', 'student_id')
+                ->distinct()
+                ->get();
+            
+            // 方式2：分节假累计达到阈值
+            $periodAbsences = \DB::table('attendance_records')
+                ->whereIn('class_id', $classIds)
+                ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
+                ->whereIn('status', ['absent', 'leave', 'excused'])
+                ->whereNotNull('period_id')
                 ->select('date', 'student_id', \DB::raw('COUNT(*) as period_count'))
                 ->groupBy('date', 'student_id')
                 ->having('period_count', '>=', $absentThreshold)
                 ->get();
             
-            // 计算每天缺勤人数
-            $absentByDate = $dailyAbsences->groupBy('date')->map->count();
+            // 合并并计算每天缺勤人数
+            $allAbsences = $fullDayAbsences->map(fn($r) => ['date' => $r->date, 'student_id' => $r->student_id])
+                ->merge($periodAbsences->map(fn($r) => ['date' => $r->date, 'student_id' => $r->student_id]));
+            
+            // 按日期分组，统计每天的唯一缺勤学生数
+            $absentByDate = collect($allAbsences)->groupBy('date')->map(function($records) {
+                return collect($records)->pluck('student_id')->unique()->count();
+            });
             
             // 获取有考勤活动的日期（只统计有记录的工作日）
             $activeDates = \DB::table('attendance_records')
@@ -2084,18 +2113,35 @@ class AttendanceController extends Controller
         
         $totalDays = $activeDates->count();
         
-        // Get absence records grouped by student and date
-        $absenceData = \DB::table('attendance_records')
+        // Get full-day absence records (period_id IS NULL)
+        $fullDayAbsences = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
             ->whereIn('status', ['absent', 'leave', 'excused'])
+            ->whereNull('period_id')
+            ->select('student_id', 'date')
+            ->distinct()
+            ->get();
+        
+        // Get period-based absence records that meet threshold
+        $periodAbsences = \DB::table('attendance_records')
+            ->whereIn('class_id', $classIds)
+            ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
+            ->whereIn('status', ['absent', 'leave', 'excused'])
+            ->whereNotNull('period_id')
             ->select('student_id', 'date', \DB::raw('COUNT(*) as period_count'))
             ->groupBy('student_id', 'date')
             ->having('period_count', '>=', $absentThreshold)
             ->get();
         
-        // Calculate absent days per student
-        $absentDaysByStudent = $absenceData->groupBy('student_id')->map->count();
+        // Merge and calculate absent days per student
+        $allAbsences = $fullDayAbsences->map(fn($r) => ['student_id' => $r->student_id, 'date' => $r->date])
+            ->merge($periodAbsences->map(fn($r) => ['student_id' => $r->student_id, 'date' => $r->date]));
+        
+        // Calculate absent days per student (unique student-date combinations)
+        $absentDaysByStudent = $allAbsences->groupBy('student_id')->map(function($records) {
+            return $records->pluck('date')->unique()->count();
+        });
         
         // Get any attendance record count per student (for "has_record" filter)
         $recordsByStudent = \DB::table('attendance_records')
