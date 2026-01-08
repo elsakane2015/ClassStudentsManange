@@ -359,6 +359,42 @@ class RollCallController extends Controller
             'records.leaveType',
         ]);
 
+        // 动态检查：遍历每个点名记录，检查是否有新的考勤标记
+        // 这样即使在点名开始后才进行考勤标记，刷新点名界面时也能正确显示
+        $rollCallTime = $rollCall->roll_call_time;
+        $rollCallType = $rollCall->rollCallType;
+        
+        foreach ($rollCall->records as $record) {
+            // 只检查非 on_leave 状态的记录（on_leave 已经是请假状态，无需再检查）
+            if ($record->status !== 'on_leave') {
+                $student = $record->student;
+                if ($student) {
+                    $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime, $rollCallType);
+                    
+                    if ($leaveInfo) {
+                        // 有新的考勤标记，更新点名记录状态
+                        $record->update([
+                            'status' => 'on_leave',
+                            'leave_type_id' => $leaveInfo['leave_type_id'] ?? null,
+                            'leave_detail' => $leaveInfo['detail'] ?? null,
+                            'leave_status' => $leaveInfo['status'] ?? null,
+                        ]);
+                        
+                        // 同时更新内存中的数据，确保返回正确的状态
+                        $record->status = 'on_leave';
+                        $record->leave_detail = $leaveInfo['detail'] ?? null;
+                        $record->leave_status = $leaveInfo['status'] ?? null;
+                    }
+                }
+            }
+        }
+        
+        // 更新请假人数统计
+        $onLeaveCount = $rollCall->records->where('status', 'on_leave')->count();
+        if ($rollCall->on_leave_count !== $onLeaveCount) {
+            $rollCall->update(['on_leave_count' => $onLeaveCount]);
+        }
+
         // Determine if current user can modify records
         $canModifyRecords = false;
         
