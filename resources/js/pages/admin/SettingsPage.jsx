@@ -235,6 +235,11 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
             // 使用动态选项，保存完整的 {key, label} 对象
             const options = durationOptions.filter(opt => opt.key && opt.label);
             finalConfig = { options };
+        } else if (inputType === 'text') {
+            finalConfig = {
+                label: formData.get('config_text_label') || '去向说明',
+                placeholder: formData.get('config_text_placeholder') || '请输入说明...'
+            };
         }
 
         // Remove temp config fields from data if needed, or just overwrite input_config
@@ -299,6 +304,7 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
                             <option value="time">时间点 (Time)</option>
                             <option value="period_select">节次选择 (Periods)</option>
                             <option value="duration_select">时长选择 (Duration)</option>
+                            <option value="text">文本输入 (Text)</option>
                         </select>
                     </div>
 
@@ -379,6 +385,32 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
                                     {durationOptions.length === 0 && (
                                         <p className="text-xs text-gray-400">暂无选项，点击"添加选项"开始配置</p>
                                     )}
+                                </div>
+                            </div>
+                        )}
+                        {inputType === 'text' && (
+                            <div>
+                                <label className="text-xs text-gray-500 mb-2 block">文本输入配置</label>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-xs text-gray-500">提示文字（标签）</label>
+                                        <input
+                                            name="config_text_label"
+                                            defaultValue={config.label || '去向说明'}
+                                            className="input-field"
+                                            placeholder="去向说明"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-500">占位符提示</label>
+                                        <input
+                                            name="config_text_placeholder"
+                                            defaultValue={config.placeholder || '请输入说明...'}
+                                            className="input-field"
+                                            placeholder="请输入说明..."
+                                        />
+                                    </div>
+                                    <p className="text-xs text-gray-400">考勤标记时将显示一个文本输入框，让老师输入学生去向说明</p>
                                 </div>
                             </div>
                         )}

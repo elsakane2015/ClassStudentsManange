@@ -586,6 +586,14 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
 
                 detailText = `(${optionLabel})`;
             }
+            // 处理文本输入类型
+            if (details.text) {
+                // 截断过长的文本
+                const displayText = details.text.length > 20
+                    ? details.text.substring(0, 20) + '...'
+                    : details.text;
+                detailText = `(${displayText})`;
+            }
         }
 
         // 如果没有详细信息，且有时段ID，显示时段
@@ -1011,6 +1019,37 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                             )}
                                                         </div>
                                                     )}
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {pendingAction?.leaveType?.input_type === 'text' && (() => {
+                                            // 解析input_config获取配置
+                                            let config = {};
+                                            try {
+                                                config = typeof pendingAction.leaveType.input_config === 'string'
+                                                    ? JSON.parse(pendingAction.leaveType.input_config)
+                                                    : pendingAction.leaveType.input_config || {};
+                                            } catch (e) {
+                                                console.error('Failed to parse input_config:', e);
+                                            }
+
+                                            return (
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                        {config.label || '去向说明'}
+                                                    </label>
+                                                    <textarea
+                                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                        rows={3}
+                                                        placeholder={config.placeholder || '请输入说明...'}
+                                                        onChange={e => setInputData({
+                                                            ...inputData,
+                                                            text: e.target.value,
+                                                            text_label: config.label || '去向说明'
+                                                        })}
+                                                    />
+                                                    <p className="mt-1 text-xs text-gray-400">此说明将记录在考勤详情中</p>
                                                 </div>
                                             );
                                         })()}
