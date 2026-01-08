@@ -111,6 +111,59 @@ if (config.show_pending_approval) { ... }
 
 ---
 
+## 用户角色体系
+
+### 标准角色 (`users.role` 字段)
+
+| 角色名称 | 代码值 | 说明 |
+|---------|-------|------|
+| 系统管理员 | `system_admin` | 最高权限，管理全系统 |
+| 学校管理员 | `school_admin` | 管理全校 |
+| 系部管理员 | `department_manager` | 管理指定系部 |
+| 班主任 | `teacher` | 管理指定班级 |
+| 学生 | `student` | 普通学生用户 |
+
+### 特殊身份（非独立角色）
+
+| 身份 | 实现方式 | 说明 |
+|-----|---------|------|
+| 学生管理员 | `students.is_manager = true` | 学生的特殊身份，有部分管理权限 |
+| 点名员 | `roll_call_admins` 表 | 由班主任授权指定学生为点名员 |
+
+### ⚠️ 角色兼容性（重要）
+
+代码中保留了历史遗留的角色值，在权限检查时需要同时判断：
+
+```php
+// admin 是 system_admin/school_admin 的别名
+in_array($user->role, ['system_admin', 'school_admin', 'admin'])
+
+// manager 是 department_manager 的别名
+in_array($user->role, ['department_manager', 'manager'])
+```
+
+**原因**：数据库中可能存在使用旧角色值的历史用户数据，直接删除会导致这些用户无法正常使用系统。
+
+**规则**：
+1. ❌ 不要删除代码中对 `admin` 和 `manager` 的检查
+2. ✅ 新代码统一使用标准角色值 (`system_admin`, `school_admin`, `department_manager` 等)
+3. ✅ 权限检查时同时包含新旧角色值
+
+### 仪表盘配置映射
+
+不同角色使用不同的仪表盘配置：
+
+| 用户角色 | 配置键 |
+|---------|-------|
+| `teacher` | `class_admin` |
+| `department_manager` / `manager` | `department_manager` |
+| `system_admin` / `school_admin` / `admin` | `school_admin` |
+| `student` | `student` |
+
+配置存储在 `system_settings.dashboard_stats_config` 中。
+
+---
+
 ## 常见问题
 
 ### Q: MySQL 连接失败 (MySQL server has gone away)
