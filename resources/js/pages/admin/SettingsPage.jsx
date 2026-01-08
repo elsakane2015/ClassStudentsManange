@@ -224,6 +224,7 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
         data.is_active = formData.get('is_active') === 'on';
         data.student_requestable = formData.get('student_requestable') === 'on';
         data.use_conversion = formData.get('use_conversion') === 'on';
+        data.counts_as_absence = formData.get('counts_as_absence') === 'on';
 
         // Construct config based on input type
         let finalConfig = {};
@@ -458,6 +459,20 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
                         </label>
                         <span className="ml-2 text-xs text-gray-400" title="勾选后，将按系统设置的&quot;请假折算阈值&quot;（默认6节=1天）进行换算显示">ⓘ</span>
                     </div>
+                </div>
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <label className="flex items-center cursor-pointer">
+                        <input
+                            name="counts_as_absence"
+                            type="checkbox"
+                            defaultChecked={initialData?.counts_as_absence ?? true}
+                            className="mr-2 h-4 w-4 text-amber-600 border-gray-300 rounded"
+                        />
+                        <span className="text-sm font-medium text-amber-800">计入缺勤统计</span>
+                    </label>
+                    <p className="text-xs text-amber-600 mt-1 ml-6">
+                        取消勾选后，该类型请假不会计入缺勤人数和出勤率计算（如：活动、学生会、外出实习等）
+                    </p>
                 </div>
             </div>
 

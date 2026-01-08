@@ -40,7 +40,8 @@ class LeaveTypeController extends Controller
             'input_type' => 'nullable|string|in:none,text,time,period_select,duration_select',
             'input_config' => 'nullable|array',
             'display_unit' => 'nullable|string|max:20',
-            'use_conversion' => 'boolean'
+            'use_conversion' => 'boolean',
+            'counts_as_absence' => 'boolean'
         ]);
         
         // School ID logic
@@ -71,7 +72,8 @@ class LeaveTypeController extends Controller
             'input_type' => 'nullable|string|in:none,text,time,period_select,duration_select',
             'input_config' => 'nullable|array',
             'display_unit' => 'nullable|string|max:20',
-            'use_conversion' => 'boolean'
+            'use_conversion' => 'boolean',
+            'counts_as_absence' => 'boolean'
         ]);
 
         // Self-Healing: Fix missing columns if needed

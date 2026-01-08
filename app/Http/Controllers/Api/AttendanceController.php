@@ -17,6 +17,10 @@ class AttendanceController extends Controller
 
         $user = $request->user();
         
+        // 获取"不计入缺勤"的请假类型ID列表
+        // 这些类型（如"其他"：活动、学生会等）不会计入缺勤统计
+        $nonAbsenceLeaveTypeIds = \App\Models\LeaveType::where('counts_as_absence', false)->pluck('id')->toArray();
+        
         // Get non-graduated class IDs for filtering
         $activeClassIds = \App\Models\SchoolClass::where('is_graduated', false)->pluck('id');
         
@@ -319,11 +323,16 @@ class AttendanceController extends Controller
             $today = now()->format('Y-m-d');
             
             // 获取所有 period_id = NULL 的缺勤记录，然后在 PHP 层面判断是否为真正的全天假
+            // 排除 counts_as_absence = false 的请假类型（如活动、学生会等）
             $nullPeriodRecords = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->where('date', $today)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNull('period_id')
+                ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
+                    $q->whereNull('leave_type_id')
+                      ->orWhereNotIn('leave_type_id', $nonAbsenceLeaveTypeIds);
+                })
                 ->select('student_id', 'details')
                 ->get();
             
@@ -365,11 +374,16 @@ class AttendanceController extends Controller
                 ->keys();
             
             // 方式2：period_id IS NOT NULL 的分节假累计达到阈值的学生
+            // 排除 counts_as_absence = false 的请假类型
             $periodAbsentStudents = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->where('date', $today)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNotNull('period_id')
+                ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
+                    $q->whereNull('leave_type_id')
+                      ->orWhereNotIn('leave_type_id', $nonAbsenceLeaveTypeIds);
+                })
                 ->select('student_id', \DB::raw('COUNT(*) as period_count'))
                 ->groupBy('student_id')
                 ->having('period_count', '>=', $absentThreshold)
@@ -405,11 +419,16 @@ class AttendanceController extends Controller
             
             // 统计每天的缺勤人数，计算出勤人天数
             // 获取所有 period_id = NULL 的缺勤记录
+            // 排除 counts_as_absence = false 的请假类型
             $nullPeriodRecords = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNull('period_id')
+                ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
+                    $q->whereNull('leave_type_id')
+                      ->orWhereNotIn('leave_type_id', $nonAbsenceLeaveTypeIds);
+                })
                 ->select('date', 'student_id', 'details')
                 ->get();
             
@@ -445,11 +464,16 @@ class AttendanceController extends Controller
             }
             
             // 获取 period_id IS NOT NULL 的分节假累计达到阈值的
+            // 排除 counts_as_absence = false 的请假类型
             $periodAbsences = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNotNull('period_id')
+                ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
+                    $q->whereNull('leave_type_id')
+                      ->orWhereNotIn('leave_type_id', $nonAbsenceLeaveTypeIds);
+                })
                 ->select('date', 'student_id', \DB::raw('COUNT(*) as period_count'))
                 ->groupBy('date', 'student_id')
                 ->having('period_count', '>=', $absentThreshold)
@@ -2249,12 +2273,20 @@ class AttendanceController extends Controller
         $endDate = min($dateRange['end'], now()->format('Y-m-d'));
         $totalDays = $countWorkingDays($dateRange['start'], $endDate);
         
+        // 获取"不计入缺勤"的请假类型ID列表
+        $nonAbsenceLeaveTypeIds = \App\Models\LeaveType::where('counts_as_absence', false)->pluck('id')->toArray();
+        
         // Get all period_id = NULL absence records
+        // 排除 counts_as_absence = false 的请假类型
         $nullPeriodRecords = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
             ->whereIn('status', ['absent', 'leave', 'excused'])
             ->whereNull('period_id')
+            ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
+                $q->whereNull('leave_type_id')
+                  ->orWhereNotIn('leave_type_id', $nonAbsenceLeaveTypeIds);
+            })
             ->select('student_id', 'date', 'details')
             ->get();
         
@@ -2290,11 +2322,16 @@ class AttendanceController extends Controller
         }
         
         // Get period_id IS NOT NULL absences that meet threshold
+        // 排除 counts_as_absence = false 的请假类型
         $periodAbsences = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
             ->whereIn('status', ['absent', 'leave', 'excused'])
             ->whereNotNull('period_id')
+            ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
+                $q->whereNull('leave_type_id')
+                  ->orWhereNotIn('leave_type_id', $nonAbsenceLeaveTypeIds);
+            })
             ->select('student_id', 'date', \DB::raw('COUNT(*) as period_count'))
             ->groupBy('student_id', 'date')
             ->having('period_count', '>=', $absentThreshold)
