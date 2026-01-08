@@ -306,11 +306,84 @@ class AttendanceController extends Controller
         $early = $attendanceStats['early_leave'] ?? 0;
         $effectiveAttendance = $present + $late + $early;
         
-        // 今日出勤人数：有 present/late/early_leave 状态的去重学生数
-        $presentStudentsCount = $attendanceQuery->clone()
-            ->whereIn('status', ['present', 'late', 'early_leave'])
-            ->distinct('student_id')
-            ->count('student_id');
+        // 获取缺勤阈值配置
+        $absentThreshold = (int) (\App\Models\SystemSetting::where('key', 'absent_lessons_as_day')->value('value') ?? 6);
+        
+        // 计算出勤统计
+        // 逻辑：出勤人数 = 总人数 - 当日缺勤人数（当日旷课/请假节数 >= 阈值的学生）
+        $presentStudentsCount = 0;
+        $attendanceRate = 0;
+        
+        if ($scope === 'today') {
+            // 今日：统计缺勤人数（旷课或请假节数 >= 阈值的学生）
+            $today = now()->format('Y-m-d');
+            
+            // 获取今日有缺勤记录的学生及其节数
+            $absentStudents = \DB::table('attendance_records')
+                ->whereIn('class_id', $classIds)
+                ->where('date', $today)
+                ->whereIn('status', ['absent', 'leave', 'excused'])
+                ->select('student_id', \DB::raw('COUNT(*) as period_count'))
+                ->groupBy('student_id')
+                ->having('period_count', '>=', $absentThreshold)
+                ->pluck('student_id')
+                ->unique()
+                ->count();
+            
+            $presentStudentsCount = max(0, $totalStudents - $absentStudents);
+        } else {
+            // 本周/本月/学期：计算出勤率
+            // 获取日期范围
+            if ($scope === 'week') {
+                $startDate = now()->startOfWeek()->format('Y-m-d');
+                $endDate = now()->endOfWeek()->format('Y-m-d');
+            } elseif ($scope === 'month') {
+                $startDate = now()->startOfMonth()->format('Y-m-d');
+                $endDate = now()->endOfMonth()->format('Y-m-d');
+            } else { // semester
+                if ($semester) {
+                    $startDate = $semester->start_date;
+                    $semesterStart = \Carbon\Carbon::parse($semester->start_date);
+                    $endDate = $semesterStart->copy()->addWeeks($semester->total_weeks)->format('Y-m-d');
+                } else {
+                    $startDate = now()->startOfYear()->format('Y-m-d');
+                    $endDate = now()->format('Y-m-d');
+                }
+            }
+            
+            // 统计每天的缺勤人数，计算出勤人天数
+            $dailyAbsences = \DB::table('attendance_records')
+                ->whereIn('class_id', $classIds)
+                ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
+                ->whereIn('status', ['absent', 'leave', 'excused'])
+                ->select('date', 'student_id', \DB::raw('COUNT(*) as period_count'))
+                ->groupBy('date', 'student_id')
+                ->having('period_count', '>=', $absentThreshold)
+                ->get();
+            
+            // 计算每天缺勤人数
+            $absentByDate = $dailyAbsences->groupBy('date')->map->count();
+            
+            // 获取有考勤活动的日期（只统计有记录的工作日）
+            $activeDates = \DB::table('attendance_records')
+                ->whereIn('class_id', $classIds)
+                ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
+                ->distinct('date')
+                ->pluck('date');
+            
+            $totalDays = $activeDates->count();
+            if ($totalDays > 0) {
+                // 总应出勤人天数 = 总人数 × 有考勤活动的天数
+                $totalPersonDays = $totalStudents * $totalDays;
+                
+                // 出勤人天数 = 总应出勤人天数 - 缺勤人天数
+                $absentPersonDays = $absentByDate->sum();
+                $presentPersonDays = $totalPersonDays - $absentPersonDays;
+                
+                $attendanceRate = round(($presentPersonDays / $totalPersonDays) * 100, 1);
+                $presentStudentsCount = round($presentPersonDays / $totalDays); // 平均每日出勤人数(用于兼容)
+            }
+        }
         
         // Period-based statistics (时段统计)
         $periodStats = $attendanceQuery->clone()
@@ -337,6 +410,7 @@ class AttendanceController extends Controller
             'class_total_students' => $classTotalStudents,
             'present_count' => $effectiveAttendance,
             'present_students_count' => $presentStudentsCount, // 今日出勤人数
+            'attendance_rate' => $attendanceRate, // 出勤率百分比(本周/本月/学期)
             'pending_requests' => $pendingRequests,
             'scope' => $scope,
             'details' => [

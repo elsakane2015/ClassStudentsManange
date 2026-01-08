@@ -516,23 +516,27 @@ export default function TeacherDashboard() {
                                         />
                                     )}
 
-                                    {/* 2. Today's Attendance - 今日出勤人数/总人数 */}
+                                    {/* 2. Today's Attendance - 今日出勤人数/总人数，本周/本月/学期显示出勤率 */}
                                     {dashboardConfig.show_present_count && (
                                         <StatCard
                                             title={`${scopeLabels[scope]}出勤`}
-                                            value={`${stats.present_students_count || 0}/${stats.class_total_students || stats.department_total_students || stats.total_students || 0}`}
-                                            subtitle="出勤人数/总人数"
+                                            value={
+                                                scope === 'today'
+                                                    ? `${stats.present_students_count || 0}/${stats.class_total_students || stats.department_total_students || stats.total_students || 0}`
+                                                    : `${stats.attendance_rate || 0}%`
+                                            }
+                                            subtitle={scope === 'today' ? "出勤人数/总人数" : "出勤率"}
                                             icon={
                                                 <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                                                 </svg>
                                             }
                                             color="bg-green-500"
-                                            onClick={(stats.present_students_count > 0) ? () => handleStatCardClick(
+                                            onClick={() => handleStatCardClick(
                                                 `${scopeLabels[scope]}出勤`,
                                                 'present',
                                                 null
-                                            ) : null}
+                                            )}
                                         />
                                     )}
 
