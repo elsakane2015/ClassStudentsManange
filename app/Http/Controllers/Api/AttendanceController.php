@@ -2027,6 +2027,15 @@ class AttendanceController extends Controller
                               ->where('leave_type_id', $absenceLeaveTypeId);
                        });
                 });
+            } elseif ($leaveTypeId && in_array($status, ['leave', 'excused'])) {
+                // For leave types: include both 'leave' and 'excused' status with the specified leave_type_id
+                // Also filter out rejected requests (approval_status != 'rejected')
+                $q->whereIn('status', ['leave', 'excused'])
+                  ->where('leave_type_id', $leaveTypeId)
+                  ->where(function($q2) {
+                      $q2->where('approval_status', 'approved')
+                         ->orWhereNull('approval_status');
+                  });
             } else {
                 $q->where('status', $status);
                 if ($leaveTypeId) {
@@ -2052,6 +2061,14 @@ class AttendanceController extends Controller
                                       ->where('leave_type_id', $absenceLeaveTypeId);
                                });
                         });
+                    } elseif ($leaveTypeId && in_array($status, ['leave', 'excused'])) {
+                        // For leave types: include both 'leave' and 'excused' status
+                        $q->whereIn('status', ['leave', 'excused'])
+                          ->where('leave_type_id', $leaveTypeId)
+                          ->where(function($q2) {
+                              $q2->where('approval_status', 'approved')
+                                 ->orWhereNull('approval_status');
+                          });
                     } else {
                         $q->where('status', $status);
                         if ($leaveTypeId) {
