@@ -318,16 +318,53 @@ class AttendanceController extends Controller
             // 今日：统计缺勤人数（旷课或请假节数 >= 阈值的学生，或有全天假的学生）
             $today = now()->format('Y-m-d');
             
-            // 方式1：有全天假的学生（period_id IS NULL 表示全天）直接算缺勤
-            $fullDayAbsentStudents = \DB::table('attendance_records')
+            // 获取所有 period_id = NULL 的缺勤记录，然后在 PHP 层面判断是否为真正的全天假
+            $nullPeriodRecords = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->where('date', $today)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNull('period_id')
-                ->distinct('student_id')
-                ->pluck('student_id');
+                ->select('student_id', 'details')
+                ->get();
             
-            // 方式2：分节假累计达到阈值的学生
+            // 判断是否为全天假：details 中没有 period_ids 或 option 为 full_day/morning_half/afternoon_half
+            $fullDayAbsentStudents = collect();
+            $periodAbsentFromNullRecords = collect(); // 虽然 period_id=NULL 但实际是分节假的
+            
+            foreach ($nullPeriodRecords as $record) {
+                $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+                
+                // 检查是否有 period_ids 数组（表示是分节假）
+                $hasPeriodIds = is_array($details) && 
+                               isset($details['period_ids']) && 
+                               is_array($details['period_ids']) && 
+                               count($details['period_ids']) > 0;
+                
+                // 检查 option 是否为全天类型
+                $option = $details['option'] ?? null;
+                $isFullDayOption = in_array($option, ['full_day', 'all_day', 'morning_half', 'afternoon_half']);
+                
+                if ($hasPeriodIds && !$isFullDayOption) {
+                    // 虽然 period_id=NULL，但有具体的 period_ids，是分节假
+                    $periodAbsentFromNullRecords->push([
+                        'student_id' => $record->student_id,
+                        'period_count' => count($details['period_ids'])
+                    ]);
+                } else {
+                    // 真正的全天假
+                    $fullDayAbsentStudents->push($record->student_id);
+                }
+            }
+            
+            // 统计 period_id=NULL 但实际是分节假的学生是否达到阈值
+            $periodAbsentFromNullStudents = $periodAbsentFromNullRecords
+                ->groupBy('student_id')
+                ->filter(function($records) use ($absentThreshold) {
+                    return $records->sum('period_count') >= $absentThreshold;
+                })
+                ->keys();
+            
+            // 方式2：period_id IS NOT NULL 的分节假累计达到阈值的学生
             $periodAbsentStudents = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->where('date', $today)
@@ -338,8 +375,12 @@ class AttendanceController extends Controller
                 ->having('period_count', '>=', $absentThreshold)
                 ->pluck('student_id');
             
-            // 合并两种缺勤学生（去重）
-            $absentStudents = $fullDayAbsentStudents->merge($periodAbsentStudents)->unique()->count();
+            // 合并三种缺勤学生（去重）
+            $absentStudents = $fullDayAbsentStudents
+                ->merge($periodAbsentFromNullStudents)
+                ->merge($periodAbsentStudents)
+                ->unique()
+                ->count();
             
             $presentStudentsCount = max(0, $totalStudents - $absentStudents);
         } else {
@@ -363,17 +404,47 @@ class AttendanceController extends Controller
             }
             
             // 统计每天的缺勤人数，计算出勤人天数
-            // 方式1：全天假（period_id IS NULL）
-            $fullDayAbsences = \DB::table('attendance_records')
+            // 获取所有 period_id = NULL 的缺勤记录
+            $nullPeriodRecords = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNull('period_id')
-                ->select('date', 'student_id')
-                ->distinct()
+                ->select('date', 'student_id', 'details')
                 ->get();
             
-            // 方式2：分节假累计达到阈值
+            // 分类：真正的全天假 vs 分节假
+            $fullDayAbsences = collect();
+            $periodAbsencesFromNull = collect();
+            
+            foreach ($nullPeriodRecords as $record) {
+                $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+                
+                $hasPeriodIds = is_array($details) && 
+                               isset($details['period_ids']) && 
+                               is_array($details['period_ids']) && 
+                               count($details['period_ids']) > 0;
+                
+                $option = $details['option'] ?? null;
+                $isFullDayOption = in_array($option, ['full_day', 'all_day', 'morning_half', 'afternoon_half']);
+                
+                if ($hasPeriodIds && !$isFullDayOption) {
+                    // 分节假
+                    $periodAbsencesFromNull->push([
+                        'date' => $record->date,
+                        'student_id' => $record->student_id,
+                        'period_count' => count($details['period_ids'])
+                    ]);
+                } else {
+                    // 真正的全天假
+                    $fullDayAbsences->push([
+                        'date' => $record->date,
+                        'student_id' => $record->student_id
+                    ]);
+                }
+            }
+            
+            // 获取 period_id IS NOT NULL 的分节假累计达到阈值的
             $periodAbsences = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
@@ -384,8 +455,19 @@ class AttendanceController extends Controller
                 ->having('period_count', '>=', $absentThreshold)
                 ->get();
             
-            // 合并并计算每天缺勤人数
-            $allAbsences = $fullDayAbsences->map(fn($r) => ['date' => $r->date, 'student_id' => $r->student_id])
+            // 处理 period_id=NULL 但实际是分节假的记录
+            $periodAbsentFromNullStudentDates = $periodAbsencesFromNull
+                ->groupBy(fn($r) => $r['date'] . '-' . $r['student_id'])
+                ->filter(fn($records) => $records->sum('period_count') >= $absentThreshold)
+                ->map(function($records) {
+                    $first = $records->first();
+                    return ['date' => $first['date'], 'student_id' => $first['student_id']];
+                })
+                ->values();
+            
+            // 合并所有缺勤记录
+            $allAbsences = $fullDayAbsences
+                ->merge($periodAbsentFromNullStudentDates)
                 ->merge($periodAbsences->map(fn($r) => ['date' => $r->date, 'student_id' => $r->student_id]));
             
             // 按日期分组，统计每天的唯一缺勤学生数
@@ -2113,17 +2195,47 @@ class AttendanceController extends Controller
         
         $totalDays = $activeDates->count();
         
-        // Get full-day absence records (period_id IS NULL)
-        $fullDayAbsences = \DB::table('attendance_records')
+        // Get all period_id = NULL absence records
+        $nullPeriodRecords = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
             ->whereIn('status', ['absent', 'leave', 'excused'])
             ->whereNull('period_id')
-            ->select('student_id', 'date')
-            ->distinct()
+            ->select('student_id', 'date', 'details')
             ->get();
         
-        // Get period-based absence records that meet threshold
+        // Categorize: real full-day vs period-based
+        $fullDayAbsences = collect();
+        $periodAbsencesFromNull = collect();
+        
+        foreach ($nullPeriodRecords as $record) {
+            $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+            
+            $hasPeriodIds = is_array($details) && 
+                           isset($details['period_ids']) && 
+                           is_array($details['period_ids']) && 
+                           count($details['period_ids']) > 0;
+            
+            $option = $details['option'] ?? null;
+            $isFullDayOption = in_array($option, ['full_day', 'all_day', 'morning_half', 'afternoon_half']);
+            
+            if ($hasPeriodIds && !$isFullDayOption) {
+                // Period-based absence with period_id=NULL
+                $periodAbsencesFromNull->push([
+                    'student_id' => $record->student_id,
+                    'date' => $record->date,
+                    'period_count' => count($details['period_ids'])
+                ]);
+            } else {
+                // Real full-day absence
+                $fullDayAbsences->push([
+                    'student_id' => $record->student_id,
+                    'date' => $record->date
+                ]);
+            }
+        }
+        
+        // Get period_id IS NOT NULL absences that meet threshold
         $periodAbsences = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
@@ -2134,13 +2246,24 @@ class AttendanceController extends Controller
             ->having('period_count', '>=', $absentThreshold)
             ->get();
         
+        // Process period_id=NULL but actually period-based records
+        $periodAbsentFromNullStudentDates = $periodAbsencesFromNull
+            ->groupBy(fn($r) => $r['date'] . '-' . $r['student_id'])
+            ->filter(fn($records) => $records->sum('period_count') >= $absentThreshold)
+            ->map(function($records) {
+                $first = $records->first();
+                return ['student_id' => $first['student_id'], 'date' => $first['date']];
+            })
+            ->values();
+        
         // Merge and calculate absent days per student
-        $allAbsences = $fullDayAbsences->map(fn($r) => ['student_id' => $r->student_id, 'date' => $r->date])
+        $allAbsences = $fullDayAbsences
+            ->merge($periodAbsentFromNullStudentDates)
             ->merge($periodAbsences->map(fn($r) => ['student_id' => $r->student_id, 'date' => $r->date]));
         
         // Calculate absent days per student (unique student-date combinations)
         $absentDaysByStudent = $allAbsences->groupBy('student_id')->map(function($records) {
-            return $records->pluck('date')->unique()->count();
+            return collect($records)->pluck('date')->unique()->count();
         });
         
         // Get any attendance record count per student (for "has_record" filter)
