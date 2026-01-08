@@ -492,12 +492,10 @@ class AttendanceController extends Controller
                 $maxDays = 400;
                 $dayCount = 0;
                 while ($current <= $endDate && $dayCount < $maxDays) {
-                    $dayOfWeek = $current->dayOfWeek;
-                    if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
-                        $dateStr = $current->format('Y-m-d');
-                        if (!in_array($dateStr, $holidays)) {
-                            $count++;
-                        }
+                    $dateStr = $current->format('Y-m-d');
+                    // 只要不在假日列表中就是工作日（包括调休的周末）
+                    if (!in_array($dateStr, $holidays)) {
+                        $count++;
                     }
                     $current->addDay();
                     $dayCount++;
@@ -2221,6 +2219,7 @@ class AttendanceController extends Controller
         }
         
         // Helper function to count working days in a range
+        // 完全根据学期日历配置判断：只要不在 holidays 数组中就是工作日
         $countWorkingDays = function($start, $end) use ($holidays) {
             if (!$start || !$end) return 0;
             $count = 0;
@@ -2229,14 +2228,10 @@ class AttendanceController extends Controller
             $maxDays = 400;
             $dayCount = 0;
             while ($current <= $endDate && $dayCount < $maxDays) {
-                $dayOfWeek = $current->dayOfWeek;
-                // Skip weekends (0=Sunday, 6=Saturday)
-                if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
-                    $dateStr = $current->format('Y-m-d');
-                    // Skip holidays from semester config
-                    if (!in_array($dateStr, $holidays)) {
-                        $count++;
-                    }
+                $dateStr = $current->format('Y-m-d');
+                // 只要不在假日列表中就是工作日（包括调休的周末）
+                if (!in_array($dateStr, $holidays)) {
+                    $count++;
                 }
                 $current->addDay();
                 $dayCount++;
