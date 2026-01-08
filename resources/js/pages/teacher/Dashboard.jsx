@@ -126,9 +126,19 @@ export default function TeacherDashboard() {
                         const config = typeof settingsObj.dashboard_stats_config === 'string'
                             ? JSON.parse(settingsObj.dashboard_stats_config)
                             : settingsObj.dashboard_stats_config;
-                        // Use class_admin config for teacher/class admin
-                        if (config.class_admin) {
-                            setDashboardConfig(prev => ({ ...prev, ...config.class_admin }));
+                        // Select config based on user role
+                        let roleConfig = null;
+                        if (user?.role === 'teacher') {
+                            roleConfig = config.class_admin;
+                        } else if (user?.role === 'department_manager' || user?.role === 'manager') {
+                            roleConfig = config.department_manager;
+                        } else if (['system_admin', 'school_admin', 'admin'].includes(user?.role)) {
+                            roleConfig = config.school_admin;
+                        } else {
+                            roleConfig = config.class_admin; // Default fallback
+                        }
+                        if (roleConfig) {
+                            setDashboardConfig(prev => ({ ...prev, ...roleConfig }));
                         }
                     } catch (e) {
                         console.warn('Failed to parse dashboard_stats_config', e);
@@ -136,7 +146,7 @@ export default function TeacherDashboard() {
                 }
             })
             .catch(err => console.error('Failed to fetch settings:', err));
-    }, []);
+    }, [user?.role]);
 
     // Fetch data whenever scope or selectedSemester changes
     useEffect(() => {

@@ -14,6 +14,7 @@ export default function AttendanceSettings() {
     const [dashboardConfig, setDashboardConfig] = useState({
         student: { show_my_pending: true, show_normal_attendance: true, show_all_leave_types: true },
         class_admin: { show_pending_approval: true, show_student_count: true, show_present_count: true, show_all_leave_types: true },
+        department_manager: { show_pending_approval: true, show_student_count: true, show_present_count: true, show_all_leave_types: true },
         school_admin: { show_pending_approval: true, show_student_count: true, show_present_count: true, show_all_leave_types: true },
     });
     const [leaveTypes, setLeaveTypes] = useState([]);
@@ -331,6 +332,64 @@ export default function AttendanceSettings() {
                                     onChange={(e) => setDashboardConfig(prev => ({
                                         ...prev,
                                         class_admin: { ...prev.class_admin, show_all_leave_types: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">显示所有请假类型</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* 系部管理员端配置 */}
+                    <div className="border rounded-lg p-4">
+                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                            <span className="w-3 h-3 rounded-full bg-orange-500 mr-2"></span>
+                            系部管理员
+                        </h4>
+                        <div className="space-y-3">
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.department_manager?.show_pending_approval ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        department_manager: { ...prev.department_manager, show_pending_approval: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">系部待审批</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.department_manager?.show_student_count ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        department_manager: { ...prev.department_manager, show_student_count: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">学生总数</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.department_manager?.show_present_count ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        department_manager: { ...prev.department_manager, show_present_count: e.target.checked }
+                                    }))}
+                                    className="rounded border-gray-300 text-indigo-600 mr-2"
+                                />
+                                <span className="text-sm">今日出勤</span>
+                            </label>
+                            <label className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={dashboardConfig.department_manager?.show_all_leave_types ?? true}
+                                    onChange={(e) => setDashboardConfig(prev => ({
+                                        ...prev,
+                                        department_manager: { ...prev.department_manager, show_all_leave_types: e.target.checked }
                                     }))}
                                     className="rounded border-gray-300 text-indigo-600 mr-2"
                                 />
