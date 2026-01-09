@@ -390,16 +390,19 @@ class AttendanceExportController extends Controller
                             $timeSlotName = $recDetails['time_slot_name'] ?? '';
                             $displayLabel = $recDetails['display_label'] ?? '';
                             
-                            // 关键逻辑：如果当前列不是 full_day，但记录是 full_day，则不匹配
+                            // 判断当前列是否是"全天"类型列（通过 key 或 label 判断）
+                            $isFullDayColumn = in_array($optKey, ['full_day', 'all_day']) ||
+                                               in_array($optLabel, ['全天', '全日']);
+                            
+                            // 判断当前记录是否是"全天"类型记录
+                            $isFullDayRecord = in_array($recordOption, ['full_day', 'all_day']) ||
+                                               in_array($timeSlotName, ['全天', '全日']) ||
+                                               in_array($displayLabel, ['全天', '全日']);
+                            
+                            // 关键逻辑：如果当前列不是全天列，但记录是全天记录，则不匹配
                             // 这样可以防止"全天"请假出现在"早操"等其他列中
-                            if ($optKey !== 'full_day') {
-                                // 检查记录是否是全天类型
-                                $isFullDayRecord = in_array($recordOption, ['full_day', 'all_day']) ||
-                                                   in_array($timeSlotName, ['全天', '全日']) ||
-                                                   in_array($displayLabel, ['全天', '全日']);
-                                if ($isFullDayRecord) {
-                                    return false; // 全天记录不应出现在非全天的列中
-                                }
+                            if (!$isFullDayColumn && $isFullDayRecord) {
+                                return false; // 全天记录不应出现在非全天的列中
                             }
                             
                             // 方式1: 直接匹配 option
