@@ -331,6 +331,10 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                     // 使用第一个节次作为 period_id，所有节次信息保存在 details 中
                     periodIds = [details.periods[0]];
                     shouldLoopPeriods = false; // 不循环，只发送一次
+                } else if (details.period_ids && details.period_ids.length > 0) {
+                    // text 类型的节次选择 - 创建一条记录，包含所有节次信息
+                    periodIds = [details.period_ids[0]];
+                    shouldLoopPeriods = false; // 不循环，只发送一次
                 }
                 // 对于 duration_select 类型的选项（如"上午"、"下午"），
                 // 不需要前端指定 period_id，后端会根据 option 动态生成
@@ -1081,8 +1085,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                                 });
                                                                             }}
                                                                             className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${isSelected
-                                                                                    ? 'bg-indigo-600 text-white border-indigo-600'
-                                                                                    : 'bg-white border-gray-300 hover:bg-gray-50'
+                                                                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                                                                : 'bg-white border-gray-300 hover:bg-gray-50'
                                                                                 }`}
                                                                         >
                                                                             {period.name}

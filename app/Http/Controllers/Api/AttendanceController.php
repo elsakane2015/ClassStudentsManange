@@ -2061,6 +2061,9 @@ class AttendanceController extends Controller
                             'time_slot_id' => $isCustom ? null : $timeSlotId,
                             'time_slot_name' => $isCustom ? null : $timeSlotName,
                             'is_custom' => $isCustom,
+                            // 保留 text 字段（文本输入类型）
+                            'text' => $details['text'] ?? null,
+                            'text_label' => $details['text_label'] ?? null,
                         ],
                         'source_type' => 'manual_bulk',
                     ]
