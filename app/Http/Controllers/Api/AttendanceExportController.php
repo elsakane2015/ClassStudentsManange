@@ -382,7 +382,7 @@ class AttendanceExportController extends Controller
                         $isTimeOption = in_array($optKey, ['morning_half', 'afternoon_half', 'full_day']);
                         
                         // Filter records for this specific option
-                        // 需要同时匹配 option、time_slot_name 和 display_label
+                        // 严格匹配逻辑：记录的时段信息必须与当前列匹配
                         $optionRecords = $uniqueRecords->filter(function($rec) use ($optKey, $optLabel, $options) {
                             $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
                             
@@ -390,7 +390,7 @@ class AttendanceExportController extends Controller
                             $timeSlotName = $recDetails['time_slot_name'] ?? '';
                             $displayLabel = $recDetails['display_label'] ?? '';
                             
-                            // 判断当前列是否是"全天"类型列（通过 key 或 label 判断）
+                            // 判断当前列是否是"全天"类型列
                             $isFullDayColumn = in_array($optKey, ['full_day', 'all_day']) ||
                                                in_array($optLabel, ['全天', '全日']);
                             
@@ -399,27 +399,27 @@ class AttendanceExportController extends Controller
                                                in_array($timeSlotName, ['全天', '全日']) ||
                                                in_array($displayLabel, ['全天', '全日']);
                             
-                            // 关键逻辑：如果当前列不是全天列，但记录是全天记录，则不匹配
-                            // 这样可以防止"全天"请假出现在"早操"等其他列中
+                            // 规则1：全天记录只能出现在全天列
                             if (!$isFullDayColumn && $isFullDayRecord) {
-                                return false; // 全天记录不应出现在非全天的列中
+                                return false;
                             }
                             
-                            // 方式1: 直接匹配 option
-                            if ($recordOption === $optKey) {
-                                return true;
+                            // 规则2：如果记录有明确的时段信息，必须严格匹配当前列
+                            // 防止"下午"出现在"早操"列中
+                            $recordHasSpecificSlot = !empty($recordOption) || !empty($timeSlotName) || !empty($displayLabel);
+                            
+                            if ($recordHasSpecificSlot) {
+                                // 记录有明确时段信息，必须匹配当前列
+                                $matchesOption = $recordOption === $optKey;
+                                $matchesTimeSlot = $timeSlotName && $timeSlotName === $optLabel;
+                                $matchesDisplay = $displayLabel && $displayLabel === $optLabel;
+                                
+                                // 只有当至少一个条件匹配时才返回 true
+                                return $matchesOption || $matchesTimeSlot || $matchesDisplay;
                             }
                             
-                            // 方式2: 匹配 time_slot_name（如"全天"、"上午"）
-                            if ($timeSlotName && $timeSlotName === $optLabel) {
-                                return true;
-                            }
-                            
-                            // 方式3: 匹配 display_label
-                            if ($displayLabel && $displayLabel === $optLabel) {
-                                return true;
-                            }
-                            
+                            // 规则3：记录没有明确时段信息，默认不匹配任何特定列
+                            // （防止无时段信息的记录出现在所有列中）
                             return false;
                         });
                         
@@ -599,6 +599,17 @@ class AttendanceExportController extends Controller
             ? json_decode($record->details, true) 
             : ($record->details ?? []);
         
+        // 点名来源：使用点名类型或时间
+        if (($record->source_type ?? '') === 'roll_call') {
+            if (!empty($details['roll_call_type'])) {
+                return $details['roll_call_type'];
+            }
+            if (!empty($details['roll_call_time'])) {
+                return $details['roll_call_time'];
+            }
+            // 默认返回空，让外层使用其他信息
+        }
+        
         // 优先级1: display_label
         if (!empty($details['display_label'])) {
             return $details['display_label'];
@@ -628,8 +639,21 @@ class AttendanceExportController extends Controller
             return implode('、', $details['period_names']);
         }
         
-        // 默认
-        return '全天';
+        // 优先级6: option 字段映射
+        if (!empty($details['option'])) {
+            $optionMap = [
+                'full_day' => '全天',
+                'all_day' => '全天',
+                'morning_half' => '上午',
+                'afternoon_half' => '下午',
+                'morning_exercise' => '早操',
+                'evening_exercise' => '晚操',
+            ];
+            return $optionMap[$details['option']] ?? $details['option'];
+        }
+        
+        // 默认返回空字符串而不是"全天"
+        return '';
     }
 
     /**
