@@ -948,6 +948,8 @@ class RollCallController extends Controller
                   });
             })
             ->with('leaveType')
+            // 优先处理最新的记录（按更新时间倒序）
+            ->orderByDesc('updated_at')
             ->get();
 
         $rollCallTypeName = $rollCallType?->name ?? '';
@@ -1114,17 +1116,27 @@ class RollCallController extends Controller
             return $details['display_label'];
         }
         
-        // Priority 2: time_slot_name from details
+        // Priority 2: text field (for text input types like "其他")
+        if (!empty($details['text'])) {
+            $textLabel = $details['text'];
+            // If period_names exist, append them
+            if (!empty($details['period_names']) && is_array($details['period_names'])) {
+                $textLabel .= '-' . implode('、', $details['period_names']);
+            }
+            return $textLabel;
+        }
+        
+        // Priority 3: time_slot_name from details
         if (!empty($details['time_slot_name'])) {
             return $details['time_slot_name'];
         }
         
-        // Priority 3: option_label from details
+        // Priority 4: option_label from details
         if (!empty($details['option_label'])) {
             return $details['option_label'];
         }
         
-        // Priority 4: Look up option in input_config
+        // Priority 5: Look up option in input_config
         $optionKey = $details['option'] ?? null;
         if ($optionKey && is_string($optionKey)) {
             $options = $inputConfig['options'] ?? [];
