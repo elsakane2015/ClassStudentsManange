@@ -381,11 +381,14 @@ class AttendanceExportController extends Controller
                         $columnKey = 'leave_' . $leaveType->id . '_' . $optKey;
                         
                         if ($exportFormat === 'detail') {
-                            // Detail format: show dates
-                            $dates = $optionRecords->map(function($rec) {
-                                return Carbon::parse($rec->date)->format('n/j');
+                            // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
+                            $details = $optionRecords->map(function($rec) {
+                                $date = Carbon::parse($rec->date)->format('Y-m-d');
+                                $source = $this->getSourceLabel($rec->source_type);
+                                $detail = $this->getRecordDetail($rec);
+                                return $date . $source . '(' . $detail . ')';
                             })->toArray();
-                            $row[$columnKey] = !empty($dates) ? implode(', ', $dates) : '';
+                            $row[$columnKey] = !empty($details) ? implode(' | ', $details) : '';
                         } else {
                             // Count format
                             if ($isTimeOption) {
@@ -407,10 +410,14 @@ class AttendanceExportController extends Controller
                     // No options, just count
                     $columnKey = 'leave_' . $leaveType->id . '_count';
                     if ($exportFormat === 'detail') {
-                        $dates = $typeRecords->map(function($rec) {
-                            return Carbon::parse($rec->date)->format('n/j');
+                        // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
+                        $details = $typeRecords->map(function($rec) {
+                            $date = Carbon::parse($rec->date)->format('Y-m-d');
+                            $source = $this->getSourceLabel($rec->source_type);
+                            $detail = $this->getRecordDetail($rec);
+                            return $date . $source . '(' . $detail . ')';
                         })->toArray();
-                        $row[$columnKey] = !empty($dates) ? implode(', ', $dates) : '';
+                        $row[$columnKey] = !empty($details) ? implode(' | ', $details) : '';
                     } else {
                         $row[$columnKey] = $typeRecords->count() ?: '';
                     }
@@ -434,10 +441,12 @@ class AttendanceExportController extends Controller
                 });
 
                 if ($exportFormat === 'detail') {
-                    $dates = $typeAbsentRecords->map(function($rec) {
-                        return Carbon::parse($rec->roll_call_time)->format('n/j');
+                    // 点名缺勤的详细格式：日期点名缺勤
+                    $details = $typeAbsentRecords->map(function($rec) {
+                        $date = Carbon::parse($rec->roll_call_time)->format('Y-m-d');
+                        return $date . '点名缺勤';
                     })->toArray();
-                    $row[$columnKey] = !empty($dates) ? implode(', ', $dates) : '';
+                    $row[$columnKey] = !empty($details) ? implode(' | ', $details) : '';
                 } else {
                     $row[$columnKey] = $typeAbsentRecords->count() ?: '';
                 }
@@ -514,6 +523,61 @@ class AttendanceExportController extends Controller
             $columnNumber = intval($columnNumber / 26);
         }
         return $letter;
+    }
+
+    /**
+     * 获取来源标签
+     */
+    private function getSourceLabel($sourceType): string
+    {
+        return match($sourceType) {
+            'manual', 'manual_bulk' => '标记',
+            'leave_request' => '申请',
+            'roll_call' => '点名',
+            default => '系统',
+        };
+    }
+
+    /**
+     * 获取记录详细信息
+     */
+    private function getRecordDetail($record): string
+    {
+        $details = is_string($record->details) 
+            ? json_decode($record->details, true) 
+            : ($record->details ?? []);
+        
+        // 优先级1: display_label
+        if (!empty($details['display_label'])) {
+            return $details['display_label'];
+        }
+        
+        // 优先级2: text + period_names
+        if (!empty($details['text'])) {
+            $text = $details['text'];
+            if (!empty($details['period_names']) && is_array($details['period_names'])) {
+                $text .= '-' . implode('、', $details['period_names']);
+            }
+            return $text;
+        }
+        
+        // 优先级3: option_label
+        if (!empty($details['option_label'])) {
+            return $details['option_label'];
+        }
+        
+        // 优先级4: time_slot_name
+        if (!empty($details['time_slot_name'])) {
+            return $details['time_slot_name'];
+        }
+        
+        // 优先级5: period_names
+        if (!empty($details['period_names']) && is_array($details['period_names'])) {
+            return implode('、', $details['period_names']);
+        }
+        
+        // 默认
+        return '全天';
     }
 
     /**

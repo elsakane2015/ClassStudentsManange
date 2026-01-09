@@ -300,7 +300,7 @@ export default function AttendanceExportModal({ isOpen, onClose, scope, selected
                                         onChange={() => setExportFormat('detail')}
                                         className="h-4 w-4 text-indigo-600"
                                     />
-                                    <span className="ml-2">详细日期 (如: 12/10(上午), 12/15)</span>
+                                    <span className="ml-2">详细信息 (如: 2026-01-09标记(早操))</span>
                                 </label>
                             </div>
                         </div>
