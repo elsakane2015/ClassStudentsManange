@@ -2562,13 +2562,28 @@ class AttendanceController extends Controller
                     $sourceLabels = [
                         'roll_call' => '点名',
                         'manual' => '标记',
+                        'manual_bulk' => '标记',
                         'leave_request' => '申请',
+                        'self_applied' => '申请',  // 自主申请
                     ];
+                    
+                    // 去重：按 date + leave_type_id + option 去重，避免同类型记录重复显示
+                    $uniqueRecords = $records->unique(function ($record) {
+                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+                        $option = is_array($details) ? ($details['option'] ?? $details['display_label'] ?? '') : '';
+                        $periodIds = is_array($details) ? ($details['period_ids'] ?? []) : [];
+                        $periodKey = is_array($periodIds) ? implode(',', $periodIds) : '';
+                        return $record->date . '-' . $record->leave_type_id . '-' . $option . '-' . $periodKey . '-' . $record->source_type;
+                    })->values();
                     
                     // For today, show all records with source labels, separated by |
                     $detailParts = [];
-                    foreach ($records as $record) {
+                    foreach ($uniqueRecords as $record) {
+                        // 判断来源类型：优先使用 is_self_applied 字段
                         $sourceType = $record->source_type ?? 'manual';
+                        if ($record->is_self_applied) {
+                            $sourceType = 'self_applied';
+                        }
                         $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
                         
                         $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
@@ -2584,8 +2599,8 @@ class AttendanceController extends Controller
                             } else {
                                 $detailContent = '点名记录';
                             }
-                        } elseif ($sourceType === 'leave_request') {
-                            // 请假申请来源：显示请假类型 + 时段
+                        } elseif (in_array($sourceType, ['leave_request', 'self_applied'])) {
+                            // 请假/申请来源：显示请假类型 + 时段
                             if ($record->leaveType) {
                                 $detailContent = $record->leaveType->name;
                             }
@@ -2703,7 +2718,8 @@ class AttendanceController extends Controller
 
                 // 为每条记录添加 detail 字段（与 studentRecords 方法保持一致）
                 $enrichedRecords = [];
-                foreach ($records as $index => $record) {
+                $recordsToEnrich = $scope === 'today' ? $uniqueRecords : $records;
+                foreach ($recordsToEnrich as $index => $record) {
                     $recordArray = $record->toArray();
                     // 复用上面循环中已经计算的 detailParts（如果是 today scope）
                     if ($scope === 'today' && isset($detailParts[$index])) {
@@ -2711,6 +2727,9 @@ class AttendanceController extends Controller
                     } else {
                         // Fallback: 重新计算 detail（与 studentRecords 逻辑一致）
                         $sourceType = $record->source_type ?? 'manual';
+                        if ($record->is_self_applied) {
+                            $sourceType = 'self_applied';
+                        }
                         $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
                         
                         $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
@@ -2725,7 +2744,7 @@ class AttendanceController extends Controller
                             } else {
                                 $detailContent = '点名记录';
                             }
-                        } elseif ($sourceType === 'leave_request') {
+                        } elseif (in_array($sourceType, ['leave_request', 'self_applied'])) {
                             if ($record->leaveType) {
                                 $detailContent = $record->leaveType->name;
                             }
