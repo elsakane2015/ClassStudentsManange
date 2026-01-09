@@ -1021,6 +1021,40 @@ class RollCallController extends Controller
                 continue;
             }
             
+            // 当记录有具体节次但点名类型没有配置节次时
+            // 需要检查记录的节次名称是否与点名类型名称匹配
+            if (!empty($recordPeriodIds) && empty($rollCallPeriodIdsInt)) {
+                // 获取记录的节次名称
+                $recordPeriodNames = $details['period_names'] ?? [];
+                
+                // 检查节次名称是否与点名类型匹配
+                // 例如：记录是"早读+早操"，点名类型是"晚操"，则不匹配
+                $hasMatch = false;
+                foreach ($recordPeriodNames as $periodName) {
+                    // 去掉"操"字进行模糊匹配，如"早操" -> "早", "晚操" -> "晚"
+                    $normalizedPeriodName = str_replace('操', '', $periodName);
+                    $normalizedRollCallName = str_replace(['点名', '操'], '', $rollCallTypeName);
+                    
+                    if ($normalizedPeriodName === $normalizedRollCallName ||
+                        str_contains($rollCallTypeName, $periodName) ||
+                        str_contains($periodName, $normalizedRollCallName)) {
+                        $hasMatch = true;
+                        break;
+                    }
+                }
+                
+                if ($hasMatch) {
+                    return [
+                        'leave_type_id' => $record->leave_type_id,
+                        'detail' => $typeName . '(' . $displayLabel . ')',
+                        'status' => $status,
+                    ];
+                }
+                
+                // 节次名称与点名类型不匹配，跳过此记录
+                continue;
+            }
+            
             // Format 1: Check for "option" field (e.g., {"option": "evening_exercise"})
             // This is used by leave types with duration_select input (like 生理假)
             $optionKey = $details['option'] ?? null;
