@@ -383,22 +383,36 @@ class AttendanceExportController extends Controller
                         
                         // Filter records for this specific option
                         // 需要同时匹配 option、time_slot_name 和 display_label
-                        $optionRecords = $uniqueRecords->filter(function($rec) use ($optKey, $optLabel) {
+                        $optionRecords = $uniqueRecords->filter(function($rec) use ($optKey, $optLabel, $options) {
                             $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
                             
+                            $recordOption = $recDetails['option'] ?? '';
+                            $timeSlotName = $recDetails['time_slot_name'] ?? '';
+                            $displayLabel = $recDetails['display_label'] ?? '';
+                            
+                            // 关键逻辑：如果当前列不是 full_day，但记录是 full_day，则不匹配
+                            // 这样可以防止"全天"请假出现在"早操"等其他列中
+                            if ($optKey !== 'full_day') {
+                                // 检查记录是否是全天类型
+                                $isFullDayRecord = in_array($recordOption, ['full_day', 'all_day']) ||
+                                                   in_array($timeSlotName, ['全天', '全日']) ||
+                                                   in_array($displayLabel, ['全天', '全日']);
+                                if ($isFullDayRecord) {
+                                    return false; // 全天记录不应出现在非全天的列中
+                                }
+                            }
+                            
                             // 方式1: 直接匹配 option
-                            if (($recDetails['option'] ?? '') === $optKey) {
+                            if ($recordOption === $optKey) {
                                 return true;
                             }
                             
                             // 方式2: 匹配 time_slot_name（如"全天"、"上午"）
-                            $timeSlotName = $recDetails['time_slot_name'] ?? '';
                             if ($timeSlotName && $timeSlotName === $optLabel) {
                                 return true;
                             }
                             
                             // 方式3: 匹配 display_label
-                            $displayLabel = $recDetails['display_label'] ?? '';
                             if ($displayLabel && $displayLabel === $optLabel) {
                                 return true;
                             }
@@ -412,7 +426,7 @@ class AttendanceExportController extends Controller
                             // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
                             $details = $optionRecords->map(function($rec) {
                                 $date = Carbon::parse($rec->date)->format('Y-m-d');
-                                $source = $this->getSourceLabel($rec->source_type);
+                                $source = $this->getSourceLabel($rec->source_type, $rec->is_self_applied ?? false);
                                 $detail = $this->getRecordDetail($rec);
                                 return $date . $source . '(' . $detail . ')';
                             })->toArray();
@@ -441,7 +455,7 @@ class AttendanceExportController extends Controller
                         // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
                         $details = $uniqueRecords->map(function($rec) {
                             $date = Carbon::parse($rec->date)->format('Y-m-d');
-                            $source = $this->getSourceLabel($rec->source_type);
+                            $source = $this->getSourceLabel($rec->source_type, $rec->is_self_applied ?? false);
                             $detail = $this->getRecordDetail($rec);
                             return $date . $source . '(' . $detail . ')';
                         })->toArray();
@@ -555,14 +569,21 @@ class AttendanceExportController extends Controller
 
     /**
      * 获取来源标签
+     * @param string|null $sourceType 来源类型
+     * @param bool $isSelfApplied 是否是学生自主申请
      */
-    private function getSourceLabel($sourceType): string
+    private function getSourceLabel($sourceType, $isSelfApplied = false): string
     {
+        // 优先检查 is_self_applied 字段
+        if ($isSelfApplied) {
+            return '申请';
+        }
+        
         return match($sourceType) {
             'manual', 'manual_bulk' => '标记',
-            'leave_request' => '申请',
+            'leave_request', 'self_applied' => '申请',
             'roll_call' => '点名',
-            default => '系统',
+            default => '标记',  // 默认改为"标记"而不是"系统"
         };
     }
 
