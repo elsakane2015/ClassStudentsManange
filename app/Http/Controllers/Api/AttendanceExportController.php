@@ -366,16 +366,44 @@ class AttendanceExportController extends Controller
                 $config = $leaveType->input_config ?? [];
                 $options = $config['options'] ?? [];
                 
+                // 按 leave_batch_id 去重（同一次请假申请只算一次）
+                $uniqueRecords = $typeRecords->groupBy(function($rec) {
+                    // 如果有 leave_batch_id，用它分组；否则用 id
+                    return $rec->leave_batch_id ?? 'single_' . $rec->id;
+                })->map(function($group) {
+                    return $group->first(); // 每组只取第一条
+                });
+                
                 if (!empty($options)) {
                     // Process each option separately
                     foreach ($options as $opt) {
                         $optKey = $opt['key'] ?? '';
+                        $optLabel = $opt['label'] ?? $optKey;
                         $isTimeOption = in_array($optKey, ['morning_half', 'afternoon_half', 'full_day']);
                         
                         // Filter records for this specific option
-                        $optionRecords = $typeRecords->filter(function($rec) use ($optKey) {
+                        // 需要同时匹配 option、time_slot_name 和 display_label
+                        $optionRecords = $uniqueRecords->filter(function($rec) use ($optKey, $optLabel) {
                             $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
-                            return ($recDetails['option'] ?? '') === $optKey;
+                            
+                            // 方式1: 直接匹配 option
+                            if (($recDetails['option'] ?? '') === $optKey) {
+                                return true;
+                            }
+                            
+                            // 方式2: 匹配 time_slot_name（如"全天"、"上午"）
+                            $timeSlotName = $recDetails['time_slot_name'] ?? '';
+                            if ($timeSlotName && $timeSlotName === $optLabel) {
+                                return true;
+                            }
+                            
+                            // 方式3: 匹配 display_label
+                            $displayLabel = $recDetails['display_label'] ?? '';
+                            if ($displayLabel && $displayLabel === $optLabel) {
+                                return true;
+                            }
+                            
+                            return false;
                         });
                         
                         $columnKey = 'leave_' . $leaveType->id . '_' . $optKey;
@@ -407,11 +435,11 @@ class AttendanceExportController extends Controller
                         }
                     }
                 } else {
-                    // No options, just count
+                    // No options, just count (also deduplicated)
                     $columnKey = 'leave_' . $leaveType->id . '_count';
                     if ($exportFormat === 'detail') {
                         // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
-                        $details = $typeRecords->map(function($rec) {
+                        $details = $uniqueRecords->map(function($rec) {
                             $date = Carbon::parse($rec->date)->format('Y-m-d');
                             $source = $this->getSourceLabel($rec->source_type);
                             $detail = $this->getRecordDetail($rec);
@@ -419,7 +447,7 @@ class AttendanceExportController extends Controller
                         })->toArray();
                         $row[$columnKey] = !empty($details) ? implode(' | ', $details) : '';
                     } else {
-                        $row[$columnKey] = $typeRecords->count() ?: '';
+                        $row[$columnKey] = $uniqueRecords->count() ?: '';
                     }
                 }
             }
