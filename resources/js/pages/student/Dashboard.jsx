@@ -329,6 +329,18 @@ export default function StudentDashboard() {
                                 if (details.option_periods) {
                                     detailLabel += ` (${details.option_periods}节)`;
                                 }
+                                // 处理文本输入类型：显示文本 + 节次（如果有）
+                            } else if (details.text) {
+                                detailLabel = details.text;
+                                // 如果有节次信息，添加到文本后面
+                                if (details.period_names && Array.isArray(details.period_names) && details.period_names.length > 0) {
+                                    detailLabel += '-' + details.period_names.join('、');
+                                } else if (details.period_ids && Array.isArray(details.period_ids) && details.period_ids.length > 0) {
+                                    const periodNamesStr = formatPeriodNames(details.period_ids, periods, timeSlots);
+                                    if (periodNamesStr) {
+                                        detailLabel += '-' + periodNamesStr;
+                                    }
+                                }
                                 // 否则使用时段名称（自主请假选择的时段，如"上午"、"下午"）
                             } else if (details.time_slot_name) {
                                 detailLabel = details.time_slot_name;

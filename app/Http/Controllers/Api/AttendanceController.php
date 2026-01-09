@@ -950,6 +950,24 @@ class AttendanceController extends Controller
                 if (isset($details['option_periods'])) {
                     $optionLabel .= ' (' . $details['option_periods'] . '节)';
                 }
+            // 处理文本输入类型：显示文本 + 节次（如果有）
+            } elseif (isset($details['text']) && !empty($details['text'])) {
+                $optionLabel = $details['text'];
+                // 如果有节次信息，添加到文本后面
+                if (isset($details['period_names']) && is_array($details['period_names']) && count($details['period_names']) > 0) {
+                    $optionLabel .= '-' . implode('、', $details['period_names']);
+                } elseif (isset($details['period_ids']) && is_array($details['period_ids']) && count($details['period_ids']) > 0) {
+                    // 从 period_ids 获取节次名称
+                    $periodNames = [];
+                    foreach ($details['period_ids'] as $pid) {
+                        if (isset($periodMap[$pid])) {
+                            $periodNames[] = $periodMap[$pid]['name'] ?? "第{$pid}节";
+                        }
+                    }
+                    if (!empty($periodNames)) {
+                        $optionLabel .= '-' . implode('、', $periodNames);
+                    }
+                }
             // 其次使用 option_label（考勤标记时生成的自定义节次标签）
             } elseif (isset($details['option_label'])) {
                 $optionLabel = $details['option_label'];
