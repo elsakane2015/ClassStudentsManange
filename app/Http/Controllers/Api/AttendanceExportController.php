@@ -114,8 +114,8 @@ class AttendanceExportController extends Controller
                 ->groupBy('student_id');
         }
 
-        // Build data rows
-        $data = $this->buildDataRows($students, $attendanceRecords, $leaveTypes, $rollCallTypes, $exportFormat, $rollCallRecords);
+        // Build data rows - pass columns to use merged roll call types
+        $data = $this->buildDataRows($students, $attendanceRecords, $leaveTypes, $columns, $exportFormat, $rollCallRecords);
 
         // Generate Excel
         $spreadsheet = new Spreadsheet();
@@ -318,20 +318,35 @@ class AttendanceExportController extends Controller
             }
         }
 
-        // Add roll call type columns
+        // Add roll call type columns - MERGE by name
+        // 按名称合并点名类型，相同名称的类型共享一列
+        $mergedRollCallTypes = [];
         foreach ($rollCallTypes as $rollCallType) {
+            $name = $rollCallType->name;
+            if (!isset($mergedRollCallTypes[$name])) {
+                $mergedRollCallTypes[$name] = [
+                    'name' => $name,
+                    'ids' => [$rollCallType->id],
+                ];
+            } else {
+                $mergedRollCallTypes[$name]['ids'][] = $rollCallType->id;
+            }
+        }
+
+        foreach ($mergedRollCallTypes as $name => $merged) {
+            // 使用所有 ID 的 JSON 作为 key，确保唯一性
             $columns[] = [
-                'key' => 'rollcall_' . $rollCallType->id,
-                'label' => $rollCallType->name . '缺勤(次)',
-                'type' => 'rollcall',
-                'roll_call_type_id' => $rollCallType->id,
+                'key' => 'rollcall_merged_' . md5(implode(',', $merged['ids'])),
+                'label' => $name . '缺勤(次)',
+                'type' => 'rollcall_merged',
+                'roll_call_type_ids' => $merged['ids'],
             ];
         }
 
         return $columns;
     }
 
-    private function buildDataRows($students, $attendanceRecords, $leaveTypes, $rollCallTypes, $exportFormat, $rollCallRecords = null): array
+    private function buildDataRows($students, $attendanceRecords, $leaveTypes, $columns, $exportFormat, $rollCallRecords = null): array
     {
         $rows = [];
         $rollCallRecords = $rollCallRecords ?? collect([]);
@@ -402,20 +417,29 @@ class AttendanceExportController extends Controller
                 }
             }
 
-            // Process roll call types (absent records from roll_call_records table)
+            // Process merged roll call types (absent records from roll_call_records table)
+            // 使用 columns 中的合并信息
             $studentRollCallRecords = $rollCallRecords->get($student->id, collect([]));
-            foreach ($rollCallTypes as $rollCallType) {
-                $typeAbsentRecords = $studentRollCallRecords->filter(function($rec) use ($rollCallType) {
-                    return $rec->roll_call_type_id == $rollCallType->id;
+            foreach ($columns as $column) {
+                if (($column['type'] ?? '') !== 'rollcall_merged') {
+                    continue;
+                }
+                
+                $typeIds = $column['roll_call_type_ids'] ?? [];
+                $columnKey = $column['key'];
+                
+                // 统计所有合并类型的缺勤记录
+                $typeAbsentRecords = $studentRollCallRecords->filter(function($rec) use ($typeIds) {
+                    return in_array($rec->roll_call_type_id, $typeIds);
                 });
 
                 if ($exportFormat === 'detail') {
                     $dates = $typeAbsentRecords->map(function($rec) {
                         return Carbon::parse($rec->roll_call_time)->format('n/j');
                     })->toArray();
-                    $row['rollcall_' . $rollCallType->id] = !empty($dates) ? implode(', ', $dates) : '';
+                    $row[$columnKey] = !empty($dates) ? implode(', ', $dates) : '';
                 } else {
-                    $row['rollcall_' . $rollCallType->id] = $typeAbsentRecords->count() ?: '';
+                    $row[$columnKey] = $typeAbsentRecords->count() ?: '';
                 }
             }
 

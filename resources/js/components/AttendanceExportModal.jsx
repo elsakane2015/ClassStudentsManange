@@ -25,6 +25,27 @@ export default function AttendanceExportModal({ isOpen, onClose, scope, selected
         }
     }, [isOpen]);
 
+    // 合并相同名称的点名类型
+    const mergeRollCallTypes = (rollCallTypes) => {
+        const merged = {};
+        rollCallTypes.forEach(rt => {
+            if (!merged[rt.name]) {
+                merged[rt.name] = {
+                    name: rt.name,
+                    ids: [rt.id]
+                };
+            } else {
+                merged[rt.name].ids.push(rt.id);
+            }
+        });
+        return Object.values(merged);
+    };
+
+    // 获取合并后的点名类型列表
+    const mergedRollCallTypes = React.useMemo(() => {
+        return mergeRollCallTypes(options.roll_call_types);
+    }, [options.roll_call_types]);
+
     const fetchOptions = async () => {
         setLoading(true);
         try {
@@ -34,7 +55,7 @@ export default function AttendanceExportModal({ isOpen, onClose, scope, selected
             setSelectedClasses(res.data.classes.map(c => c.id));
             // Auto-select all leave types
             setSelectedLeaveTypes(res.data.leave_types.map(lt => lt.id));
-            // Auto-select all roll call types
+            // Auto-select all roll call types (all original IDs)
             setSelectedRollCallTypes(res.data.roll_call_types.map(rt => rt.id));
         } catch (err) {
             console.error('Failed to fetch export options:', err);
@@ -136,7 +157,25 @@ export default function AttendanceExportModal({ isOpen, onClose, scope, selected
         if (selectedRollCallTypes.length === options.roll_call_types.length) {
             setSelectedRollCallTypes([]);
         } else {
+            // 选择所有原始 ID
             setSelectedRollCallTypes(options.roll_call_types.map(rt => rt.id));
+        }
+    };
+
+    // 检查某个合并后的类型是否被选中（需要其所有 IDs 都被选中）
+    const isMergedTypeSelected = (mergedType) => {
+        return mergedType.ids.every(id => selectedRollCallTypes.includes(id));
+    };
+
+    // 切换合并后的类型选中状态
+    const toggleMergedType = (mergedType, checked) => {
+        if (checked) {
+            // 添加该类型的所有 IDs
+            const newIds = [...new Set([...selectedRollCallTypes, ...mergedType.ids])];
+            setSelectedRollCallTypes(newIds);
+        } else {
+            // 移除该类型的所有 IDs
+            setSelectedRollCallTypes(selectedRollCallTypes.filter(id => !mergedType.ids.includes(id)));
         }
     };
 
@@ -310,7 +349,7 @@ export default function AttendanceExportModal({ isOpen, onClose, scope, selected
                                 />
                                 <label className="ml-2 text-sm font-medium text-gray-700">包含点名记录</label>
                             </div>
-                            {includeRollCall && options.roll_call_types.length > 0 && (
+                            {includeRollCall && mergedRollCallTypes.length > 0 && (
                                 <div className="ml-6">
                                     <div className="flex items-center justify-between mb-2">
                                         <span className="text-sm text-gray-500">点名类型</span>
@@ -323,18 +362,12 @@ export default function AttendanceExportModal({ isOpen, onClose, scope, selected
                                         </button>
                                     </div>
                                     <div className="flex flex-wrap gap-3 border rounded p-2">
-                                        {options.roll_call_types.map(rt => (
-                                            <label key={rt.id} className="flex items-center text-sm">
+                                        {mergedRollCallTypes.map(rt => (
+                                            <label key={rt.name} className="flex items-center text-sm">
                                                 <input
                                                     type="checkbox"
-                                                    checked={selectedRollCallTypes.includes(rt.id)}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) {
-                                                            setSelectedRollCallTypes([...selectedRollCallTypes, rt.id]);
-                                                        } else {
-                                                            setSelectedRollCallTypes(selectedRollCallTypes.filter(id => id !== rt.id));
-                                                        }
-                                                    }}
+                                                    checked={isMergedTypeSelected(rt)}
+                                                    onChange={(e) => toggleMergedType(rt, e.target.checked)}
                                                     className="h-4 w-4 text-indigo-600 rounded"
                                                 />
                                                 <span className="ml-2">{rt.name}</span>
