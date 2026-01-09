@@ -889,21 +889,11 @@ class RollCallController extends Controller
         $rollCallPeriodIds = $rollCallType?->period_ids ?? [];
         $rollCallPeriodIdsInt = !empty($rollCallPeriodIds) ? array_map('intval', $rollCallPeriodIds) : [];
         
-        // Get leave type IDs that don't affect roll call (affects_roll_call = false)
-        $excludedLeaveTypeIds = \App\Models\LeaveType::where('affects_roll_call', false)->pluck('id')->toArray();
-        
         // Find all non-present attendance records for this date (exclude roll_call source to avoid duplicates)
         $attendanceRecords = AttendanceRecord::where('student_id', $student->id)
             ->whereDate('date', $rollCallTime->toDateString())
             ->whereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave'])
             ->where('source_type', '!=', 'roll_call')  // Exclude roll call records
-            ->where(function ($q) use ($excludedLeaveTypeIds) {
-                // Exclude leave types that don't affect roll call
-                if (!empty($excludedLeaveTypeIds)) {
-                    $q->whereNull('leave_type_id')
-                      ->orWhereNotIn('leave_type_id', $excludedLeaveTypeIds);
-                }
-            })
             ->where(function ($q) {
                 // For leave/excused, require approval; for others (absent, late, early_leave), always show
                 $q->whereIn('status', ['absent', 'late', 'early_leave'])

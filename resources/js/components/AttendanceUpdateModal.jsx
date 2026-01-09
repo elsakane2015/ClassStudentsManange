@@ -1034,22 +1034,71 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                 console.error('Failed to parse input_config:', e);
                                             }
 
+                                            const withPeriods = config.with_periods !== false; // 默认启用节次选择
+
                                             return (
-                                                <div>
-                                                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                        {config.label || '去向说明'}
-                                                    </label>
-                                                    <textarea
-                                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                                        rows={3}
-                                                        placeholder={config.placeholder || '请输入说明...'}
-                                                        onChange={e => setInputData({
-                                                            ...inputData,
-                                                            text: e.target.value,
-                                                            text_label: config.label || '去向说明'
-                                                        })}
-                                                    />
-                                                    <p className="mt-1 text-xs text-gray-400">此说明将记录在考勤详情中</p>
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                            {config.label || '去向说明'}
+                                                        </label>
+                                                        <textarea
+                                                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                            rows={2}
+                                                            placeholder={config.placeholder || '请输入说明...'}
+                                                            value={inputData.text || ''}
+                                                            onChange={e => setInputData({
+                                                                ...inputData,
+                                                                text: e.target.value,
+                                                                text_label: config.label || '去向说明'
+                                                            })}
+                                                        />
+                                                    </div>
+
+                                                    {withPeriods && (
+                                                        <div>
+                                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                                选择节次 <span className="text-gray-400 font-normal">(点名时只在选定节次显示为活动状态)</span>
+                                                            </label>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {periods.map((period, index) => {
+                                                                    const isSelected = (inputData.period_ids || []).includes(period.id);
+                                                                    return (
+                                                                        <button
+                                                                            key={period.id}
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                const currentIds = inputData.period_ids || [];
+                                                                                let newIds;
+                                                                                if (isSelected) {
+                                                                                    newIds = currentIds.filter(id => id !== period.id);
+                                                                                } else {
+                                                                                    newIds = [...currentIds, period.id];
+                                                                                }
+                                                                                setInputData({
+                                                                                    ...inputData,
+                                                                                    period_ids: newIds
+                                                                                });
+                                                                            }}
+                                                                            className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${isSelected
+                                                                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                                                                    : 'bg-white border-gray-300 hover:bg-gray-50'
+                                                                                }`}
+                                                                        >
+                                                                            {period.name}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            {(inputData.period_ids || []).length > 0 && (
+                                                                <p className="mt-2 text-xs text-indigo-600">
+                                                                    已选：{(inputData.period_ids || []).length}节
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    <p className="text-xs text-gray-400">此说明将记录在考勤详情中</p>
                                                 </div>
                                             );
                                         })()}
