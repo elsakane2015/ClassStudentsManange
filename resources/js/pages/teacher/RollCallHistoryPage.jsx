@@ -118,6 +118,20 @@ export default function RollCallHistoryPage() {
         }
     };
 
+    const handleRestoreRollCall = async (id) => {
+        if (!confirm('确定要恢复此点名吗？恢复后状态将变为"进行中"，您可以继续进行点名操作。')) return;
+
+        try {
+            await axios.post(`/roll-calls/${id}/restore`);
+            // Update local state
+            setRollCalls(prev => prev.map(rc =>
+                rc.id === id ? { ...rc, status: 'in_progress' } : rc
+            ));
+        } catch (err) {
+            alert('恢复失败: ' + (err.response?.data?.error || err.message));
+        }
+    };
+
     const showAbsentList = async (rollCall) => {
         setAbsentModal({
             isOpen: true,
@@ -177,14 +191,25 @@ export default function RollCallHistoryPage() {
         printWindow.print();
     };
 
-    const getStatusBadge = (status) => {
+    const getStatusBadge = (status, rollCallId = null) => {
         switch (status) {
             case 'completed':
                 return <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">已完成</span>;
             case 'in_progress':
                 return <span className="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">进行中</span>;
             case 'cancelled':
-                return <span className="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800">已取消</span>;
+                return (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (rollCallId) handleRestoreRollCall(rollCallId);
+                        }}
+                        className="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800 hover:bg-blue-100 hover:text-blue-800 transition-colors cursor-pointer"
+                        title="点击恢复此点名"
+                    >
+                        已取消
+                    </button>
+                );
             default:
                 return null;
         }
@@ -329,7 +354,7 @@ export default function RollCallHistoryPage() {
                                                     </button>
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap text-center">
-                                                    {getStatusBadge(rc.status)}
+                                                    {getStatusBadge(rc.status, rc.id)}
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap text-center">
                                                     <div className="flex items-center justify-center gap-2">

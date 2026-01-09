@@ -161,6 +161,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/roll-calls/{rollCall}/mark', [\App\Http\Controllers\Api\RollCallController::class, 'mark']);
     Route::post('/roll-calls/{rollCall}/complete', [\App\Http\Controllers\Api\RollCallController::class, 'complete']);
     Route::post('/roll-calls/{rollCall}/cancel', [\App\Http\Controllers\Api\RollCallController::class, 'cancel']);
+    Route::post('/roll-calls/{rollCall}/restore', [\App\Http\Controllers\Api\RollCallController::class, 'restore']);
     Route::put('/roll-calls/{rollCall}/records/{record}', [\App\Http\Controllers\Api\RollCallController::class, 'updateRecord']);
     Route::apiResource('roll-calls', \App\Http\Controllers\Api\RollCallController::class)->only(['index', 'store', 'show', 'destroy']);
 

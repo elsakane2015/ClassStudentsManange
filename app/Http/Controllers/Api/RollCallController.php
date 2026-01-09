@@ -672,6 +672,48 @@ class RollCallController extends Controller
     }
 
     /**
+     * Restore a cancelled roll call (teacher or roll call admin with modify permission)
+     */
+    public function restore(Request $request, RollCall $rollCall)
+    {
+        $user = $request->user();
+
+        // Check permission
+        $canRestore = false;
+        
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $rollCall->class_id)->exists();
+            if ($ownsClass) {
+                $canRestore = true;
+            }
+        } elseif (in_array($user->role, ['admin', 'system_admin', 'department_manager', 'school_admin'])) {
+            $canRestore = true;
+        } elseif ($user->role === 'student' && $user->student && $rollCall->created_by === $user->id) {
+            // Student can restore their own roll call if they have modify permission
+            $admin = RollCallAdmin::where('student_id', $user->student->id)
+                ->where('class_id', $rollCall->class_id)
+                ->where('is_active', true)
+                ->first();
+            
+            if ($admin && $admin->can_modify_records) {
+                $canRestore = true;
+            }
+        }
+
+        if (!$canRestore) {
+            return response()->json(['error' => '您没有权限恢复此点名'], 403);
+        }
+
+        if ($rollCall->status !== 'cancelled') {
+            return response()->json(['error' => '只有已取消的点名才能被恢复'], 400);
+        }
+
+        $rollCall->update(['status' => 'in_progress']);
+        
+        return response()->json(['message' => '点名已恢复']);
+    }
+
+    /**
      * Update a record after completion (teacher or authorized roll call admin)
      */
     public function updateRecord(Request $request, RollCall $rollCall, RollCallRecord $record)
