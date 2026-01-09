@@ -2624,11 +2624,29 @@ class AttendanceController extends Controller
                         } else {
                             // 手动标记来源：优先显示display_label，否则显示option_label/time_slot_name，再否则显示节次
                             if (is_array($details)) {
+                                // 首先检查是否有 period_ids，用于获取节次名称
+                                $periodNamesFromIds = [];
+                                if (isset($details['period_ids']) && !empty($details['period_ids']) && is_array($details['period_ids'])) {
+                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
+                                    foreach ($details['period_ids'] as $periodId) {
+                                        foreach ($periodsArray as $p) {
+                                            if ((string)$p['id'] === (string)$periodId) {
+                                                $periodNamesFromIds[] = $p['name'];
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
                                 if (isset($details['display_label']) && !empty($details['display_label'])) {
                                     $detailContent = $details['display_label'];
                                 } elseif (isset($details['text']) && !empty($details['text'])) {
-                                    // 文本输入类型
+                                    // 文本输入类型：显示文本 + 节次（如果有）
                                     $detailContent = $details['text'];
+                                    if (!empty($periodNamesFromIds)) {
+                                        $detailContent .= '-' . implode('、', $periodNamesFromIds);
+                                    }
                                 } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                                     $detailContent = $details['option_label'];
                                 } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
@@ -2644,6 +2662,9 @@ class AttendanceController extends Controller
                                         'evening_exercise' => '晚操'
                                     ];
                                     $detailContent = $optionMap[$details['option']] ?? $details['option'];
+                                } elseif (!empty($periodNamesFromIds)) {
+                                    // 只有 period_ids 节次信息
+                                    $detailContent = implode('、', $periodNamesFromIds);
                                 } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
                                     // 使用 period_names（如 ["早读", "第1节"]）
                                     $detailContent = implode('、', $details['period_names']);
@@ -2752,24 +2773,63 @@ class AttendanceController extends Controller
                                 $detailContent = $record->leaveType->name;
                             }
                             if (is_array($details)) {
+                                // 获取 period_ids 对应的节次名称
+                                $periodNamesFromIds = [];
+                                if (isset($details['period_ids']) && !empty($details['period_ids']) && is_array($details['period_ids'])) {
+                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
+                                    foreach ($details['period_ids'] as $periodId) {
+                                        foreach ($periodsArray as $p) {
+                                            if ((string)$p['id'] === (string)$periodId) {
+                                                $periodNamesFromIds[] = $p['name'];
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
                                 if (isset($details['display_label'])) {
                                     $detailContent .= '(' . $details['display_label'] . ')';
                                 } elseif (isset($details['text'])) {
-                                    $detailContent .= '(' . $details['text'] . ')';
+                                    $textContent = $details['text'];
+                                    if (!empty($periodNamesFromIds)) {
+                                        $textContent .= '-' . implode('、', $periodNamesFromIds);
+                                    }
+                                    $detailContent .= '(' . $textContent . ')';
                                 } elseif (isset($details['option_label'])) {
                                     $detailContent .= '(' . $details['option_label'] . ')';
                                 }
                             }
                         } else {
                             if (is_array($details)) {
+                                // 获取 period_ids 对应的节次名称
+                                $periodNamesFromIds = [];
+                                if (isset($details['period_ids']) && !empty($details['period_ids']) && is_array($details['period_ids'])) {
+                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
+                                    foreach ($details['period_ids'] as $periodId) {
+                                        foreach ($periodsArray as $p) {
+                                            if ((string)$p['id'] === (string)$periodId) {
+                                                $periodNamesFromIds[] = $p['name'];
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
                                 if (isset($details['display_label']) && !empty($details['display_label'])) {
                                     $detailContent = $details['display_label'];
                                 } elseif (isset($details['text']) && !empty($details['text'])) {
                                     $detailContent = $details['text'];
+                                    if (!empty($periodNamesFromIds)) {
+                                        $detailContent .= '-' . implode('、', $periodNamesFromIds);
+                                    }
                                 } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                                     $detailContent = $details['option_label'];
                                 } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
                                     $detailContent = $details['time_slot_name'];
+                                } elseif (!empty($periodNamesFromIds)) {
+                                    $detailContent = implode('、', $periodNamesFromIds);
                                 } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
                                     $detailContent = implode('、', $details['period_names']);
                                 }
@@ -2981,11 +3041,27 @@ class AttendanceController extends Controller
             } else {
                 // 手动标记来源：优先显示display_label，否则显示option_label/time_slot_name，再否则显示节次
                 if (is_array($details)) {
+                    // 首先检查是否有 period_ids，用于获取节次名称
+                    $periodNamesFromIds = [];
+                    if (isset($details['period_ids']) && !empty($details['period_ids']) && is_array($details['period_ids'])) {
+                        foreach ($details['period_ids'] as $periodId) {
+                            foreach ($periodsArray as $p) {
+                                if ((string)$p['id'] === (string)$periodId) {
+                                    $periodNamesFromIds[] = $p['name'];
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
                     if (isset($details['display_label']) && !empty($details['display_label'])) {
                         $detailContent = $details['display_label'];
                     } elseif (isset($details['text']) && !empty($details['text'])) {
-                        // 文本输入类型
+                        // 文本输入类型：显示文本 + 节次（如果有）
                         $detailContent = $details['text'];
+                        if (!empty($periodNamesFromIds)) {
+                            $detailContent .= '-' . implode('、', $periodNamesFromIds);
+                        }
                     } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                         $detailContent = $details['option_label'];
                     } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
@@ -2999,6 +3075,9 @@ class AttendanceController extends Controller
                             'evening_exercise' => '晚操'
                         ];
                         $detailContent = $optionMap[$details['option']] ?? $details['option'];
+                    } elseif (!empty($periodNamesFromIds)) {
+                        // 只有节次信息
+                        $detailContent = implode('、', $periodNamesFromIds);
                     } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
                         $detailContent = implode('、', $details['period_names']);
                     } elseif (isset($details['periods']) && !empty($details['periods'])) {
