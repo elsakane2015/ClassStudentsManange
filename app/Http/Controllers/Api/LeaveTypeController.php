@@ -82,6 +82,10 @@ class LeaveTypeController extends Controller
                  \Illuminate\Support\Facades\DB::statement("ALTER TABLE leave_types ADD COLUMN input_type VARCHAR(255) NULL AFTER description");
                  \Illuminate\Support\Facades\DB::statement("ALTER TABLE leave_types ADD COLUMN input_config JSON NULL AFTER input_type");
             }
+            if (!\Illuminate\Support\Facades\Schema::hasColumn('leave_types', 'counts_as_absence')) {
+                 \Illuminate\Support\Facades\DB::statement("ALTER TABLE leave_types ADD COLUMN counts_as_absence TINYINT(1) NOT NULL DEFAULT 1");
+                 \Illuminate\Support\Facades\Schema::getConnection()->getSchemaBuilder()->getConnection()->reconnect();
+            }
         } catch (\Exception $e) {
             \Log::error('Auto-Fix Schema Failed: ' . $e->getMessage());
         }
