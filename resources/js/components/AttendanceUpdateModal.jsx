@@ -593,10 +593,21 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             // 处理文本输入类型
             if (details.text) {
                 // 截断过长的文本
-                const displayText = details.text.length > 20
-                    ? details.text.substring(0, 20) + '...'
+                const displayText = details.text.length > 15
+                    ? details.text.substring(0, 15) + '...'
                     : details.text;
-                detailText = `(${displayText})`;
+
+                // 如果同时有节次信息，一起显示
+                if (details.period_ids && Array.isArray(details.period_ids) && details.period_ids.length > 0) {
+                    const periodText = formatPeriodNames(details.period_ids, periods, timeSlots);
+                    // periodText 格式是 "(节次1、节次2)"，去掉括号
+                    const periodNames = periodText.replace(/[()]/g, '');
+                    detailText = `(${displayText}-${periodNames})`;
+                } else if (details.period_names && Array.isArray(details.period_names) && details.period_names.length > 0) {
+                    detailText = `(${displayText}-${details.period_names.join('、')})`;
+                } else {
+                    detailText = `(${displayText})`;
+                }
             }
         }
 
