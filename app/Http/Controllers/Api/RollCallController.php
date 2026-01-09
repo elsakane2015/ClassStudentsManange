@@ -359,32 +359,55 @@ class RollCallController extends Controller
             'records.leaveType',
         ]);
 
-        // 动态检查：遍历每个点名记录，检查是否有新的考勤标记
-        // 这样即使在点名开始后才进行考勤标记，刷新点名界面时也能正确显示
+        // 动态检查：遍历每个点名记录，实时检查最新的考勤标记
+        // 这样即使在点名完成后修改了考勤标记，刷新点名界面时也能正确显示最新状态
         $rollCallTime = $rollCall->roll_call_time;
         $rollCallType = $rollCall->rollCallType;
         
         foreach ($rollCall->records as $record) {
-            // 只检查非 on_leave 状态的记录（on_leave 已经是请假状态，无需再检查）
-            if ($record->status !== 'on_leave') {
-                $student = $record->student;
-                if ($student) {
-                    $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime, $rollCallType);
+            $student = $record->student;
+            if (!$student) continue;
+            
+            // 实时查询最新的考勤状态
+            $leaveInfo = $this->getStudentLeaveInfo($student, $rollCallTime, $rollCallType);
+            
+            if ($leaveInfo) {
+                // 有考勤标记，更新点名记录状态（如果有变化）
+                $newDetail = $leaveInfo['detail'] ?? null;
+                $newLeaveTypeId = $leaveInfo['leave_type_id'] ?? null;
+                $newLeaveStatus = $leaveInfo['status'] ?? null;
+                
+                // 检查是否需要更新
+                if ($record->status !== 'on_leave' || 
+                    $record->leave_detail !== $newDetail ||
+                    $record->leave_type_id != $newLeaveTypeId) {
                     
-                    if ($leaveInfo) {
-                        // 有新的考勤标记，更新点名记录状态
-                        $record->update([
-                            'status' => 'on_leave',
-                            'leave_type_id' => $leaveInfo['leave_type_id'] ?? null,
-                            'leave_detail' => $leaveInfo['detail'] ?? null,
-                            'leave_status' => $leaveInfo['status'] ?? null,
-                        ]);
-                        
-                        // 同时更新内存中的数据，确保返回正确的状态
-                        $record->status = 'on_leave';
-                        $record->leave_detail = $leaveInfo['detail'] ?? null;
-                        $record->leave_status = $leaveInfo['status'] ?? null;
-                    }
+                    $record->update([
+                        'status' => 'on_leave',
+                        'leave_type_id' => $newLeaveTypeId,
+                        'leave_detail' => $newDetail,
+                        'leave_status' => $newLeaveStatus,
+                    ]);
+                }
+                
+                // 同时更新内存中的数据，确保返回正确的状态
+                $record->status = 'on_leave';
+                $record->leave_detail = $newDetail;
+                $record->leave_status = $newLeaveStatus;
+            } else {
+                // 没有考勤标记了（可能被删除了）
+                // 如果之前是 on_leave 状态，需要恢复为 present
+                if ($record->status === 'on_leave') {
+                    $record->update([
+                        'status' => 'present',
+                        'leave_type_id' => null,
+                        'leave_detail' => null,
+                        'leave_status' => null,
+                    ]);
+                    
+                    $record->status = 'present';
+                    $record->leave_detail = null;
+                    $record->leave_status = null;
                 }
             }
         }
