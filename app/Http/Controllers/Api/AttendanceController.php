@@ -2626,6 +2626,9 @@ class AttendanceController extends Controller
                             if (is_array($details)) {
                                 if (isset($details['display_label']) && !empty($details['display_label'])) {
                                     $detailContent = $details['display_label'];
+                                } elseif (isset($details['text']) && !empty($details['text'])) {
+                                    // 文本输入类型
+                                    $detailContent = $details['text'];
                                 } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                                     $detailContent = $details['option_label'];
                                 } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
@@ -2751,6 +2754,8 @@ class AttendanceController extends Controller
                             if (is_array($details)) {
                                 if (isset($details['display_label'])) {
                                     $detailContent .= '(' . $details['display_label'] . ')';
+                                } elseif (isset($details['text'])) {
+                                    $detailContent .= '(' . $details['text'] . ')';
                                 } elseif (isset($details['option_label'])) {
                                     $detailContent .= '(' . $details['option_label'] . ')';
                                 }
@@ -2759,6 +2764,8 @@ class AttendanceController extends Controller
                             if (is_array($details)) {
                                 if (isset($details['display_label']) && !empty($details['display_label'])) {
                                     $detailContent = $details['display_label'];
+                                } elseif (isset($details['text']) && !empty($details['text'])) {
+                                    $detailContent = $details['text'];
                                 } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                                     $detailContent = $details['option_label'];
                                 } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
@@ -2976,6 +2983,9 @@ class AttendanceController extends Controller
                 if (is_array($details)) {
                     if (isset($details['display_label']) && !empty($details['display_label'])) {
                         $detailContent = $details['display_label'];
+                    } elseif (isset($details['text']) && !empty($details['text'])) {
+                        // 文本输入类型
+                        $detailContent = $details['text'];
                     } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                         $detailContent = $details['option_label'];
                     } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {

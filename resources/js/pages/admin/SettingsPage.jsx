@@ -225,6 +225,7 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
         data.student_requestable = formData.get('student_requestable') === 'on';
         data.use_conversion = formData.get('use_conversion') === 'on';
         data.counts_as_absence = formData.get('counts_as_absence') === 'on';
+        data.affects_roll_call = formData.get('affects_roll_call') === 'on';
 
         // Construct config based on input type
         let finalConfig = {};
@@ -472,6 +473,20 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
                     </label>
                     <p className="text-xs text-amber-600 mt-1 ml-6">
                         取消勾选后，该类型请假不会计入缺勤人数和出勤率计算（如：活动、学生会、外出实习等）
+                    </p>
+                </div>
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <label className="flex items-center cursor-pointer">
+                        <input
+                            name="affects_roll_call"
+                            type="checkbox"
+                            defaultChecked={initialData?.affects_roll_call ?? true}
+                            className="mr-2 h-4 w-4 text-blue-600 border-gray-300 rounded"
+                        />
+                        <span className="text-sm font-medium text-blue-800">影响点名状态</span>
+                    </label>
+                    <p className="text-xs text-blue-600 mt-1 ml-6">
+                        取消勾选后，该类型标记的学生在点名时仍显示为待签到状态，可正常点名（如：学生会、活动参与记录等）
                     </p>
                 </div>
             </div>
