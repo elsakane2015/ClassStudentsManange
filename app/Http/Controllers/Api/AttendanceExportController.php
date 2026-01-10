@@ -98,8 +98,8 @@ class AttendanceExportController extends Controller
             return response()->json(['error' => '暂无数据'], 400);
         }
 
-        // Build column headers (pass attendance records for dynamic column detection)
-        $columns = $this->buildColumns($leaveTypes, $rollCallTypes, $attendanceRecords);
+        // Build column headers
+        $columns = $this->buildColumns($leaveTypes, $rollCallTypes);
 
         // Get roll call absent records from roll_call_records table
         $rollCallRecords = collect([]);
@@ -274,7 +274,7 @@ class AttendanceExportController extends Controller
         }
     }
 
-    private function buildColumns($leaveTypes, $rollCallTypes, $attendanceRecords = null): array
+    private function buildColumns($leaveTypes, $rollCallTypes): array
     {
         $columns = [
             ['key' => 'student_no', 'label' => '学号'],
@@ -282,114 +282,16 @@ class AttendanceExportController extends Controller
             ['key' => 'class', 'label' => '班级'],
         ];
 
-        // 从实际数据中提取每个请假类型出现的时段
-        $actualSlotsPerType = [];
-        if ($attendanceRecords) {
-            $multiSlotSeparators = ['、', '，', ',', '/', '+'];
-            
-            foreach ($attendanceRecords as $studentRecords) {
-                foreach ($studentRecords as $record) {
-                    $leaveTypeId = $record->leave_type_id;
-                    if (!$leaveTypeId) continue;
-                    
-                    if (!isset($actualSlotsPerType[$leaveTypeId])) {
-                        $actualSlotsPerType[$leaveTypeId] = [];
-                    }
-                    
-                    $details = is_string($record->details) 
-                        ? json_decode($record->details, true) 
-                        : ($record->details ?? []);
-                    
-                    $displayLabel = $details['display_label'] ?? '';
-                    $timeSlotName = $details['time_slot_name'] ?? '';
-                    $periodNames = $details['period_names'] ?? [];
-                    
-                    // 从 display_label 提取时段
-                    if (!empty($displayLabel)) {
-                        $foundSep = false;
-                        foreach ($multiSlotSeparators as $sep) {
-                            if (strpos($displayLabel, $sep) !== false) {
-                                $slots = array_map('trim', explode($sep, $displayLabel));
-                                foreach ($slots as $slot) {
-                                    if (!empty($slot)) {
-                                        $actualSlotsPerType[$leaveTypeId][$slot] = true;
-                                    }
-                                }
-                                $foundSep = true;
-                                break;
-                            }
-                        }
-                        if (!$foundSep) {
-                            $actualSlotsPerType[$leaveTypeId][$displayLabel] = true;
-                        }
-                    }
-                    
-                    // 从 time_slot_name 提取时段
-                    if (!empty($timeSlotName)) {
-                        $foundSep = false;
-                        foreach ($multiSlotSeparators as $sep) {
-                            if (strpos($timeSlotName, $sep) !== false) {
-                                $slots = array_map('trim', explode($sep, $timeSlotName));
-                                foreach ($slots as $slot) {
-                                    if (!empty($slot)) {
-                                        $actualSlotsPerType[$leaveTypeId][$slot] = true;
-                                    }
-                                }
-                                $foundSep = true;
-                                break;
-                            }
-                        }
-                        if (!$foundSep) {
-                            $actualSlotsPerType[$leaveTypeId][$timeSlotName] = true;
-                        }
-                    }
-                    
-                    // 从 period_names 提取时段
-                    if (!empty($periodNames) && is_array($periodNames)) {
-                        foreach ($periodNames as $slot) {
-                            if (!empty($slot)) {
-                                $actualSlotsPerType[$leaveTypeId][$slot] = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Add leave type columns - each option gets its own column
         foreach ($leaveTypes as $leaveType) {
             $config = $leaveType->input_config ?? [];
             $options = $config['options'] ?? [];
             
-            // 收集配置中的所有时段标签
-            $configuredLabels = [];
-            foreach ($options as $opt) {
-                $optLabel = $opt['label'] ?? ($opt['key'] ?? '');
-                if (!empty($optLabel)) {
-                    $configuredLabels[$optLabel] = $opt;
-                }
-            }
-            
-            // 获取实际数据中出现的时段
-            $actualLabels = array_keys($actualSlotsPerType[$leaveType->id] ?? []);
-            
-            // 合并：配置的选项 + 实际数据中出现但未配置的时段
-            $allLabels = $configuredLabels;
-            foreach ($actualLabels as $label) {
-                if (!isset($allLabels[$label])) {
-                    // 为未配置的时段创建一个动态选项
-                    $allLabels[$label] = [
-                        'key' => 'dynamic_' . md5($label),
-                        'label' => $label,
-                    ];
-                }
-            }
-            
-            if (!empty($allLabels)) {
-                // Create a column for each option/slot
-                foreach ($allLabels as $label => $opt) {
-                    $optKey = $opt['key'] ?? ('dynamic_' . md5($label));
-                    $optLabel = $opt['label'] ?? $label;
+            if (!empty($options)) {
+                // Create a column for each option
+                foreach ($options as $opt) {
+                    $optKey = $opt['key'] ?? '';
+                    $optLabel = $opt['label'] ?? $optKey;
                     
                     // Determine unit based on option type
                     $isTimeOption = in_array($optKey, ['morning_half', 'afternoon_half', 'full_day']);
@@ -401,7 +303,6 @@ class AttendanceExportController extends Controller
                         'type' => 'leave_option',
                         'leave_type_id' => $leaveType->id,
                         'option_key' => $optKey,
-                        'option_label' => $optLabel,  // 添加 label 用于匹配
                         'is_time_option' => $isTimeOption,
                         'unit' => $unit,
                     ];
@@ -459,176 +360,179 @@ class AttendanceExportController extends Controller
 
             $records = $attendanceRecords->get($student->id, collect([]));
 
-            // 按 leave_type_id 分组记录
-            $recordsByLeaveType = [];
-            foreach ($records as $record) {
-                $leaveTypeId = $record->leave_type_id;
-                if (!$leaveTypeId) continue;
+            // Process leave types
+            foreach ($leaveTypes as $leaveType) {
+                $typeRecords = $records->where('leave_type_id', $leaveType->id);
+                $config = $leaveType->input_config ?? [];
+                $options = $config['options'] ?? [];
                 
-                // 排除点名来源的记录
-                if (($record->source_type ?? '') === 'roll_call') continue;
+                // 排除点名来源的记录（点名缺勤只在点名统计列显示，避免重复）
+                $typeRecords = $typeRecords->filter(function($rec) {
+                    return ($rec->source_type ?? '') !== 'roll_call';
+                });
                 
-                if (!isset($recordsByLeaveType[$leaveTypeId])) {
-                    $recordsByLeaveType[$leaveTypeId] = collect([]);
-                }
-                $recordsByLeaveType[$leaveTypeId]->push($record);
-            }
-            
-            // 对每个请假类型的记录进行去重
-            $uniqueRecordsByLeaveType = [];
-            foreach ($recordsByLeaveType as $leaveTypeId => $typeRecords) {
-                $uniqueRecordsByLeaveType[$leaveTypeId] = $typeRecords->groupBy(function($rec) {
+                // 按 leave_batch_id 去重（同一次请假申请只算一次）
+                $uniqueRecords = $typeRecords->groupBy(function($rec) {
+                    // 如果有 leave_batch_id，用它分组；否则用 id
                     return $rec->leave_batch_id ?? 'single_' . $rec->id;
                 })->map(function($group) {
-                    return $group->first();
+                    return $group->first(); // 每组只取第一条
                 });
-            }
-
-            // 处理所有请假类型相关的列（基于 columns，包括动态生成的列）
-            foreach ($columns as $column) {
-                $columnType = $column['type'] ?? '';
                 
-                if ($columnType === 'leave_option') {
-                    $leaveTypeId = $column['leave_type_id'];
-                    $optKey = $column['option_key'];
-                    $optLabel = $column['option_label'] ?? $optKey;
-                    $isTimeOption = $column['is_time_option'] ?? false;
-                    $columnKey = $column['key'];
-                    
-                    $uniqueRecords = $uniqueRecordsByLeaveType[$leaveTypeId] ?? collect([]);
-                    
-                    // Filter records for this specific option
-                    $optionRecords = $uniqueRecords->filter(function($rec) use ($optKey, $optLabel) {
-                        $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
+                if (!empty($options)) {
+                    // Process each option separately
+                    foreach ($options as $opt) {
+                        $optKey = $opt['key'] ?? '';
+                        $optLabel = $opt['label'] ?? $optKey;
+                        $isTimeOption = in_array($optKey, ['morning_half', 'afternoon_half', 'full_day']);
                         
-                        $recordOption = $recDetails['option'] ?? '';
-                        $timeSlotName = $recDetails['time_slot_name'] ?? '';
-                        $displayLabel = $recDetails['display_label'] ?? '';
-                        
-                        // 判断当前列是否是"全天"类型列
-                        $isFullDayColumn = in_array($optKey, ['full_day', 'all_day']) ||
-                                           in_array($optLabel, ['全天', '全日']);
-                        
-                        // 判断当前记录是否是"全天"类型记录
-                        $isFullDayRecord = in_array($recordOption, ['full_day', 'all_day']) ||
-                                           in_array($timeSlotName, ['全天', '全日']) ||
-                                           in_array($displayLabel, ['全天', '全日']);
-                        
-                        // 规则1：全天记录只能出现在全天列
-                        if (!$isFullDayColumn && $isFullDayRecord) {
-                            return false;
-                        }
-                        
-                        // 规则2：优先使用 display_label 或 time_slot_name 进行精确匹配
-                        $multiSlotSeparators = ['、', '，', ',', '/', '+'];
-                        
-                        // 检查 display_label 是否包含分隔符
-                        $displayHasMultiSlot = false;
-                        $displaySlotList = [];
-                        if (!empty($displayLabel)) {
-                            foreach ($multiSlotSeparators as $sep) {
-                                if (strpos($displayLabel, $sep) !== false) {
-                                    $displaySlotList = array_map('trim', explode($sep, $displayLabel));
-                                    $displayHasMultiSlot = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // 检查 time_slot_name 是否包含分隔符
-                        $timeSlotHasMultiSlot = false;
-                        $timeSlotList = [];
-                        if (!empty($timeSlotName)) {
-                            foreach ($multiSlotSeparators as $sep) {
-                                if (strpos($timeSlotName, $sep) !== false) {
-                                    $timeSlotList = array_map('trim', explode($sep, $timeSlotName));
-                                    $timeSlotHasMultiSlot = true;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // 场景1：display_label 包含多时段
-                        if ($displayHasMultiSlot && !empty($displaySlotList)) {
-                            return in_array($optLabel, $displaySlotList);
-                        }
-                        
-                        // 场景2：time_slot_name 包含多时段
-                        if ($timeSlotHasMultiSlot && !empty($timeSlotList)) {
-                            return in_array($optLabel, $timeSlotList);
-                        }
-                        
-                        // 场景3：display_label 是单个时段（精确匹配）
-                        if (!empty($displayLabel)) {
-                            return $displayLabel === $optLabel;
-                        }
-                        
-                        // 场景4：time_slot_name 是单个时段（精确匹配）
-                        if (!empty($timeSlotName)) {
-                            return $timeSlotName === $optLabel;
-                        }
-                        
-                        // 场景5：没有 display_label 和 time_slot_name，检查 period_names
-                        if (!empty($recDetails['period_names']) && is_array($recDetails['period_names'])) {
-                            $periodNames = $recDetails['period_names'];
-                            if (count($periodNames) > 1) {
-                                return in_array($optLabel, $periodNames);
-                            } elseif (count($periodNames) === 1) {
-                                return $periodNames[0] === $optLabel;
-                            }
-                        }
-                        
-                        // 场景6：检查 option 字段
-                        if (!empty($recordOption)) {
-                            return $recordOption === $optKey;
-                        }
-                        
-                        return false;
-                    });
-                    
-                    if ($exportFormat === 'detail') {
-                        $details = $optionRecords->map(function($rec) use ($optLabel) {
-                            $date = Carbon::parse($rec->date)->format('Y-m-d');
-                            $source = $this->getSourceLabel($rec->source_type, $rec->is_self_applied ?? false);
-                            
+                        // Filter records for this specific option
+                        // 严格匹配逻辑：记录的时段信息必须与当前列匹配
+                        $optionRecords = $uniqueRecords->filter(function($rec) use ($optKey, $optLabel, $options) {
                             $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
-                            $displayLabel = $recDetails['display_label'] ?? '';
-                            $timeSlotName = $recDetails['time_slot_name'] ?? '';
-                            $multiSlotSeparators = ['、', '，', ',', '/', '+'];
-                            $isMultiSlot = false;
                             
-                            foreach ($multiSlotSeparators as $sep) {
-                                if ((!empty($displayLabel) && strpos($displayLabel, $sep) !== false) ||
-                                    (!empty($timeSlotName) && strpos($timeSlotName, $sep) !== false)) {
-                                    $isMultiSlot = true;
-                                    break;
+                            $recordOption = $recDetails['option'] ?? '';
+                            $timeSlotName = $recDetails['time_slot_name'] ?? '';
+                            $displayLabel = $recDetails['display_label'] ?? '';
+                            
+                            // 判断当前列是否是"全天"类型列
+                            $isFullDayColumn = in_array($optKey, ['full_day', 'all_day']) ||
+                                               in_array($optLabel, ['全天', '全日']);
+                            
+                            // 判断当前记录是否是"全天"类型记录
+                            $isFullDayRecord = in_array($recordOption, ['full_day', 'all_day']) ||
+                                               in_array($timeSlotName, ['全天', '全日']) ||
+                                               in_array($displayLabel, ['全天', '全日']);
+                            
+                            // 规则1：全天记录只能出现在全天列
+                            if (!$isFullDayColumn && $isFullDayRecord) {
+                                return false;
+                            }
+                            
+                            // 规则2：优先使用 display_label 或 time_slot_name 进行精确匹配
+                            // 这可以正确处理旧记录（每条记录一个时段，但 period_names 可能包含多个）
+                            $multiSlotSeparators = ['、', '，', ',', '/', '+'];
+                            
+                            // 检查 display_label 是否包含分隔符
+                            $displayHasMultiSlot = false;
+                            $displaySlotList = [];
+                            if (!empty($displayLabel)) {
+                                foreach ($multiSlotSeparators as $sep) {
+                                    if (strpos($displayLabel, $sep) !== false) {
+                                        $displaySlotList = array_map('trim', explode($sep, $displayLabel));
+                                        $displayHasMultiSlot = true;
+                                        break;
+                                    }
                                 }
                             }
                             
-                            $detail = $isMultiSlot ? $optLabel : $this->getRecordDetail($rec);
-                            return $date . $source . '(' . $detail . ')';
-                        })->toArray();
-                        $row[$columnKey] = !empty($details) ? implode(' | ', $details) : '';
-                    } else {
-                        if ($isTimeOption) {
-                            $count = $optionRecords->count();
-                            if ($optKey === 'full_day') {
-                                $row[$columnKey] = $count > 0 ? $count : '';
-                            } else {
-                                $row[$columnKey] = $count > 0 ? ($count * 0.5) : '';
+                            // 检查 time_slot_name 是否包含分隔符
+                            $timeSlotHasMultiSlot = false;
+                            $timeSlotList = [];
+                            if (!empty($timeSlotName)) {
+                                foreach ($multiSlotSeparators as $sep) {
+                                    if (strpos($timeSlotName, $sep) !== false) {
+                                        $timeSlotList = array_map('trim', explode($sep, $timeSlotName));
+                                        $timeSlotHasMultiSlot = true;
+                                        break;
+                                    }
+                                }
                             }
+                            
+                            // 场景1：display_label 包含多时段（如"早操、晚操"）
+                            if ($displayHasMultiSlot && !empty($displaySlotList)) {
+                                return in_array($optLabel, $displaySlotList);
+                            }
+                            
+                            // 场景2：time_slot_name 包含多时段
+                            if ($timeSlotHasMultiSlot && !empty($timeSlotList)) {
+                                return in_array($optLabel, $timeSlotList);
+                            }
+                            
+                            // 场景3：display_label 是单个时段（精确匹配）
+                            if (!empty($displayLabel)) {
+                                return $displayLabel === $optLabel;
+                            }
+                            
+                            // 场景4：time_slot_name 是单个时段（精确匹配）
+                            if (!empty($timeSlotName)) {
+                                return $timeSlotName === $optLabel;
+                            }
+                            
+                            // 场景5：没有 display_label 和 time_slot_name，检查 period_names
+                            if (!empty($recDetails['period_names']) && is_array($recDetails['period_names'])) {
+                                $periodNames = $recDetails['period_names'];
+                                if (count($periodNames) > 1) {
+                                    // 多时段：检查 optLabel 是否在列表中
+                                    return in_array($optLabel, $periodNames);
+                                } elseif (count($periodNames) === 1) {
+                                    // 单时段：精确匹配
+                                    return $periodNames[0] === $optLabel;
+                                }
+                            }
+                            
+                            // 场景6：检查 option 字段
+                            if (!empty($recordOption)) {
+                                return $recordOption === $optKey;
+                            }
+                            
+                            // 规则3：记录没有明确时段信息，默认不匹配任何特定列
+                            return false;
+                        });
+                        
+                        $columnKey = 'leave_' . $leaveType->id . '_' . $optKey;
+                        
+                        if ($exportFormat === 'detail') {
+                            // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
+                            $details = $optionRecords->map(function($rec) use ($optLabel) {
+                                $date = Carbon::parse($rec->date)->format('Y-m-d');
+                                $source = $this->getSourceLabel($rec->source_type, $rec->is_self_applied ?? false);
+                                
+                                // 检查是否是多时段记录（display_label 或 time_slot_name 包含分隔符）
+                                // 只有这种情况才显示 optLabel，否则显示记录的实际内容
+                                $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
+                                $displayLabel = $recDetails['display_label'] ?? '';
+                                $timeSlotName = $recDetails['time_slot_name'] ?? '';
+                                $multiSlotSeparators = ['、', '，', ',', '/', '+'];
+                                $isMultiSlot = false;
+                                
+                                foreach ($multiSlotSeparators as $sep) {
+                                    if ((!empty($displayLabel) && strpos($displayLabel, $sep) !== false) ||
+                                        (!empty($timeSlotName) && strpos($timeSlotName, $sep) !== false)) {
+                                        $isMultiSlot = true;
+                                        break;
+                                    }
+                                }
+                                
+                                // 如果是多时段记录（display_label 包含分隔符），只显示当前列的时段名称
+                                // 否则显示记录的实际内容（即使 period_names 有多个，也使用实际的 display_label）
+                                $detail = $isMultiSlot ? $optLabel : $this->getRecordDetail($rec);
+                                
+                                return $date . $source . '(' . $detail . ')';
+                            })->toArray();
+                            $row[$columnKey] = !empty($details) ? implode(' | ', $details) : '';
                         } else {
-                            $row[$columnKey] = $optionRecords->count() ?: '';
+                            // Count format
+                            if ($isTimeOption) {
+                                // Time options: count as days (0.5 for half day, 1 for full day)
+                                $count = $optionRecords->count();
+                                if ($optKey === 'full_day') {
+                                    $row[$columnKey] = $count > 0 ? $count : '';
+                                } else {
+                                    // Half day = 0.5 per record
+                                    $row[$columnKey] = $count > 0 ? ($count * 0.5) : '';
+                                }
+                            } else {
+                                // Period options: count as times
+                                $row[$columnKey] = $optionRecords->count() ?: '';
+                            }
                         }
                     }
-                    
-                } elseif ($columnType === 'leave_count') {
-                    $leaveTypeId = $column['leave_type_id'];
-                    $columnKey = $column['key'];
-                    
-                    $uniqueRecords = $uniqueRecordsByLeaveType[$leaveTypeId] ?? collect([]);
-                    
+                } else {
+                    // No options, just count (also deduplicated)
+                    $columnKey = 'leave_' . $leaveType->id . '_count';
                     if ($exportFormat === 'detail') {
+                        // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
                         $details = $uniqueRecords->map(function($rec) {
                             $date = Carbon::parse($rec->date)->format('Y-m-d');
                             $source = $this->getSourceLabel($rec->source_type, $rec->is_self_applied ?? false);
