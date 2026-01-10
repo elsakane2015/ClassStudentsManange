@@ -488,14 +488,16 @@ class AttendanceExportController extends Controller
                                 $date = Carbon::parse($rec->date)->format('Y-m-d');
                                 $source = $this->getSourceLabel($rec->source_type, $rec->is_self_applied ?? false);
                                 
-                                // 检查是否是多时段记录（display_label 或 time_slot_name 包含分隔符）
-                                // 只有这种情况才显示 optLabel，否则显示记录的实际内容
+                                // 检查是否是多时段记录
+                                // 需要与匹配逻辑保持一致：检查 display_label、time_slot_name 是否包含分隔符，以及 period_names 是否有多个
                                 $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
                                 $displayLabel = $recDetails['display_label'] ?? '';
                                 $timeSlotName = $recDetails['time_slot_name'] ?? '';
+                                $periodNames = $recDetails['period_names'] ?? [];
                                 $multiSlotSeparators = ['、', '，', ',', '/', '+'];
                                 $isMultiSlot = false;
                                 
+                                // 检查 display_label 或 time_slot_name 是否包含分隔符
                                 foreach ($multiSlotSeparators as $sep) {
                                     if ((!empty($displayLabel) && strpos($displayLabel, $sep) !== false) ||
                                         (!empty($timeSlotName) && strpos($timeSlotName, $sep) !== false)) {
@@ -504,8 +506,13 @@ class AttendanceExportController extends Controller
                                     }
                                 }
                                 
-                                // 如果是多时段记录（display_label 包含分隔符），只显示当前列的时段名称
-                                // 否则显示记录的实际内容（即使 period_names 有多个，也使用实际的 display_label）
+                                // 也检查 period_names 数组（与匹配逻辑保持一致）
+                                if (!$isMultiSlot && !empty($periodNames) && is_array($periodNames) && count($periodNames) > 1) {
+                                    $isMultiSlot = true;
+                                }
+                                
+                                // 如果是多时段记录，只显示当前列的时段名称
+                                // 否则显示记录的实际内容
                                 $detail = $isMultiSlot ? $optLabel : $this->getRecordDetail($rec);
                                 
                                 return $date . $source . '(' . $detail . ')';
