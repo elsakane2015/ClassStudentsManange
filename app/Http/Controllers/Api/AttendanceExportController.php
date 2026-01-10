@@ -409,8 +409,37 @@ class AttendanceExportController extends Controller
                                 return false;
                             }
                             
-                            // 规则2：如果记录有明确的时段信息，必须严格匹配当前列
-                            // 防止"下午"出现在"早操"列中
+                            // 规则2：处理多时段记录（如"早操、晚操"）
+                            // 检查 display_label 或 time_slot_name 是否包含多个时段
+                            $multiSlotSeparators = ['、', '，', ',', '/', '+'];
+                            $hasMultiSlot = false;
+                            $slotList = [];
+                            
+                            foreach ($multiSlotSeparators as $sep) {
+                                if (!empty($displayLabel) && strpos($displayLabel, $sep) !== false) {
+                                    $slotList = array_map('trim', explode($sep, $displayLabel));
+                                    $hasMultiSlot = true;
+                                    break;
+                                }
+                                if (!empty($timeSlotName) && strpos($timeSlotName, $sep) !== false) {
+                                    $slotList = array_map('trim', explode($sep, $timeSlotName));
+                                    $hasMultiSlot = true;
+                                    break;
+                                }
+                            }
+                            
+                            // 也检查 period_names 数组（另一种多时段表示方式）
+                            if (!$hasMultiSlot && !empty($recDetails['period_names']) && is_array($recDetails['period_names']) && count($recDetails['period_names']) > 1) {
+                                $slotList = $recDetails['period_names'];
+                                $hasMultiSlot = true;
+                            }
+                            
+                            if ($hasMultiSlot && !empty($slotList)) {
+                                // 多时段记录：检查当前列的 optLabel 是否在时段列表中
+                                return in_array($optLabel, $slotList);
+                            }
+                            
+                            // 规则3：单时段记录，严格匹配当前列
                             $recordHasSpecificSlot = !empty($recordOption) || !empty($timeSlotName) || !empty($displayLabel);
                             
                             if ($recordHasSpecificSlot) {
@@ -423,8 +452,7 @@ class AttendanceExportController extends Controller
                                 return $matchesOption || $matchesTimeSlot || $matchesDisplay;
                             }
                             
-                            // 规则3：记录没有明确时段信息，默认不匹配任何特定列
-                            // （防止无时段信息的记录出现在所有列中）
+                            // 规则4：记录没有明确时段信息，默认不匹配任何特定列
                             return false;
                         });
                         
@@ -432,10 +460,33 @@ class AttendanceExportController extends Controller
                         
                         if ($exportFormat === 'detail') {
                             // Detail format: 日期来源(详细信息) | 日期来源(详细信息)
-                            $details = $optionRecords->map(function($rec) {
+                            $details = $optionRecords->map(function($rec) use ($optLabel) {
                                 $date = Carbon::parse($rec->date)->format('Y-m-d');
                                 $source = $this->getSourceLabel($rec->source_type, $rec->is_self_applied ?? false);
-                                $detail = $this->getRecordDetail($rec);
+                                
+                                // 检查是否是多时段记录，如果是则只显示当前列的时段名称
+                                $recDetails = is_string($rec->details) ? json_decode($rec->details, true) : ($rec->details ?? []);
+                                $displayLabel = $recDetails['display_label'] ?? '';
+                                $timeSlotName = $recDetails['time_slot_name'] ?? '';
+                                $multiSlotSeparators = ['、', '，', ',', '/', '+'];
+                                $isMultiSlot = false;
+                                
+                                foreach ($multiSlotSeparators as $sep) {
+                                    if ((!empty($displayLabel) && strpos($displayLabel, $sep) !== false) ||
+                                        (!empty($timeSlotName) && strpos($timeSlotName, $sep) !== false)) {
+                                        $isMultiSlot = true;
+                                        break;
+                                    }
+                                }
+                                
+                                // 也检查 period_names 数组
+                                if (!$isMultiSlot && !empty($recDetails['period_names']) && is_array($recDetails['period_names']) && count($recDetails['period_names']) > 1) {
+                                    $isMultiSlot = true;
+                                }
+                                
+                                // 如果是多时段记录，只显示当前列的时段名称
+                                $detail = $isMultiSlot ? $optLabel : $this->getRecordDetail($rec);
+                                
                                 return $date . $source . '(' . $detail . ')';
                             })->toArray();
                             $row[$columnKey] = !empty($details) ? implode(' | ', $details) : '';
