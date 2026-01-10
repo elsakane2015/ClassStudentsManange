@@ -366,6 +366,11 @@ class AttendanceExportController extends Controller
                 $config = $leaveType->input_config ?? [];
                 $options = $config['options'] ?? [];
                 
+                // 排除点名来源的记录（点名缺勤只在点名统计列显示，避免重复）
+                $typeRecords = $typeRecords->filter(function($rec) {
+                    return ($rec->source_type ?? '') !== 'roll_call';
+                });
+                
                 // 按 leave_batch_id 去重（同一次请假申请只算一次）
                 $uniqueRecords = $typeRecords->groupBy(function($rec) {
                     // 如果有 leave_batch_id，用它分组；否则用 id
