@@ -3,7 +3,7 @@ import Layout from '../../components/Layout';
 import axios from 'axios';
 import { format, parseISO } from 'date-fns';
 import { useParams, useNavigate } from 'react-router-dom';
-import { CheckIcon, XMarkIcon, ArrowLeftIcon, CheckCircleIcon, PencilIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, XMarkIcon, ArrowLeftIcon, CheckCircleIcon, PencilIcon, MinusIcon, PlusIcon } from '@heroicons/react/24/outline';
 import useAuthStore from '../../store/authStore';
 
 export default function RollCallOperationPage() {
@@ -17,6 +17,19 @@ export default function RollCallOperationPage() {
     const [searchTerm, setSearchTerm] = useState('');
     const [editingRecord, setEditingRecord] = useState(null);
     const [canModifyRecords, setCanModifyRecords] = useState(false);
+
+    // 列数配置，从 localStorage 读取，默认1列
+    const [columnCount, setColumnCount] = useState(() => {
+        const saved = localStorage.getItem('rollcall_column_count');
+        return saved ? parseInt(saved, 10) : 1;
+    });
+
+    // 保存列数到 localStorage
+    const updateColumnCount = (newCount) => {
+        const clampedCount = Math.max(1, Math.min(6, newCount));
+        setColumnCount(clampedCount);
+        localStorage.setItem('rollcall_column_count', clampedCount.toString());
+    };
 
     useEffect(() => {
         fetchRollCall();
@@ -230,17 +243,35 @@ export default function RollCallOperationPage() {
                             全部签到
                         </button>
                     )}
-                    {isInProgress && (
-                        <span className="text-sm text-gray-500">提示：点击学生行可切换签到状态</span>
-                    )}
-                    {isCompleted && canModifyRecords && (
-                        <span className="text-sm text-gray-500">提示：点击学生行可切换出勤状态</span>
-                    )}
+
+                    {/* 列数控制 */}
+                    <div className="flex items-center gap-2 ml-auto">
+                        <button
+                            onClick={() => updateColumnCount(columnCount - 1)}
+                            disabled={columnCount <= 1}
+                            className="p-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="减少列数"
+                        >
+                            <MinusIcon className="h-4 w-4" />
+                        </button>
+                        <span className="text-sm text-gray-600 min-w-[3rem] text-center">{columnCount}列</span>
+                        <button
+                            onClick={() => updateColumnCount(columnCount + 1)}
+                            disabled={columnCount >= 6}
+                            className="p-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="增加列数"
+                        >
+                            <PlusIcon className="h-4 w-4" />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Student List */}
                 <div className="bg-white rounded-lg shadow overflow-hidden">
-                    <div className="divide-y divide-gray-200">
+                    <div
+                        className="grid gap-px bg-gray-200"
+                        style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+                    >
                         {filteredRecords.map(record => {
                             const studentName = record.student?.user?.name || record.student?.name || '未知学生';
                             const studentNo = record.student?.student_no || '';
@@ -276,7 +307,7 @@ export default function RollCallOperationPage() {
                                 <div
                                     key={record.id}
                                     onClick={handleRowClick}
-                                    className={`p-4 flex items-center justify-between transition-all duration-150 ${isOnLeave ? 'bg-blue-50' :
+                                    className={`p-3 flex items-center justify-between transition-all duration-150 ${isOnLeave ? 'bg-blue-50' :
                                         isPresent ? 'bg-green-50' :
                                             isAbsent ? 'bg-red-50' : 'bg-white'
                                         } ${isRowClickable ? 'cursor-pointer hover:bg-opacity-80 active:scale-[0.99]' : ''}`}
