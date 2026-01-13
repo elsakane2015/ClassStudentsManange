@@ -592,12 +592,12 @@ export default function AttendanceModal({ classId, onClose, onSuccess }) {
                         <div className="fixed inset-0 bg-black bg-opacity-30" />
                         <div className="fixed inset-0 overflow-y-auto">
                             <div className="flex min-h-full items-center justify-center p-4 text-center">
-                                <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+                                <Dialog.Panel className="w-full max-w-md transform overflow-visible rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all" style={{ minHeight: '200px' }}>
                                     <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-gray-900 mb-4">
                                         {pendingAction?.leaveType?.name} - 详细信息
                                     </Dialog.Title>
 
-                                    <div className="space-y-4">
+                                    <div className="space-y-4" style={{ minHeight: '100px' }}>
                                         {renderInputFields()}
                                     </div>
 
