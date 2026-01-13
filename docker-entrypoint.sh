@@ -8,6 +8,12 @@ echo "Running Laravel initialization..."
 if [ -f /var/www/html/.env ]; then
     cd /var/www/html
     
+    # 创建存储符号链接（如果不存在）
+    if [ ! -L public/storage ]; then
+        php artisan storage:link || true
+        echo "Storage link created!"
+    fi
+    
     # 发现包
     php artisan package:discover --ansi || true
     
