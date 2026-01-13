@@ -58,17 +58,12 @@ else
 fi
 
 # ============================================
-# 3. 检测是否首次部署，自动运行迁移
+# 3. 数据库迁移（每次部署都运行）
 # ============================================
-# 通过检查 migrations 表是否存在来判断
-echo "Checking database status..."
-if php artisan migrate:status 2>&1 | grep -q "Migration table not found\|doesn't exist"; then
-    echo "First deployment detected, running migrations..."
-    php artisan migrate --force || true
-    echo "✓ Database migrations completed!"
-else
-    echo "✓ Database already migrated"
-fi
+# Laravel 的 migrate 是幂等的，只会运行未执行过的迁移
+echo "Running database migrations..."
+php artisan migrate --force || true
+echo "✓ Database migrations completed!"
 
 # ============================================
 # 4. 缓存优化
