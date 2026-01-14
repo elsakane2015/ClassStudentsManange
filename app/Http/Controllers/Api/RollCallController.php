@@ -1039,11 +1039,24 @@ class RollCallController extends Controller
                     continue; // No intersection, skip
                 }
                 
-                // Case 2: Roll call has no period_ids but record has period_names
+                // Case 2: Roll call has no period_ids but record has period_ids
                 // Use name-based matching (similar to absent/leave logic)
                 if (empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
+                    // 获取节次名称：优先从 details 读取，否则从数据库查询
                     $recordPeriodNames = $details['period_names'] ?? [];
-                    \Log::info('Case 2: Name-based matching', ['recordPeriodNames' => $recordPeriodNames]);
+                    if (empty($recordPeriodNames)) {
+                        // 从数据库查询节次名称
+                        $recordPeriodNames = \App\Models\Period::whereIn('id', $recordPeriodIds)
+                            ->pluck('name')
+                            ->toArray();
+                    }
+                    
+                    \Log::info('Case 2: Name-based matching', [
+                        'recordPeriodIds' => $recordPeriodIds,
+                        'recordPeriodNames' => $recordPeriodNames,
+                        'rollCallTypeName' => $rollCallTypeName,
+                    ]);
+                    
                     if (!empty($recordPeriodNames)) {
                         $hasMatch = false;
                         foreach ($recordPeriodNames as $periodName) {
