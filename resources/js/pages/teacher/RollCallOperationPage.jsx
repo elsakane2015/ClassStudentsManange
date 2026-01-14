@@ -320,46 +320,56 @@ export default function RollCallOperationPage() {
                                             isAbsent ? 'bg-red-50' : 'bg-white'
                                         } ${isRowClickable ? 'cursor-pointer hover:bg-opacity-80 active:scale-[0.99]' : ''}`}
                                 >
-                                    <div className="flex items-center gap-3">
-                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm ${isOnLeave ? 'bg-blue-500' :
+                                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${isOnLeave ? 'bg-blue-500' :
                                             isPresent ? 'bg-green-500' :
                                                 isAbsent ? 'bg-red-500' : 'bg-gray-300'
                                             }`}>
                                             {avatarContent}
                                         </div>
-                                        <div className="min-w-0">
+                                        <div className="min-w-0 flex-1">
                                             <div className="font-medium text-gray-900 truncate">{displayName}</div>
+                                            {/* 签到时间 - 所有列数都显示 */}
                                             {isPresent && record.marked_at_local && (
                                                 <div className="text-xs text-gray-400">
                                                     签到于 {record.marked_at_local}
                                                 </div>
                                             )}
+                                            {/* 请假信息 - 2列及以上时显示在名字下方 */}
+                                            {isOnLeave && columnCount >= 2 && (
+                                                <div className="text-xs text-blue-600 truncate">
+                                                    {record.leave_detail || '请假'}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
-                                        {isOnLeave ? (
-                                            <span className="px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
-                                                {record.leave_detail || '请假'}
-                                            </span>
-                                        ) : isCompleted || isCancelled ? (
-                                            /* Completed/Cancelled: show status badge */
-                                            <div className={`p-2 rounded-full transition-colors ${isPresent
-                                                ? 'bg-green-500 text-white'
-                                                : 'bg-red-500 text-white'
-                                                }`}>
-                                                <CheckIcon className="h-5 w-5" />
-                                            </div>
-                                        ) : (
-                                            /* In-progress: show simple check icon indicator */
-                                            <div className={`p-2 rounded-full transition-colors ${isPresent
-                                                ? 'bg-green-500 text-white'
-                                                : 'bg-gray-100 text-gray-400'
-                                                }`}>
-                                                <CheckIcon className="h-5 w-5" />
-                                            </div>
-                                        )}
-                                    </div>
+                                    {/* 右侧图标区域 - 1列时显示，2列及以上隐藏 */}
+                                    {columnCount === 1 && (
+                                        <div className="flex items-center gap-2 flex-shrink-0">
+                                            {isOnLeave ? (
+                                                <span className="px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
+                                                    {record.leave_detail || '请假'}
+                                                </span>
+                                            ) : isCompleted || isCancelled ? (
+                                                /* Completed/Cancelled: show status badge */
+                                                <div className={`p-2 rounded-full transition-colors ${isPresent
+                                                    ? 'bg-green-500 text-white'
+                                                    : 'bg-red-500 text-white'
+                                                    }`}>
+                                                    <CheckIcon className="h-5 w-5" />
+                                                </div>
+                                            ) : (
+                                                /* In-progress: show simple check icon indicator */
+                                                <div className={`p-2 rounded-full transition-colors ${isPresent
+                                                    ? 'bg-green-500 text-white'
+                                                    : 'bg-gray-100 text-gray-400'
+                                                    }`}>
+                                                    <CheckIcon className="h-5 w-5" />
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })}
