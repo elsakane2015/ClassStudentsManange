@@ -1014,9 +1014,21 @@ class RollCallController extends Controller
             if (in_array($status, ['late', 'early_leave'])) {
                 // Late/Early Leave: require period match
                 
+                // Debug logging
+                \Log::info('Late/EarlyLeave matching', [
+                    'student_id' => $student->id,
+                    'status' => $status,
+                    'rollCallTypeName' => $rollCallTypeName,
+                    'rollCallPeriodIdsInt' => $rollCallPeriodIdsInt,
+                    'recordPeriodIds' => $recordPeriodIds,
+                    'details' => $details,
+                    'displayLabel' => $displayLabel,
+                ]);
+                
                 // Case 1: Both have period_ids - use intersection
                 if (!empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
                     $intersection = array_intersect($recordPeriodIds, $rollCallPeriodIdsInt);
+                    \Log::info('Case 1: Both have period_ids', ['intersection' => $intersection]);
                     if (!empty($intersection)) {
                         return [
                             'leave_type_id' => $record->leave_type_id,
@@ -1031,6 +1043,7 @@ class RollCallController extends Controller
                 // Use name-based matching (similar to absent/leave logic)
                 if (empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
                     $recordPeriodNames = $details['period_names'] ?? [];
+                    \Log::info('Case 2: Name-based matching', ['recordPeriodNames' => $recordPeriodNames]);
                     if (!empty($recordPeriodNames)) {
                         $hasMatch = false;
                         foreach ($recordPeriodNames as $periodName) {
@@ -1038,10 +1051,17 @@ class RollCallController extends Controller
                             $normalizedPeriodName = str_replace('操', '', $periodName);
                             $normalizedRollCallName = str_replace(['点名', '操'], '', $rollCallTypeName);
                             
+                            \Log::info('Comparing', [
+                                'periodName' => $periodName,
+                                'normalizedPeriodName' => $normalizedPeriodName,
+                                'normalizedRollCallName' => $normalizedRollCallName,
+                            ]);
+                            
                             if ($normalizedPeriodName === $normalizedRollCallName ||
                                 str_contains($rollCallTypeName, $periodName) ||
                                 str_contains($periodName, $normalizedRollCallName)) {
                                 $hasMatch = true;
+                                \Log::info('Match found!');
                                 break;
                             }
                         }
@@ -1057,6 +1077,7 @@ class RollCallController extends Controller
                     continue; // No name match, skip
                 }
                 
+                \Log::info('No match path taken, skipping');
                 // No match - skip this record
                 continue;
             }
