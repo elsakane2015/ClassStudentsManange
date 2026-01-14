@@ -1012,8 +1012,9 @@ class RollCallController extends Controller
             
             // Different matching logic based on status
             if (in_array($status, ['late', 'early_leave'])) {
-                // Late/Early Leave: require EXACT period match
-                // Only show if the record's period_id is in the roll call's period_ids
+                // Late/Early Leave: require period match
+                
+                // Case 1: Both have period_ids - use intersection
                 if (!empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
                     $intersection = array_intersect($recordPeriodIds, $rollCallPeriodIdsInt);
                     if (!empty($intersection)) {
@@ -1023,7 +1024,39 @@ class RollCallController extends Controller
                             'status' => $status,
                         ];
                     }
+                    continue; // No intersection, skip
                 }
+                
+                // Case 2: Roll call has no period_ids but record has period_names
+                // Use name-based matching (similar to absent/leave logic)
+                if (empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
+                    $recordPeriodNames = $details['period_names'] ?? [];
+                    if (!empty($recordPeriodNames)) {
+                        $hasMatch = false;
+                        foreach ($recordPeriodNames as $periodName) {
+                            // 模糊匹配：去掉"操"字和"点名"
+                            $normalizedPeriodName = str_replace('操', '', $periodName);
+                            $normalizedRollCallName = str_replace(['点名', '操'], '', $rollCallTypeName);
+                            
+                            if ($normalizedPeriodName === $normalizedRollCallName ||
+                                str_contains($rollCallTypeName, $periodName) ||
+                                str_contains($periodName, $normalizedRollCallName)) {
+                                $hasMatch = true;
+                                break;
+                            }
+                        }
+                        
+                        if ($hasMatch) {
+                            return [
+                                'leave_type_id' => $record->leave_type_id,
+                                'detail' => $typeName . '(' . $displayLabel . ')',
+                                'status' => $status,
+                            ];
+                        }
+                    }
+                    continue; // No name match, skip
+                }
+                
                 // No match - skip this record
                 continue;
             }
