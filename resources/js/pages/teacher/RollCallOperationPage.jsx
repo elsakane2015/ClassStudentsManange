@@ -276,17 +276,13 @@ export default function RollCallOperationPage() {
                             const studentName = record.student?.user?.name || record.student?.name || '未知学生';
                             const studentNo = record.student?.student_no || '';
 
-                            // 紧凑模式：多列显示时或屏幕较窄时启用
-                            // 使用列数判断：2列及以上使用紧凑模式
-                            const isCompactMode = columnCount >= 2;
+                            // 始终使用紧凑显示：只显示姓名，头像显示学号尾号
+                            const displayName = studentName;
 
-                            // 紧凑模式下只显示姓名，正常模式显示学号+姓名
-                            const displayName = isCompactMode ? studentName : (studentNo ? `${studentNo} ${studentName}` : studentName);
-
-                            // 头像显示内容：紧凑模式显示学号尾号2位，正常模式显示姓氏
-                            const avatarContent = isCompactMode && studentNo
+                            // 头像显示学号尾号2位
+                            const avatarContent = studentNo
                                 ? studentNo.slice(-2)  // 取学号尾号2位
-                                : studentName.charAt(0);  // 取姓氏
+                                : studentName.charAt(0);  // 没有学号时显示姓氏
 
                             const isPresent = record.status === 'present';
                             const isOnLeave = record.status === 'on_leave';
@@ -324,15 +320,15 @@ export default function RollCallOperationPage() {
                                             isAbsent ? 'bg-red-50' : 'bg-white'
                                         } ${isRowClickable ? 'cursor-pointer hover:bg-opacity-80 active:scale-[0.99]' : ''}`}
                                 >
-                                    <div className="flex items-center gap-2">
-                                        <div className={`${isCompactMode ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-sm'} rounded-full flex items-center justify-center text-white font-medium ${isOnLeave ? 'bg-blue-500' :
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm ${isOnLeave ? 'bg-blue-500' :
                                             isPresent ? 'bg-green-500' :
                                                 isAbsent ? 'bg-red-500' : 'bg-gray-300'
                                             }`}>
                                             {avatarContent}
                                         </div>
                                         <div className="min-w-0">
-                                            <div className={`font-medium text-gray-900 ${isCompactMode ? 'text-sm' : ''} truncate`}>{displayName}</div>
+                                            <div className="font-medium text-gray-900 truncate">{displayName}</div>
                                             {isPresent && record.marked_at_local && (
                                                 <div className="text-xs text-gray-400">
                                                     签到于 {record.marked_at_local}
