@@ -1042,13 +1042,20 @@ class RollCallController extends Controller
                 // Case 2: Roll call has no period_ids but record has period_ids
                 // Use name-based matching (similar to absent/leave logic)
                 if (empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
-                    // 获取节次名称：优先从 details 读取，否则从数据库查询
+                    // 获取节次名称：优先从 details 读取，否则从 SystemSetting 查询
                     $recordPeriodNames = $details['period_names'] ?? [];
                     if (empty($recordPeriodNames)) {
-                        // 从数据库查询节次名称
-                        $recordPeriodNames = \App\Models\Period::whereIn('id', $recordPeriodIds)
-                            ->pluck('name')
-                            ->toArray();
+                        // 从 SystemSetting 查询节次名称
+                        $periodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                        $periodsConfig = $periodsJson ? json_decode($periodsJson, true) : [];
+                        foreach ($recordPeriodIds as $pid) {
+                            foreach ($periodsConfig as $period) {
+                                if (isset($period['id']) && (int)$period['id'] === (int)$pid) {
+                                    $recordPeriodNames[] = $period['name'] ?? '';
+                                    break;
+                                }
+                            }
+                        }
                     }
                     
                     \Log::info('Case 2: Name-based matching', [
@@ -1270,6 +1277,34 @@ class RollCallController extends Controller
                 }
             }
             return $optionKey;
+        }
+        
+        // Priority 6: period_names from details
+        if (!empty($details['period_names']) && is_array($details['period_names'])) {
+            return implode('、', $details['period_names']);
+        }
+        
+        // Priority 7: Look up period names from period IDs using SystemSetting
+        $periodIds = $details['period_ids'] ?? $details['periods'] ?? [];
+        if (!empty($periodIds) && is_array($periodIds)) {
+            // Get attendance_periods from SystemSetting
+            $periodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+            $periodsConfig = $periodsJson ? json_decode($periodsJson, true) : [];
+            
+            if (!empty($periodsConfig)) {
+                $periodNames = [];
+                foreach ($periodIds as $pid) {
+                    foreach ($periodsConfig as $period) {
+                        if (isset($period['id']) && (int)$period['id'] === (int)$pid) {
+                            $periodNames[] = $period['name'] ?? '';
+                            break;
+                        }
+                    }
+                }
+                if (!empty($periodNames)) {
+                    return implode('、', array_filter($periodNames));
+                }
+            }
         }
         
         // Default
