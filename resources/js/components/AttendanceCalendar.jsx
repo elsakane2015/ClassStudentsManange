@@ -61,7 +61,7 @@ function CalendarDetailModal({ isOpen, onClose, date, records }) {
                                                 {statusPrefix}{typeLabel}
                                             </span>
                                             <span className="text-gray-600">：</span>
-                                            <span className="text-gray-800">{record.student_no ? `${record.student_no} ` : ''}{record.student_name}</span>
+                                            <span className="text-gray-800">{record.student_no ? `${record.student_no.slice(-2)} ` : ''}{record.student_name}</span>
                                             <span className="text-gray-400 ml-auto">{record.time}</span>
                                         </div>
                                     );
@@ -244,7 +244,7 @@ export default function AttendanceCalendar({ user }) {
                     }
 
                     const typeLabel = `${record.type}${record.option ? `(${record.option})` : ''}`;
-                    const displayText = `${statusPrefix}${typeLabel}: ${record.student_name}`;
+                    const displayText = `${statusPrefix}${typeLabel}: ${record.student_no ? record.student_no.slice(-2) + ' ' : ''}${record.student_name}`;
 
                     return (
                         <div
