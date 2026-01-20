@@ -1809,7 +1809,24 @@ class AttendanceController extends Controller
                             $typeName = $leaveTypeModel ? $leaveTypeModel->name : $status;
                         }
                         
-                        if ($record->details && $record->leaveType && $record->leaveType->input_config) {
+                        // Priority 1: display_label (for custom period selections)
+                        if (isset($details['display_label'])) {
+                            $detailLabel = $details['display_label'];
+                        }
+                        // Priority 2: text (for text input types like "特殊")
+                        elseif (isset($details['text'])) {
+                            $detailLabel = $details['text'];
+                            // If has period names, append them
+                            if (isset($details['period_names']) && is_array($details['period_names']) && count($details['period_names']) > 0) {
+                                $detailLabel .= '-' . implode('、', $details['period_names']);
+                            }
+                        }
+                        // Priority 3: time_slot_name
+                        elseif (isset($details['time_slot_name'])) {
+                            $detailLabel = $details['time_slot_name'];
+                        }
+                        // Priority 4: option (for select input types)
+                        elseif ($record->details && $record->leaveType && $record->leaveType->input_config) {
                             $config = is_string($record->leaveType->input_config) ? json_decode($record->leaveType->input_config, true) : $record->leaveType->input_config;
                             
                             if (isset($details['option']) && isset($config['options'])) {
@@ -1821,11 +1838,6 @@ class AttendanceController extends Controller
                                         break;
                                     }
                                 }
-                            }
-                            
-                            // Use display_label if available (for custom period selections)
-                            if (isset($details['display_label'])) {
-                                $detailLabel = $details['display_label'];
                             }
                         }
                     }
