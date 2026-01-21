@@ -461,7 +461,7 @@ export default function LeaveRequestForm() {
                 // 文本输入类型（如"特殊"的"去向说明"）
                 const textLabel = inputConfig.label || '说明';
                 const textPlaceholder = inputConfig.placeholder || `请输入${textLabel}...`;
-                const requirePeriods = inputConfig.require_periods || false;
+                const withPeriods = inputConfig.with_periods ?? false;
 
                 return (
                     <div className="space-y-4">
@@ -475,7 +475,7 @@ export default function LeaveRequestForm() {
                                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm border p-2"
                             />
                         </div>
-                        {requirePeriods && periods.length > 0 && (
+                        {withPeriods && periods.length > 0 && (
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">选择节次</label>
                                 <div className="flex flex-wrap gap-2">
