@@ -101,7 +101,43 @@ export default function LeaveApprovals() {
                                                 </span>
                                             )}
                                         </p>
-                                        <p className="mt-1 italic">"{request.reason}"</p>
+                                        {/* 显示申请理由（如果有） */}
+                                        {request.reason && (
+                                            <p className="mt-1 italic">"{request.reason}"</p>
+                                        )}
+                                        {/* 显示详情信息（去向说明、节次等） */}
+                                        {request.details && (() => {
+                                            const details = typeof request.details === 'string'
+                                                ? JSON.parse(request.details)
+                                                : request.details;
+                                            const parts = [];
+
+                                            // 文本说明（如"去向说明"）
+                                            if (details.text) {
+                                                parts.push(details.text);
+                                            }
+                                            // 时段名称
+                                            if (details.time_slot_name) {
+                                                parts.push(`时段: ${details.time_slot_name}`);
+                                            }
+                                            // 节次名称
+                                            if (details.period_names && details.period_names.length > 0) {
+                                                parts.push(`节次: ${details.period_names.join('、')}`);
+                                            }
+                                            // 选项标签
+                                            if (details.option_label && !details.text && !details.time_slot_name) {
+                                                parts.push(details.option_label);
+                                            }
+
+                                            if (parts.length > 0) {
+                                                return (
+                                                    <p className="mt-1 text-indigo-600 font-medium">
+                                                        {parts.join(' • ')}
+                                                    </p>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
                                     </div>
 
                                     {/* Images Section */}

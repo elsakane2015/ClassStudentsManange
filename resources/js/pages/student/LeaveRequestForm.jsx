@@ -593,18 +593,21 @@ export default function LeaveRequestForm() {
 
                     {renderTypeSpecificInputs()}
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">申请理由</label>
-                        <textarea
-                            name="reason"
-                            rows="4"
-                            required
-                            value={formData.reason}
-                            onChange={handleChange}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm border p-2"
-                            placeholder="请说明请假原因..."
-                        ></textarea>
-                    </div>
+                    {/* 申请理由 - 文本输入类型不显示（去向说明已替代） */}
+                    {inputType !== 'text' && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">申请理由</label>
+                            <textarea
+                                name="reason"
+                                rows="4"
+                                required
+                                value={formData.reason}
+                                onChange={handleChange}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm border p-2"
+                                placeholder="请说明请假原因..."
+                            ></textarea>
+                        </div>
+                    )}
 
                     {/* Image Upload */}
                     {imageSettings.enabled && (
