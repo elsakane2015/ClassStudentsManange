@@ -299,12 +299,18 @@ class LeaveRequestController extends Controller
             $details['period_names'] = $periodNames;
             $details['option_periods'] = count($periodIds);
             
-            // 生成显示标签
-            if (!empty($periodNames)) {
-                $details['display_label'] = $this->generatePeriodDisplayLabel($periodNames);
+            // 生成显示标签：结合文本（如果有）和节次名称
+            $periodLabel = !empty($periodNames) ? $this->generatePeriodDisplayLabel($periodNames) : '';
+            if (!empty($details['text'])) {
+                // 文本 + 节次
+                $details['display_label'] = $details['text'] . ($periodLabel ? ' (' . $periodLabel . ')' : '');
+            } elseif ($periodLabel) {
+                // 只有节次
+                $details['display_label'] = $periodLabel;
             }
             
             \Log::info('Text input type with periods', [
+                'text' => $details['text'] ?? 'NOT SET',
                 'period_ids' => $periodIds,
                 'period_names' => $periodNames,
                 'display_label' => $details['display_label'] ?? 'NOT SET'
