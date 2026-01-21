@@ -406,7 +406,7 @@ export default function StudentDashboard() {
                         color: color,
                         allDay: true,
                         type: record.leave_type?.name || record.status,
-                        // detail 已包含在 title 中，不再重复设置
+                        detail: detailLabel || null, // 添加详情标签用于弹窗显示
                         note: record.reason || record.note || '',
                         approvalStatus: record.approval_status,
                         isSelfApplied: record.is_self_applied,
