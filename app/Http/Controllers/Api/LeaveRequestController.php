@@ -279,6 +279,37 @@ class LeaveRequestController extends Controller
                 }
             }
         }
+        
+        // 处理文本输入类型的节次选择（无 time_slot_id 但有 sessions）
+        if (empty($timeSlotId) && !empty($request->sessions)) {
+            $periodIds = array_map('intval', $request->sessions);
+            $details['period_ids'] = $periodIds;
+            
+            // 获取节次名称
+            $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+            $attendancePeriods = $attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [];
+            $periodMap = collect($attendancePeriods)->keyBy('id');
+            
+            $periodNames = [];
+            foreach ($periodIds as $periodId) {
+                if (isset($periodMap[$periodId])) {
+                    $periodNames[] = $periodMap[$periodId]['name'];
+                }
+            }
+            $details['period_names'] = $periodNames;
+            $details['option_periods'] = count($periodIds);
+            
+            // 生成显示标签
+            if (!empty($periodNames)) {
+                $details['display_label'] = $this->generatePeriodDisplayLabel($periodNames);
+            }
+            
+            \Log::info('Text input type with periods', [
+                'period_ids' => $periodIds,
+                'period_names' => $periodNames,
+                'display_label' => $details['display_label'] ?? 'NOT SET'
+            ]);
+        }
 
         // Create attendance records (UNIFIED DATA SOURCE)
         $start = Carbon::parse($request->start_date);
