@@ -128,9 +128,25 @@ export default function LeaveHistory() {
                                                 return leave.half_day_label ? `仅${leave.half_day_label}` : (leave.half_day ? `仅${leave.half_day}` : '全天');
                                             })()}
                                         </div>
-                                        <p className="mt-2 text-sm text-gray-700 italic">
-                                            "{leave.reason}"
-                                        </p>
+                                        {/* 显示申请理由或文本说明 */}
+                                        {(() => {
+                                            let details = null;
+                                            try {
+                                                details = typeof leave.details === 'string'
+                                                    ? JSON.parse(leave.details)
+                                                    : leave.details;
+                                            } catch (e) { }
+
+                                            // 优先显示 details.text（文本输入类型的说明）
+                                            if (details?.text) {
+                                                return <p className="mt-2 text-sm text-indigo-600 font-medium">"{details.text}"</p>;
+                                            }
+                                            // 否则显示 reason
+                                            if (leave.reason) {
+                                                return <p className="mt-2 text-sm text-gray-700 italic">"{leave.reason}"</p>;
+                                            }
+                                            return null;
+                                        })()}
                                     </div>
                                     <div className="ml-2 flex-shrink-0 flex flex-col items-end">
                                         <div className="mb-2">

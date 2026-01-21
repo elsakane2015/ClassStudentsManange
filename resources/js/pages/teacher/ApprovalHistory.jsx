@@ -206,7 +206,25 @@ export default function ApprovalHistory() {
                                             <> - <span className="font-semibold">{format(new Date(request.end_date), 'yyyy-MM-dd')}</span></>
                                         )}
                                     </p>
-                                    <p className="mt-1 italic">"{request.reason}"</p>
+                                    {/* 显示申请理由或文本说明 */}
+                                    {(() => {
+                                        let details = null;
+                                        try {
+                                            details = typeof request.details === 'string'
+                                                ? JSON.parse(request.details)
+                                                : request.details;
+                                        } catch (e) { }
+
+                                        // 优先显示 details.text（文本输入类型的说明）
+                                        if (details?.text) {
+                                            return <p className="mt-1 text-indigo-600 font-medium">"{details.text}"</p>;
+                                        }
+                                        // 否则显示 reason
+                                        if (request.reason) {
+                                            return <p className="mt-1 italic">"{request.reason}"</p>;
+                                        }
+                                        return null;
+                                    })()}
                                 </div>
 
                                 <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
