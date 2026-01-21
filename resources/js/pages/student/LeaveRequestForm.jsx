@@ -457,6 +457,78 @@ export default function LeaveRequestForm() {
                     </div>
                 );
 
+            case 'text':
+                // 文本输入类型（如"特殊"的"去向说明"）
+                const textLabel = inputConfig.label || '说明';
+                const textPlaceholder = inputConfig.placeholder || `请输入${textLabel}...`;
+                const requirePeriods = inputConfig.require_periods || false;
+
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">{textLabel}</label>
+                            <input
+                                type="text"
+                                value={formData.details.text || ''}
+                                onChange={(e) => handleDetailsChange('text', e.target.value)}
+                                placeholder={textPlaceholder}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm border p-2"
+                            />
+                        </div>
+                        {requirePeriods && periods.length > 0 && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">选择节次</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {periods.map(period => {
+                                        const isSelected = formData.details.period_ids?.includes(period.id);
+                                        return (
+                                            <label
+                                                key={period.id}
+                                                className={`px-3 py-1.5 rounded border text-sm cursor-pointer transition-colors ${isSelected
+                                                    ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
+                                                    : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    className="sr-only"
+                                                    checked={isSelected}
+                                                    onChange={() => {
+                                                        const currentIds = formData.details.period_ids || [];
+                                                        let newIds;
+                                                        if (isSelected) {
+                                                            newIds = currentIds.filter(id => id !== period.id);
+                                                        } else {
+                                                            newIds = [...currentIds, period.id];
+                                                        }
+                                                        // 同时保存节次ID和名称
+                                                        const newNames = newIds.map(id =>
+                                                            periods.find(p => p.id === id)?.name
+                                                        ).filter(Boolean);
+                                                        setFormData(prev => ({
+                                                            ...prev,
+                                                            details: {
+                                                                ...prev.details,
+                                                                period_ids: newIds,
+                                                                period_names: newNames,
+                                                                option_periods: newIds.length
+                                                            }
+                                                        }));
+                                                    }}
+                                                />
+                                                {period.name}
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                                <div className="mt-2 text-xs text-gray-500">
+                                    已选：{(formData.details.period_ids || []).length}节
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+
             default:
                 return null;
         }
