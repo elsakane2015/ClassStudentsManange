@@ -92,7 +92,8 @@ class AttendanceController extends Controller
         }
         
         // Pending Requests from unified data source (attendance_records with approval_status='pending')
-        $pendingQuery = AttendanceRecord::where('approval_status', 'pending');
+        $pendingQuery = AttendanceRecord::where('approval_status', 'pending')
+            ->where('is_self_applied', true);
         if ($user->role === 'teacher' || $user->role === 'manager') {
              $pendingQuery->whereIn('class_id', $classIds);
         }
