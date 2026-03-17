@@ -50,8 +50,14 @@ class AttendanceExportController extends Controller
             return response()->json(['error' => '没有可导出的班级'], 400);
         }
 
-        // Get date range
-        $dateRange = $this->getDateRange($scope, $semesterId);
+        // Get date range - 支持自定义日期覆盖
+        $customStartDate = $request->input('start_date');
+        $customEndDate = $request->input('end_date');
+        if ($customStartDate && $customEndDate) {
+            $dateRange = ['start' => $customStartDate, 'end' => $customEndDate];
+        } else {
+            $dateRange = $this->getDateRange($scope, $semesterId);
+        }
 
         // Get students
         $studentsQuery = Student::whereIn('class_id', $classIds)
@@ -781,10 +787,22 @@ class AttendanceExportController extends Controller
             ];
         });
 
+        // Get semesters for time range selection
+        $semesters = Semester::orderBy('start_date', 'desc')->get()->map(function($s) {
+            return [
+                'id' => $s->id,
+                'name' => $s->name,
+                'start_date' => $s->start_date,
+                'total_weeks' => $s->total_weeks,
+                'is_current' => $s->is_current,
+            ];
+        });
+
         return response()->json([
             'classes' => $classes,
             'leave_types' => $leaveTypes,
             'roll_call_types' => $rollCallTypes,
+            'semesters' => $semesters,
         ]);
     }
 }
