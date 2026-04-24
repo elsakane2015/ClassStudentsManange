@@ -49,6 +49,8 @@ export default function TeacherDashboard() {
         student: null,
         records: []
     });
+    const [studentDetailScope, setStudentDetailScope] = useState('today');
+    const [studentDetailCustomRange, setStudentDetailCustomRange] = useState({ start: '', end: '' });
 
     // 出勤详情筛选状态
     const [attendanceFilters, setAttendanceFilters] = useState({
@@ -306,61 +308,32 @@ export default function TeacherDashboard() {
         });
     };
 
-    // 处理点击学生姓名查看所有记录
-    const handleStudentNameClick = async (student) => {
-        console.log('[Student Name Click] ===== START =====');
-        console.log('[Student Name Click] Student object:', student);
-        console.log('[Student Name Click] Student.id:', student?.id);
-        console.log('[Student Name Click] Student.student_id:', student?.student_id);
-        console.log('[Student Name Click] Student.student_no:', student?.student_no);
-        console.log('[Student Name Click] Current scope:', scope);
+    // 拉取学生考勤记录（供首次打开和切换 scope 时调用）
+    const fetchStudentRecords = async (student, detailScope, customRange) => {
+        const studentId = student?.id || student?.student_id;
+        if (!studentId) { alert('无法获取学生ID，请刷新页面后重试'); return; }
 
         try {
-            const studentId = student.id || student.student_id;
-            console.log('[Student Name Click] Using student_id:', studentId);
-
-            if (!studentId) {
-                console.error('[Student Name Click] ERROR: No valid student_id found!');
-                alert('无法获取学生ID，请刷新页面后重试');
-                return;
+            const params = { student_id: studentId, scope: detailScope };
+            if (detailScope === 'custom') {
+                if (!customRange?.start || !customRange?.end) return;
+                params.start_date = customRange.start;
+                params.end_date   = customRange.end;
             }
-
-            // 调用API获取该学生在当前时间范围内的所有考勤记录
-            console.log('[Student Name Click] Calling API with params:', {
-                student_id: studentId,
-                scope: scope
-            });
-
-            const apiUrl = 'attendance/student-records';
-            console.log('[Student Name Click] Full URL:', apiUrl);
-            console.log('[Student Name Click] Axios baseURL:', axios.defaults.baseURL);
-
-            const response = await axios.get(apiUrl, {
-                params: {
-                    student_id: studentId,
-                    scope: scope
-                }
-            });
-
-            console.log('[Student Name Click] API Response:', response.data);
-            console.log('[Student Name Click] Response is array:', Array.isArray(response.data));
-            console.log('[Student Name Click] Record Count:', Array.isArray(response.data) ? response.data.length : 0);
-
-            // 确保records是数组
+            const response = await axios.get('attendance/student-records', { params });
             const records = Array.isArray(response.data) ? response.data : [];
-
-            setStudentDetailModal({
-                isOpen: true,
-                student: student,
-                records: records
-            });
-
-            console.log('[Student Name Click] ===== END =====');
+            setStudentDetailModal(prev => ({ ...prev, isOpen: true, student, records }));
         } catch (error) {
-            console.error('[Student Name Click] ERROR:', error);
-            console.error('[Student Name Click] Error response:', error.response);
-            alert('获取学生所有记录失败，请稍后重试');
+            console.error('[fetchStudentRecords] ERROR:', error);
+            alert('获取学生考勤记录失败，请稍后重试');
         }
+    };
+
+    // 处理点击学生姓名查看所有记录
+    const handleStudentNameClick = async (student) => {
+        setStudentDetailScope('today');
+        setStudentDetailCustomRange({ start: '', end: '' });
+        await fetchStudentRecords(student, 'today', null);
     };
 
 
@@ -1019,25 +992,58 @@ export default function TeacherDashboard() {
                         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                             <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                                 <div className="p-6">
-                                    <h3 className="text-lg font-semibold mb-4">
-                                        <span
-                                            className="text-blue-600 hover:text-blue-800 cursor-pointer underline"
-                                            onClick={() => handleStudentNameClick(studentDetailModal.student)}
-                                            title="点击查看该学生的所有考勤记录"
+                                    <div className="flex flex-wrap items-center gap-3 mb-4">
+                                        <h3 className="text-lg font-semibold">
+                                            <span className="text-blue-600">
+                                                {studentDetailModal.student?.name || '-'}
+                                            </span>
+                                            {' '}的考勤记录
+                                            <span className="text-sm text-gray-500 ml-2">
+                                                ({studentDetailModal.student?.student_no || 'N/A'})
+                                            </span>
+                                        </h3>
+                                        <select
+                                            value={studentDetailScope}
+                                            onChange={e => {
+                                                const s = e.target.value;
+                                                setStudentDetailScope(s);
+                                                if (s !== 'custom') {
+                                                    fetchStudentRecords(studentDetailModal.student, s, null);
+                                                }
+                                            }}
+                                            className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                                         >
-                                            {studentDetailModal.student?.name || '-'}
-                                        </span>
-                                        {' '}的考勤记录
-                                        <span className="text-sm text-gray-500 ml-2">
-                                            ({studentDetailModal.student?.student_no || 'N/A'})
-                                        </span>
-                                        <span className="text-sm font-normal text-blue-600 ml-3">
-                                            {scope === 'today' ? '今日' :
-                                                scope === 'week' ? '本周' :
-                                                    scope === 'month' ? '本月' :
-                                                        scope === 'semester' ? '本学期' : ''}
-                                        </span>
-                                    </h3>
+                                            <option value="today">今日</option>
+                                            <option value="week">本周</option>
+                                            <option value="month">本月</option>
+                                            <option value="semester">本学期</option>
+                                            <option value="custom">自定义</option>
+                                        </select>
+                                        {studentDetailScope === 'custom' && (
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <input
+                                                    type="date"
+                                                    value={studentDetailCustomRange.start}
+                                                    onChange={e => setStudentDetailCustomRange(prev => ({ ...prev, start: e.target.value }))}
+                                                    className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                />
+                                                <span className="text-gray-400">—</span>
+                                                <input
+                                                    type="date"
+                                                    value={studentDetailCustomRange.end}
+                                                    onChange={e => setStudentDetailCustomRange(prev => ({ ...prev, end: e.target.value }))}
+                                                    className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                />
+                                                <button
+                                                    onClick={() => fetchStudentRecords(studentDetailModal.student, 'custom', studentDetailCustomRange)}
+                                                    disabled={!studentDetailCustomRange.start || !studentDetailCustomRange.end}
+                                                    className="text-sm px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40"
+                                                >
+                                                    查询
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
 
                                     <GroupedRecordsList
                                         records={studentDetailModal.records}

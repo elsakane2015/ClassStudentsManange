@@ -2975,17 +2975,21 @@ class AttendanceController extends Controller
         $studentId = $request->input('student_id');
         $scope = $request->input('scope', 'today');
 
-        \Log::info('[studentRecords] Request params:', [
-            'student_id' => $studentId,
-            'scope' => $scope
-        ]);
-
         if (!$studentId) {
             return response()->json(['error' => 'student_id is required'], 400);
         }
 
-        // Get date range for scope
-        $dateRange = $this->getDateRangeForScope($scope);
+        // Custom date range support
+        if ($scope === 'custom') {
+            $startDate = $request->input('start_date');
+            $endDate   = $request->input('end_date');
+            if (!$startDate || !$endDate) {
+                return response()->json(['error' => 'start_date and end_date are required for custom scope'], 400);
+            }
+            $dateRange = ['start' => $startDate, 'end' => $endDate];
+        } else {
+            $dateRange = $this->getDateRangeForScope($scope);
+        }
         
         \Log::info('[studentRecords] Date range:', $dateRange);
 
