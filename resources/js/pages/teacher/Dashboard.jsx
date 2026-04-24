@@ -51,6 +51,7 @@ export default function TeacherDashboard() {
     });
     const [studentDetailScope, setStudentDetailScope] = useState('today');
     const [studentDetailCustomRange, setStudentDetailCustomRange] = useState({ start: '', end: '' });
+    const [printColumns, setPrintColumns] = useState(2);
 
     // 出勤详情筛选状态
     const [attendanceFilters, setAttendanceFilters] = useState({
@@ -306,6 +307,105 @@ export default function TeacherDashboard() {
             student: student,
             records: student.records || []
         });
+    };
+
+    // 打印学生考勤记录
+    const handlePrint = (columns) => {
+        const student = studentDetailModal.student;
+        const records = studentDetailModal.records;
+        const scopeLabel = { today: '今日', week: '本周', month: '本月', semester: '本学期', custom: '自定义' }[studentDetailScope] || '';
+        const rangeLabel = studentDetailScope === 'custom'
+            ? `${studentDetailCustomRange.start} ~ ${studentDetailCustomRange.end}`
+            : scopeLabel;
+        const printDate = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
+        // 状态中文映射
+        const statusMap = { present: '出勤', absent: '旷课', late: '迟到', early_leave: '早退', leave: '请假', excused: '已批假' };
+
+        // 统计
+        const summary = records.reduce((acc, r) => {
+            const key = r.leave_type?.name || statusMap[r.status] || r.status;
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {});
+
+        // 把记录均分到 N 列
+        const total = records.length;
+        const perCol = Math.ceil(total / columns);
+        const chunks = Array.from({ length: columns }, (_, i) => records.slice(i * perCol, (i + 1) * perCol));
+
+        const colWidth = Math.floor(100 / columns);
+
+        const tableHtml = (chunk) => `
+            <table>
+                <thead><tr><th>日期</th><th>状态</th><th>详情</th></tr></thead>
+                <tbody>
+                    ${chunk.map(r => {
+                        const dateStr = r.date ? r.date.split('T')[0].replace(/-/g, '.') : '-';
+                        const statusText = r.leave_type?.name || statusMap[r.status] || r.status;
+                        const detail = r.detail || r.period_names_display || '';
+                        let details = {};
+                        try { details = typeof r.details === 'string' ? JSON.parse(r.details) : (r.details || {}); } catch(e) {}
+                        const timeStr = details.roll_call_time || details.time || '';
+                        return `<tr>
+                            <td>${dateStr}${timeStr ? ' <span class="time">' + timeStr + '</span>' : ''}</td>
+                            <td><span class="badge">${statusText}</span></td>
+                            <td>${detail}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>`;
+
+        const html = `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>${student?.name} 考勤记录</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 11px; color: #222; padding: 16px 20px; }
+  .header { border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 10px; }
+  .header h1 { font-size: 15px; font-weight: bold; margin-bottom: 4px; }
+  .header .meta { display: flex; gap: 20px; color: #555; font-size: 10px; }
+  .summary { margin-bottom: 10px; font-size: 10px; color: #444; }
+  .summary span { margin-right: 12px; }
+  .columns { display: flex; gap: 12px; align-items: flex-start; }
+  .col { width: ${colWidth}%; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #f0f0f0; text-align: left; padding: 4px 5px; font-size: 10px; border: 1px solid #ccc; }
+  td { padding: 3px 5px; border: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .badge { display: inline-block; padding: 1px 5px; border-radius: 3px; background: #dbeafe; color: #1e40af; font-size: 9px; white-space: nowrap; }
+  .time { color: #888; font-size: 9px; }
+  .footer { margin-top: 12px; border-top: 1px solid #ccc; padding-top: 6px; font-size: 10px; color: #555; }
+  @media print { body { padding: 8px 12px; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>${student?.name || '-'} 的考勤记录</h1>
+    <div class="meta">
+      <span>学号：${student?.student_no || '-'}</span>
+      <span>时间范围：${rangeLabel}</span>
+      <span>共 ${total} 条记录</span>
+      <span>打印日期：${printDate}</span>
+    </div>
+  </div>
+  <div class="summary">
+    统计：${Object.entries(summary).map(([k, v]) => `${k} ${v}次`).join('　　')}
+  </div>
+  <div class="columns">
+    ${chunks.map(chunk => `<div class="col">${tableHtml(chunk)}</div>`).join('')}
+  </div>
+  <div class="footer">本记录由系统自动生成，仅供参考。</div>
+</body>
+</html>`;
+
+        const win = window.open('', '_blank', 'width=900,height=700');
+        win.document.write(html);
+        win.document.close();
+        win.focus();
+        setTimeout(() => { win.print(); }, 300);
     };
 
     // 拉取学生考勤记录（供首次打开和切换 scope 时调用）
@@ -1137,7 +1237,38 @@ export default function TeacherDashboard() {
                                         }}
                                     />
 
-                                    <div className="mt-4 flex justify-end">
+                                    <div className="mt-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm text-gray-500">打印列数：</span>
+                                            {[1, 2, 3].map(n => (
+                                                <button
+                                                    key={n}
+                                                    onClick={() => setPrintColumns(n)}
+                                                    className={`w-8 h-8 text-sm rounded border ${printColumns === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+                                                >
+                                                    {n}
+                                                </button>
+                                            ))}
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="10"
+                                                value={printColumns}
+                                                onChange={e => {
+                                                    const v = parseInt(e.target.value);
+                                                    if (v >= 1 && v <= 10) setPrintColumns(v);
+                                                }}
+                                                className="w-14 h-8 text-sm text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                                title="自定义列数（1-10）"
+                                            />
+                                            <button
+                                                onClick={() => handlePrint(printColumns)}
+                                                disabled={studentDetailModal.records.length === 0}
+                                                className="ml-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-40"
+                                            >
+                                                打印
+                                            </button>
+                                        </div>
                                         <button
                                             onClick={() => setStudentDetailModal({ isOpen: false, student: null, records: [] })}
                                             className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
