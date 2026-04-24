@@ -51,7 +51,7 @@ export default function TeacherDashboard() {
     });
     const [studentDetailScope, setStudentDetailScope] = useState('today');
     const [studentDetailCustomRange, setStudentDetailCustomRange] = useState({ start: '', end: '' });
-    const [printColumns, setPrintColumns] = useState(2);
+    const [viewColumns, setViewColumns] = useState(1);
 
     // 出勤详情筛选状态
     const [attendanceFilters, setAttendanceFilters] = useState({
@@ -406,6 +406,53 @@ export default function TeacherDashboard() {
         win.document.close();
         win.focus();
         setTimeout(() => { win.print(); }, 300);
+    };
+
+    // 将数组均分为 n 份
+    const splitIntoChunks = (arr, n) => {
+        const size = Math.ceil(arr.length / n);
+        return Array.from({ length: n }, (_, i) => arr.slice(i * size, (i + 1) * size));
+    };
+
+    // 单条考勤记录渲染（供多列复用）
+    const renderStudentRecord = (record) => {
+        let details = null;
+        try {
+            if (record.details) {
+                details = typeof record.details === 'string' ? JSON.parse(record.details) : record.details;
+            }
+        } catch (e) {}
+        const remarkText = record.detail || record.period_names_display || '';
+        let detailText = '';
+        if (details) {
+            detailText = details.roll_call_time || details.time || '';
+        }
+        const statusMap = { present: '出勤', absent: '旷课', late: '迟到', early_leave: '早退', leave: '请假', excused: '已批假' };
+        let statusText = '', statusColor = '';
+        if ((record.status === 'leave' || record.status === 'excused') && record.leave_type) {
+            statusText = record.leave_type.name;
+            statusColor = 'bg-blue-100 text-blue-800';
+        } else {
+            statusText = statusMap[record.status] || record.status;
+            statusColor = record.status === 'present' ? 'bg-green-100 text-green-800'
+                : record.status === 'absent' ? 'bg-red-100 text-red-800'
+                : record.status === 'late' ? 'bg-yellow-100 text-yellow-800'
+                : record.status === 'early_leave' ? 'bg-orange-100 text-orange-800'
+                : 'bg-blue-100 text-blue-800';
+        }
+        const dateStr = record.date ? record.date.split('T')[0].replace(/-/g, '.') : '-';
+        return (
+            <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-gray-800">{dateStr}</span>
+                    {detailText && <span className="text-gray-500 text-sm">{detailText}</span>}
+                </div>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColor}`}>{statusText}</span>
+                    {remarkText && <span className="text-gray-500 text-sm">({remarkText})</span>}
+                </div>
+            </div>
+        );
     };
 
     // 拉取学生考勤记录（供首次打开和切换 scope 时调用）
@@ -1145,137 +1192,59 @@ export default function TeacherDashboard() {
                                         )}
                                     </div>
 
-                                    <GroupedRecordsList
-                                        records={studentDetailModal.records}
-                                        emptyText="暂无记录"
-                                        renderRecord={(record, index) => {
-                                            // 安全解析 details
-                                            let details = null;
-                                            try {
-                                                if (record.details) {
-                                                    details = typeof record.details === 'string'
-                                                        ? JSON.parse(record.details)
-                                                        : record.details;
-                                                }
-                                            } catch (e) {
-                                                console.error('Failed to parse details:', e);
-                                            }
-
-                                            let remarkText = '';
-                                            let detailText = '';
-
-                                            // 直接使用后端返回的 detail 字段（与第一次交互逻辑完全一致）
-                                            if (record.detail) {
-                                                remarkText = record.detail;
-                                            } else if (record.period_names_display) {
-                                                // fallback: 使用 period_names_display
-                                                remarkText = record.period_names_display;
-                                            }
-
-                                            // 时间
-                                            if (details) {
-                                                if (details.roll_call_time) {
-                                                    detailText = details.roll_call_time;
-                                                } else if (details.time) {
-                                                    detailText = details.time;
-                                                }
-                                            }
-
-                                            // 状态显示
-                                            let statusText = '';
-                                            let statusColor = '';
-
-                                            if ((record.status === 'leave' || record.status === 'excused') && record.leave_type) {
-                                                statusText = record.leave_type.name;
-                                                statusColor = 'bg-blue-100 text-blue-800';
-                                            } else {
-                                                const statusMap = {
-                                                    'present': '出勤',
-                                                    'absent': '旷课',
-                                                    'late': '迟到',
-                                                    'early_leave': '早退',
-                                                    'leave': '请假',
-                                                    'excused': '已批假'
-                                                };
-                                                statusText = statusMap[record.status] || record.status;
-
-                                                if (record.status === 'present') {
-                                                    statusColor = 'bg-green-100 text-green-800';
-                                                } else if (record.status === 'absent') {
-                                                    statusColor = 'bg-red-100 text-red-800';
-                                                } else if (record.status === 'late') {
-                                                    statusColor = 'bg-yellow-100 text-yellow-800';
-                                                } else if (record.status === 'early_leave') {
-                                                    statusColor = 'bg-orange-100 text-orange-800';
-                                                } else {
-                                                    statusColor = 'bg-blue-100 text-blue-800';
-                                                }
-                                            }
-
-                                            const dateStr = record.date ? record.date.split('T')[0].replace(/-/g, '.') : '-';
-
-                                            return (
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex-1">
-                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className="font-medium text-gray-800">{dateStr}</span>
-                                                            {detailText && (
-                                                                <span className="text-gray-500 text-sm">{detailText}</span>
-                                                            )}
-                                                        </div>
-                                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColor}`}>
-                                                                {statusText}
-                                                            </span>
-                                                            {remarkText && (
-                                                                <span className="text-gray-500 text-sm">({remarkText})</span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        }}
-                                    />
-
-                                    <div className="mt-4 flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm text-gray-500">打印列数：</span>
-                                            {[1, 2, 3].map(n => (
-                                                <button
-                                                    key={n}
-                                                    onClick={() => setPrintColumns(n)}
-                                                    className={`w-8 h-8 text-sm rounded border ${printColumns === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
-                                                >
-                                                    {n}
-                                                </button>
-                                            ))}
-                                            <input
-                                                type="number"
-                                                min="1"
-                                                max="10"
-                                                value={printColumns}
-                                                onChange={e => {
-                                                    const v = parseInt(e.target.value);
-                                                    if (v >= 1 && v <= 10) setPrintColumns(v);
-                                                }}
-                                                className="w-14 h-8 text-sm text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                                title="自定义列数（1-10）"
-                                            />
+                                    {/* 列数控件行 */}
+                                    <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
+                                        <span className="text-sm text-gray-500">列数：</span>
+                                        {[1, 2, 3].map(n => (
                                             <button
-                                                onClick={() => handlePrint(printColumns)}
+                                                key={n}
+                                                onClick={() => setViewColumns(n)}
+                                                className={`w-8 h-8 text-sm rounded border ${viewColumns === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+                                            >
+                                                {n}
+                                            </button>
+                                        ))}
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="10"
+                                            value={viewColumns}
+                                            onChange={e => { const v = parseInt(e.target.value); if (v >= 1 && v <= 10) setViewColumns(v); }}
+                                            className="w-14 h-8 text-sm text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                            title="自定义列数（1-10）"
+                                        />
+                                        <div className="ml-auto flex gap-2">
+                                            <button
+                                                onClick={() => handlePrint(viewColumns)}
                                                 disabled={studentDetailModal.records.length === 0}
-                                                className="ml-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-40"
+                                                className="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-40"
                                             >
                                                 打印
                                             </button>
+                                            <button
+                                                onClick={() => setStudentDetailModal({ isOpen: false, student: null, records: [] })}
+                                                className="px-3 py-1.5 text-sm bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+                                            >
+                                                关闭
+                                            </button>
                                         </div>
-                                        <button
-                                            onClick={() => setStudentDetailModal({ isOpen: false, student: null, records: [] })}
-                                            className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
-                                        >
-                                            关闭
-                                        </button>
                                     </div>
+
+                                    {/* 多列记录列表 */}
+                                    {studentDetailModal.records.length === 0 ? (
+                                        <p className="text-gray-500 text-center py-4">暂无记录</p>
+                                    ) : (
+                                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${viewColumns}, 1fr)`, gap: '12px', alignItems: 'start' }}>
+                                            {splitIntoChunks(studentDetailModal.records, viewColumns).map((chunk, colIdx) => (
+                                                <GroupedRecordsList
+                                                    key={colIdx}
+                                                    records={chunk}
+                                                    emptyText={null}
+                                                    renderRecord={(record) => renderStudentRecord(record)}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
