@@ -97,17 +97,9 @@ class AttendanceController extends Controller
         if ($user->role === 'teacher' || $user->role === 'manager') {
              $pendingQuery->whereIn('class_id', $classIds);
         }
-        // 按 leave_batch_id 统计请假申请次数（一次申请计为1）
-        // 对于有 leave_batch_id 的记录按 batch 分组，没有的按旧逻辑
-        $pendingWithBatch = $pendingQuery->clone()
-            ->whereNotNull('leave_batch_id')
-            ->distinct('leave_batch_id')
-            ->count('leave_batch_id');
-        $pendingWithoutBatch = $pendingQuery->clone()
-            ->whereNull('leave_batch_id')
-            ->selectRaw('COUNT(DISTINCT student_id, date, leave_type_id) as count')
-            ->value('count') ?? 0;
-        $pendingRequests = $pendingWithBatch + $pendingWithoutBatch;
+        $pendingRequests = (int) $pendingQuery->clone()
+            ->selectRaw("COUNT(DISTINCT COALESCE(leave_batch_id, CONCAT(student_id, '_', `date`, '_', COALESCE(leave_type_id, '0')))) as total")
+            ->value('total');
 
         // Efficient breakdown query
         $attendanceStats = $attendanceQuery->clone()
@@ -1531,24 +1523,11 @@ class AttendanceController extends Controller
             // For class admin: add pending requests count
             if ($user->student->is_class_admin) {
                 $classId = $user->student->class_id;
-                // 按 leave_batch_id 统计请假申请次数（一次申请计为1）
-                $baseQuery = AttendanceRecord::where('class_id', $classId)
+                $stats['pending_requests'] = (int) AttendanceRecord::where('class_id', $classId)
                     ->where('approval_status', 'pending')
-                    ->where('is_self_applied', true);
-                
-                // 有 leave_batch_id 的按 batch 统计
-                $pendingWithBatch = $baseQuery->clone()
-                    ->whereNotNull('leave_batch_id')
-                    ->distinct('leave_batch_id')
-                    ->count('leave_batch_id');
-                
-                // 没有 leave_batch_id 的按旧逻辑统计（兼容旧数据）
-                $pendingWithoutBatch = $baseQuery->clone()
-                    ->whereNull('leave_batch_id')
-                    ->selectRaw('COUNT(DISTINCT student_id, date, leave_type_id) as count')
-                    ->value('count') ?? 0;
-                
-                $stats['pending_requests'] = $pendingWithBatch + $pendingWithoutBatch;
+                    ->where('is_self_applied', true)
+                    ->selectRaw("COUNT(DISTINCT COALESCE(leave_batch_id, CONCAT(student_id, '_', `date`, '_', COALESCE(leave_type_id, '0')))) as total")
+                    ->value('total');
             }
 
             // Include leave types config for frontend
@@ -2147,15 +2126,24 @@ class AttendanceController extends Controller
             'student_id' => 'required|exists:students,id',
             'date' => 'required|date',
             'period_id' => 'nullable|integer',
-            'option' => 'nullable|string', // 用于删除带 option 的记录
-            'source_type' => 'nullable|string', // 用于删除指定来源的记录
-            'source_id' => 'nullable|integer', // 用于删除指定来源的记录
+            'option' => 'nullable|string',
+            'source_type' => 'nullable|string',
+            'source_id' => 'nullable|integer',
+            'leave_batch_id' => 'nullable|string',
         ]);
-        
+
+        // 如果提供了 leave_batch_id（self_applied 批次请假），直接整批删除
+        if ($request->leave_batch_id && $request->source_type === 'self_applied') {
+            $count = AttendanceRecord::where('leave_batch_id', $request->leave_batch_id)
+                ->where('student_id', $request->student_id)
+                ->delete();
+            return response()->json(['message' => '请假记录已整批撤销', 'deleted_count' => $count]);
+        }
+
         // 构建查询
         $query = AttendanceRecord::where('student_id', $request->student_id)
             ->where('date', $request->date);
-        
+
         // 如果是点名来源的记录，按 source_type 和 source_id 匹配
         if ($request->source_type === 'roll_call' && $request->source_id) {
             $query->where('source_type', 'roll_call')
@@ -2164,18 +2152,26 @@ class AttendanceController extends Controller
             // 普通记录按 period_id 匹配
             $query->where('period_id', $request->period_id);
         }
-        
+
         // 如果提供了 option，按 option 过滤
         if ($request->has('option') && $request->option) {
-            $query->whereRaw("JSON_EXTRACT(details, '$.option') = ?", [$request->option]);
+            $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(details, '$.option')) = ?", [$request->option]);
         }
-        
+
         $record = $query->first();
-        
+
         if (!$record) {
             return response()->json(['message' => 'Record not found.'], 404);
         }
-        
+
+        // self_applied 记录即使没传 leave_batch_id，也尝试整批删除
+        if ($record->source_type === 'self_applied' && $record->leave_batch_id) {
+            $count = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+                ->where('student_id', $record->student_id)
+                ->delete();
+            return response()->json(['message' => '请假记录已整批撤销', 'deleted_count' => $count]);
+        }
+
         // If the record is from a leave_request, cancel the leave request
         if ($record->source_type === 'leave_request' && $record->source_id) {
             $leaveRequest = \App\Models\LeaveRequest::find($record->source_id);

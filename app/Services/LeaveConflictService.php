@@ -69,4 +69,26 @@ class LeaveConflictService
 
         return $conflicts;
     }
+
+    /**
+     * Check conflicts from a pre-fetched (locked) collection.
+     * Call this inside a DB transaction after lockForUpdate() to prevent TOCTOU races.
+     */
+    public function checkFromCollection($records, $sessions = null)
+    {
+        if ($records->isEmpty()) {
+            return collect([]);
+        }
+
+        if (empty($sessions)) {
+            return $records;
+        }
+
+        return $records->filter(function ($record) use ($sessions) {
+            if (is_null($record->period_id)) {
+                return true;
+            }
+            return in_array($record->period_id, $sessions);
+        });
+    }
 }

@@ -110,24 +110,23 @@ export default function AttendanceCalendar({ user }) {
         });
     }, []);
 
+    const fetchCalendarData = async () => {
+        if (isCollapsed || !canViewCalendarSummary) return;
+        setLoadingData(true);
+        try {
+            const month = format(currentDate, 'yyyy-MM');
+            const res = await axios.get('/attendance/calendar-summary', { params: { month } });
+            setAttendanceData(res.data || {});
+        } catch (error) {
+            console.error('Failed to fetch calendar data:', error);
+            setAttendanceData({});
+        } finally {
+            setLoadingData(false);
+        }
+    };
+
     // Fetch calendar attendance data when month changes (only if has permission)
     useEffect(() => {
-        if (isCollapsed || !canViewCalendarSummary) return;
-
-        const fetchCalendarData = async () => {
-            setLoadingData(true);
-            try {
-                const month = format(currentDate, 'yyyy-MM');
-                const res = await axios.get('/attendance/calendar-summary', { params: { month } });
-                setAttendanceData(res.data || {});
-            } catch (error) {
-                console.error('Failed to fetch calendar data:', error);
-                setAttendanceData({});
-            } finally {
-                setLoadingData(false);
-            }
-        };
-
         fetchCalendarData();
     }, [currentDate, isCollapsed, canViewCalendarSummary]);
 
@@ -362,7 +361,7 @@ export default function AttendanceCalendar({ user }) {
             {isModalOpen && (
                 <AttendanceUpdateModal
                     isOpen={isModalOpen}
-                    onClose={() => setIsModalOpen(false)}
+                    onClose={() => { setIsModalOpen(false); fetchCalendarData(); }}
                     date={selectedDate}
                     user={user}
                 />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -33,6 +33,7 @@ export default function LeaveRequestForm() {
     });
     const [error, setError] = useState(null);
     const [submitting, setSubmitting] = useState(false);
+    const submittingRef = useRef(false);
 
     // Fetch leave types and image settings on mount
     useEffect(() => {
@@ -170,6 +171,8 @@ export default function LeaveRequestForm() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (submittingRef.current) return;
+        submittingRef.current = true;
         setSubmitting(true);
         setError(null);
 
@@ -206,6 +209,7 @@ export default function LeaveRequestForm() {
                 setError(err.response?.data?.message || '提交失败，请重试。');
             }
         } finally {
+            submittingRef.current = false;
             setSubmitting(false);
         }
     };

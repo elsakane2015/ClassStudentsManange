@@ -65,7 +65,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     // Leave Requests
     Route::get('/leave-requests', [LeaveRequestController::class, 'index']);
-    Route::post('/leave-requests', [LeaveRequestController::class, 'store']);
+    Route::post('/leave-requests', [LeaveRequestController::class, 'store'])->middleware('throttle:10,1');
     Route::delete('/leave-requests/{id}', [LeaveRequestController::class, 'destroy']);
     Route::post('/leave-requests/{id}/approve', [LeaveRequestController::class, 'approve']);
     Route::post('/leave-requests/{id}/reject', [LeaveRequestController::class, 'reject']);

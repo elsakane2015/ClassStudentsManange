@@ -414,10 +414,6 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
 
     // 删除考勤记录
     const handleDeleteRecord = async (studentId, record) => {
-        if (!window.confirm('确定要撤销这条考勤记录吗？')) {
-            return;
-        }
-
         const details = typeof record.details === 'string'
             ? JSON.parse(record.details || '{}')
             : (record.details || {});
@@ -430,7 +426,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                     period_id: record.period_id,
                     option: details.option,
                     source_type: record.source_type,
-                    source_id: record.source_id
+                    source_id: record.source_id,
+                    leave_batch_id: record.leave_batch_id ?? null
                 }
             });
 

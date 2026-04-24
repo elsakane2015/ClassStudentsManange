@@ -27,8 +27,6 @@ export default function LeaveApprovals() {
     };
 
     const handleAction = async (id, action) => {
-        if (!confirm(`确定要 ${action === 'approve' ? '通过' : '驳回'} 这条申请吗?`)) return;
-
         try {
             if (action === 'approve') {
                 await axios.post(`/leave-requests/${id}/approve`);

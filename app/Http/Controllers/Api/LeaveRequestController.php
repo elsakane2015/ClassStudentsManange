@@ -169,21 +169,6 @@ class LeaveRequestController extends Controller
             ->where('school_id', $student->school_id)
             ->first();
 
-        // Conflict Check
-        $conflicts = $this->conflictService->check(
-            $student->id,
-            $request->start_date,
-            $request->end_date,
-            $request->sessions
-        );
-
-        if ($conflicts->isNotEmpty()) {
-            return response()->json([
-                'error' => 'Conflict detected with existing requests.',
-                'conflicts' => $conflicts
-            ], 409);
-        }
-
         // Build details
         $details = [];
         $requestDetails = $request->details;
@@ -327,6 +312,30 @@ class LeaveRequestController extends Controller
 
         DB::beginTransaction();
         try {
+            // Lock the student's records in this date range to prevent concurrent inserts (TOCTOU fix)
+            $lockedRecords = AttendanceRecord::where('student_id', $student->id)
+                ->whereBetween('date', [$request->start_date, $request->end_date])
+                ->where(function ($q) {
+                    $q->where('source_type', 'leave_request')
+                      ->orWhere('source_type', 'self_applied')
+                      ->orWhere('is_self_applied', true);
+                })
+                ->where(function ($q) {
+                    $q->whereNull('approval_status')
+                      ->orWhereIn('approval_status', ['pending', 'approved']);
+                })
+                ->lockForUpdate()
+                ->get();
+
+            $conflicts = $this->conflictService->checkFromCollection($lockedRecords, $request->sessions);
+            if ($conflicts->isNotEmpty()) {
+                DB::rollBack();
+                return response()->json([
+                    'error' => 'Conflict detected with existing requests.',
+                    'conflicts' => $conflicts
+                ], 409);
+            }
+
             while ($start->lte($end)) {
                 if (!empty($periodIds)) {
                     // 为每个节次创建独立的考勤记录
@@ -378,6 +387,9 @@ class LeaveRequestController extends Controller
                 $start->addDay();
             }
             DB::commit();
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Conflict detected with existing requests.'], 409);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => 'Failed to create leave request: ' . $e->getMessage()], 500);
@@ -420,12 +432,12 @@ class LeaveRequestController extends Controller
         
         $isClassAdmin = $user->student && $user->student->is_class_admin;
         
-        if (!in_array($user->role, ['teacher', 'admin', 'manager']) && !$isClassAdmin) {
+        if (!in_array($user->role, ['teacher', 'admin', 'manager', 'school_admin', 'system_admin']) && !$isClassAdmin) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
         $record = AttendanceRecord::findOrFail($id);
-        
+
         // Ensure teacher/class admin owns this class
         if ($user->role === 'teacher') {
             $ownsClass = $user->teacherClasses()->where('id', $record->class_id)->exists();
@@ -436,31 +448,35 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Not your class'], 403);
         }
 
-        // 按 leave_batch_id 批量审批（如果有），否则按旧逻辑处理
-        if ($record->leave_batch_id) {
-            $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
-                ->where('approval_status', 'pending')
-                ->get();
-        } else {
-            // 兼容旧数据：按单日分组
-            $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
-                ->where('date', $record->date)
-                ->where('leave_type_id', $record->leave_type_id)
-                ->where('approval_status', 'pending')
-                ->where('is_self_applied', true)
-                ->get();
-        }
+        $approvedCount = DB::transaction(function () use ($record, $user) {
+            if ($record->leave_batch_id) {
+                $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+                    ->where('approval_status', 'pending')
+                    ->lockForUpdate()
+                    ->get();
+            } else {
+                $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+                    ->where('date', $record->date)
+                    ->where('leave_type_id', $record->leave_type_id)
+                    ->where('approval_status', 'pending')
+                    ->where('is_self_applied', true)
+                    ->lockForUpdate()
+                    ->get();
+            }
 
-        foreach ($relatedRecords as $r) {
-            $r->update([
-                'status' => 'excused',
-                'approval_status' => 'approved',
-                'approver_id' => $user->id,
-                'approved_at' => now(),
-            ]);
-        }
+            foreach ($relatedRecords as $r) {
+                $r->update([
+                    'status' => 'excused',
+                    'approval_status' => 'approved',
+                    'approver_id' => $user->id,
+                    'approved_at' => now(),
+                ]);
+            }
 
-        return response()->json(['message' => 'Approved', 'approved_count' => $relatedRecords->count()]);
+            return $relatedRecords->count();
+        });
+
+        return response()->json(['message' => 'Approved', 'approved_count' => $approvedCount]);
     }
 
     /**
@@ -472,40 +488,44 @@ class LeaveRequestController extends Controller
         
         $isClassAdmin = $user->student && $user->student->is_class_admin;
         
-        if (!in_array($user->role, ['teacher', 'admin', 'manager']) && !$isClassAdmin) {
+        if (!in_array($user->role, ['teacher', 'admin', 'manager', 'school_admin', 'system_admin']) && !$isClassAdmin) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
-        
+
         $record = AttendanceRecord::findOrFail($id);
-        
+
         if ($isClassAdmin && $record->class_id !== $user->student->class_id) {
             return response()->json(['error' => 'Not your class'], 403);
         }
         
-        // 按 leave_batch_id 批量拒绝（如果有），否则按旧逻辑处理
-        if ($record->leave_batch_id) {
-            $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
-                ->where('approval_status', 'pending')
-                ->get();
-        } else {
-            // 兼容旧数据
-            $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
-                ->where('date', $record->date)
-                ->where('leave_type_id', $record->leave_type_id)
-                ->where('approval_status', 'pending')
-                ->where('is_self_applied', true)
-                ->get();
-        }
-        
-        foreach ($relatedRecords as $r) {
-            $r->update([
-                'approval_status' => 'rejected',
-                'approver_id' => $user->id,
-                'rejection_reason' => $request->input('reason'),
-            ]);
-        }
-        
-        return response()->json(['message' => 'Rejected', 'rejected_count' => $relatedRecords->count()]);
+        $rejectedCount = DB::transaction(function () use ($record, $user, $request) {
+            if ($record->leave_batch_id) {
+                $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+                    ->where('approval_status', 'pending')
+                    ->lockForUpdate()
+                    ->get();
+            } else {
+                $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+                    ->where('date', $record->date)
+                    ->where('leave_type_id', $record->leave_type_id)
+                    ->where('approval_status', 'pending')
+                    ->where('is_self_applied', true)
+                    ->lockForUpdate()
+                    ->get();
+            }
+
+            foreach ($relatedRecords as $r) {
+                $r->update([
+                    'approval_status' => 'rejected',
+                    'approver_id' => $user->id,
+                    'rejection_reason' => $request->input('reason'),
+                ]);
+            }
+
+            return $relatedRecords->count();
+        });
+
+        return response()->json(['message' => 'Rejected', 'rejected_count' => $rejectedCount]);
     }
 
     /**
@@ -538,32 +558,33 @@ class LeaveRequestController extends Controller
              return response()->json(['error' => 'Unauthorized'], 403);   
         }
         
-        // 按 leave_batch_id 批量删除（如果有），否则按旧逻辑处理
-        if ($record->leave_batch_id) {
-            $query = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id);
-            
-            // If student, strictly only delete pending.
-            if ($user->role === 'student') {
-                $query->where('approval_status', 'pending');
-            }
-        } else {
-            // 兼容旧数据
-            $query = AttendanceRecord::where('student_id', $record->student_id)
-                ->where('date', $record->date)
-                ->where('leave_type_id', $record->leave_type_id)
-                ->where('is_self_applied', true);
-                
-            if ($user->role === 'student') {
-                $query->where('approval_status', 'pending');
+        $deletedCount = DB::transaction(function () use ($record, $user) {
+            if ($record->leave_batch_id) {
+                $query = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id);
+                if ($user->role === 'student') {
+                    $query->where('approval_status', 'pending');
+                }
             } else {
-                $query->where('approval_status', $record->approval_status);
+                $query = AttendanceRecord::where('student_id', $record->student_id)
+                    ->where('date', $record->date)
+                    ->where('leave_type_id', $record->leave_type_id)
+                    ->where('is_self_applied', true);
+                if ($user->role === 'student') {
+                    $query->where('approval_status', 'pending');
+                } else {
+                    $query->where('approval_status', $record->approval_status);
+                }
             }
-        }
-            
-        $count = $query->count();
-        $query->delete();
-        
-        return response()->json(['message' => 'Leave request deleted successfully.', 'deleted_count' => $count]);
+
+            $ids = $query->lockForUpdate()->pluck('id');
+            if ($ids->isEmpty()) {
+                return 0;
+            }
+
+            return AttendanceRecord::whereIn('id', $ids)->delete();
+        });
+
+        return response()->json(['message' => 'Leave request deleted successfully.', 'deleted_count' => $deletedCount]);
     }
 
     /**
