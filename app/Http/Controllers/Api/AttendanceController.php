@@ -2993,9 +2993,10 @@ class AttendanceController extends Controller
         
         \Log::info('[studentRecords] Date range:', $dateRange);
 
-        // Get all attendance records for this student in the date range
+        // Get all abnormal attendance records for this student (exclude present = normal state)
         $records = \App\Models\AttendanceRecord::where('student_id', $studentId)
             ->whereBetween('date', [$dateRange['start'], $dateRange['end']])
+            ->where('status', '!=', 'present')
             ->with(['leaveType'])
             ->orderBy('date', 'desc')
             ->orderBy('created_at', 'desc')

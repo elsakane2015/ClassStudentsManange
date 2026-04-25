@@ -51,6 +51,7 @@ export default function TeacherDashboard() {
     });
     const [studentDetailScope, setStudentDetailScope] = useState('today');
     const [studentDetailCustomRange, setStudentDetailCustomRange] = useState({ start: '', end: '' });
+    const [studentDetailTypeFilter, setStudentDetailTypeFilter] = useState('');
     const [viewColumns, setViewColumns] = useState(1);
 
     // 出勤详情筛选状态
@@ -480,6 +481,7 @@ export default function TeacherDashboard() {
     const handleStudentNameClick = async (student) => {
         setStudentDetailScope('today');
         setStudentDetailCustomRange({ start: '', end: '' });
+        setStudentDetailTypeFilter('');
         await fetchStudentRecords(student, 'today', null);
     };
 
@@ -1150,6 +1152,16 @@ export default function TeacherDashboard() {
                                             </span>
                                         </h3>
                                         <select
+                                            value={studentDetailTypeFilter}
+                                            onChange={e => setStudentDetailTypeFilter(e.target.value)}
+                                            className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                        >
+                                            <option value="">全部类型</option>
+                                            {leaveTypes.map(lt => (
+                                                <option key={lt.id} value={lt.slug}>{lt.name}</option>
+                                            ))}
+                                        </select>
+                                        <select
                                             value={studentDetailScope}
                                             onChange={e => {
                                                 const s = e.target.value;
@@ -1231,20 +1243,31 @@ export default function TeacherDashboard() {
                                     </div>
 
                                     {/* 多列记录列表 */}
-                                    {studentDetailModal.records.length === 0 ? (
-                                        <p className="text-gray-500 text-center py-4">暂无记录</p>
-                                    ) : (
-                                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${viewColumns}, 1fr)`, gap: '12px', alignItems: 'start' }}>
-                                            {splitIntoChunks(studentDetailModal.records, viewColumns).map((chunk, colIdx) => (
-                                                <GroupedRecordsList
-                                                    key={colIdx}
-                                                    records={chunk}
-                                                    emptyText={null}
-                                                    renderRecord={(record) => renderStudentRecord(record)}
-                                                />
-                                            ))}
-                                        </div>
-                                    )}
+                                    {(() => {
+                                        const filtered = studentDetailTypeFilter
+                                            ? studentDetailModal.records.filter(r => {
+                                                if (r.leave_type?.slug === studentDetailTypeFilter) return true;
+                                                if (!r.leave_type && r.status === studentDetailTypeFilter) return true;
+                                                return false;
+                                            })
+                                            : studentDetailModal.records;
+
+                                        if (filtered.length === 0) {
+                                            return <p className="text-gray-500 text-center py-4">暂无记录</p>;
+                                        }
+                                        return (
+                                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${viewColumns}, 1fr)`, gap: '12px', alignItems: 'start' }}>
+                                                {splitIntoChunks(filtered, viewColumns).map((chunk, colIdx) => (
+                                                    <GroupedRecordsList
+                                                        key={colIdx}
+                                                        records={chunk}
+                                                        emptyText={null}
+                                                        renderRecord={(record) => renderStudentRecord(record)}
+                                                    />
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         </div>
