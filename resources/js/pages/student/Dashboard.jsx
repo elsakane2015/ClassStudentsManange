@@ -447,11 +447,16 @@ export default function StudentDashboard() {
         const entries = [];
         const leaveTypesConfig = stats._leave_types_config || {};
 
+        // Determine if today is a rest day (server flag + client-side weekend fallback)
+        const isTodayRestDay = scope === 'today' && (
+            stats.is_rest_day === true ||
+            (stats.is_rest_day === undefined && [0, 6].includes(new Date().getDay()))
+        );
+
         // Show "present" if configured
         if (dashboardConfig.show_normal_attendance && stats.present !== undefined) {
             if (scope === 'today') {
-                // Today: rest day, or 已出勤/未出勤
-                if (stats.is_rest_day) {
+                if (isTodayRestDay) {
                     entries.push({
                         key: 'present',
                         name: '正常出勤',
@@ -506,11 +511,13 @@ export default function StudentDashboard() {
                     const typeConfig = leaveTypesConfig[type.slug] || {};
                     const displayUnit = typeConfig.display_unit || '节';
                     const count = stats[type.slug] || 0;
+                    // On a rest day, attendance stats don't apply
+                    const displayValue = isTodayRestDay ? '—' : `${count}${displayUnit}`;
 
                     entries.push({
                         key: type.slug,
                         name: type.name,
-                        value: `${count}${displayUnit}`,
+                        value: displayValue,
                         color: type.color || colorMap[type.slug] || 'gray'
                     });
                 });

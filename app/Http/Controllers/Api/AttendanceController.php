@@ -1554,7 +1554,9 @@ class AttendanceController extends Controller
             // Include leave types config for frontend
             $stats['_leave_types_config'] = $leaveTypesConfig;
 
-            return response()->json($stats);
+            return response()->json($stats)
+                ->header('Cache-Control', 'no-store, no-cache, must-revalidate')
+                ->header('Pragma', 'no-cache');
         } catch (\Exception $e) {
             \Log::error('studentStats error: ' . $e->getMessage() . ' | Trace: ' . $e->getTraceAsString());
             return response()->json(['error' => 'Server Error: ' . $e->getMessage()], 500);
