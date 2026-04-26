@@ -40,8 +40,14 @@ export default function TeacherDashboard() {
         isOpen: false,
         title: '',
         students: [],
-        type: null
+        allStudents: [],
+        typeStudents: [],
+        type: null,
+        leaveTypeSlug: null,
+        leaveTypeName: null,
+        leaveTypeId: null
     });
+    const [leaveDetailFilter, setLeaveDetailFilter] = useState('type'); // 'all' | 'type'
 
     // 学生详细记录Modal状态
     const [studentDetailModal, setStudentDetailModal] = useState({
@@ -211,60 +217,82 @@ export default function TeacherDashboard() {
     }, [scope, selectedSemester]);
 
     // 处理统计卡片点击
-    const handleStatCardClick = async (title, status, leaveTypeId = null) => {
+    const handleStatCardClick = async (title, status, leaveTypeId = null, leaveTypeSlug = null, leaveTypeName = null) => {
         try {
-            // 重置筛选状态
             setAttendanceFilters({ departmentId: '', classId: '', filterType: 'all' });
+            setLeaveDetailFilter('type');
 
-            // 显示加载状态
             setDetailModal({
                 isOpen: true,
                 title: `${title} - 加载中...`,
                 students: [],
+                allStudents: [],
+                typeStudents: [],
                 type: status,
+                leaveTypeSlug,
+                leaveTypeName,
+                leaveTypeId,
                 filters: null,
                 totalDays: 0
             });
 
-            // 调用API获取详细数据
-            const response = await axios.get('/attendance/details', {
-                params: {
-                    scope: scope,  // 传递当前scope
-                    status: status,
-                    leave_type_id: leaveTypeId,
-                    semester_id: selectedSemester || undefined  // 传递选中的学期
-                }
-            });
+            const baseParams = { scope, semester_id: selectedSemester || undefined };
 
-            console.log('[Detail Modal] API response:', response.data);
-
-            // 更新Modal数据 - 处理 present 状态的特殊格式
-            if (status === 'present' && response.data.students) {
+            if (status === 'present') {
+                const response = await axios.get('/attendance/details', {
+                    params: { ...baseParams, status, leave_type_id: leaveTypeId }
+                });
                 setDetailModal({
                     isOpen: true,
-                    title: title,
+                    title,
                     students: response.data.students || [],
+                    allStudents: [],
+                    typeStudents: [],
                     type: status,
+                    leaveTypeSlug: null,
+                    leaveTypeName: null,
+                    leaveTypeId: null,
                     filters: response.data.filters || null,
                     totalDays: response.data.total_days || 0,
                     userRole: response.data.user_role
                 });
             } else {
+                // 并发拉取：全部学生（/students）+ 该类型学生（/attendance/details）
+                const [studentsRes, typeRes] = await Promise.all([
+                    axios.get('/students', { params: { per_page: 500 } }),
+                    axios.get('/attendance/details', { params: { ...baseParams, status, leave_type_id: leaveTypeId } })
+                ]);
+
+                const typeStudents = typeRes.data?.students || typeRes.data || [];
+
+                // 建立 id→typeRecord 映射，用于"全部学生"视图快速查找
+                const typeMap = {};
+                typeStudents.forEach(s => { typeMap[s.id] = s; });
+
+                // 全部学生列表，附加 hasRecord + recordDetail
+                const rawAll = studentsRes.data?.data || studentsRes.data || [];
+                const allStudents = rawAll.map(s => ({
+                    ...s,
+                    hasRecord: !!typeMap[s.id],
+                    recordDetail: typeMap[s.id]?.detail || null,
+                    records: typeMap[s.id]?.records || []
+                }));
+
                 setDetailModal({
                     isOpen: true,
-                    title: title,
-                    students: response.data || [],
-                    type: status
+                    title,
+                    students: typeStudents,
+                    allStudents,
+                    typeStudents,
+                    type: status,
+                    leaveTypeSlug,
+                    leaveTypeName,
+                    leaveTypeId
                 });
             }
         } catch (error) {
             console.error('Failed to fetch details:', error);
-            setDetailModal({
-                isOpen: true,
-                title: `${title} - 加载失败`,
-                students: [],
-                type: status
-            });
+            setDetailModal(prev => ({ ...prev, title: `${prev.title.replace(' - 加载中...', '')} - 加载失败`, students: [] }));
         }
     };
 
@@ -478,10 +506,10 @@ export default function TeacherDashboard() {
     };
 
     // 处理点击学生姓名查看所有记录
-    const handleStudentNameClick = async (student) => {
+    const handleStudentNameClick = async (student, lockedTypeSlug = null) => {
         setStudentDetailScope('today');
         setStudentDetailCustomRange({ start: '', end: '' });
-        setStudentDetailTypeFilter('');
+        setStudentDetailTypeFilter(lockedTypeSlug || '');
         await fetchStudentRecords(student, 'today', null);
     };
 
@@ -751,15 +779,9 @@ export default function TeacherDashboard() {
                                             iconPath = "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"; // Checkmark icon
                                         }
 
-                                        // 确定状态类型
-                                        let statusType = 'leave';
-                                        if (type.name.includes('迟到')) {
-                                            statusType = 'late';
-                                        } else if (type.name.includes('早退')) {
-                                            statusType = 'early_leave';
-                                        } else if (type.name.includes('缺勤') || type.name.includes('旷课')) {
-                                            statusType = 'absent';
-                                        }
+                                        // slug 直接对应 attendance_records.status 的类型
+                                        const directStatusSlugs = ['absent', 'late', 'early_leave'];
+                                        const statusType = directStatusSlugs.includes(type.slug) ? type.slug : 'leave';
 
                                         return (
                                             <StatCard
@@ -775,7 +797,9 @@ export default function TeacherDashboard() {
                                                 onClick={(count && (typeof count === 'number' ? count > 0 : true)) ? () => handleStatCardClick(
                                                     `${scopeLabels[scope]}${type.name}`,
                                                     statusType,
-                                                    statusType === 'leave' ? type.id : null
+                                                    statusType === 'leave' ? type.id : null,
+                                                    type.slug,
+                                                    type.name
                                                 ) : null}
                                             />
                                         );
@@ -963,6 +987,27 @@ export default function TeacherDashboard() {
                                     </button>
                                 </div>
 
+                                {/* 筛选区域 - 请假类型卡片 */}
+                                {detailModal.type !== 'present' && detailModal.leaveTypeSlug && (
+                                    <div className="flex gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+                                        <select
+                                            value={leaveDetailFilter}
+                                            onChange={e => {
+                                                const v = e.target.value;
+                                                setLeaveDetailFilter(v);
+                                                setDetailModal(prev => ({
+                                                    ...prev,
+                                                    students: v === 'all' ? prev.allStudents : prev.typeStudents
+                                                }));
+                                            }}
+                                            className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="type">{detailModal.leaveTypeName}学生</option>
+                                            <option value="all">全部学生</option>
+                                        </select>
+                                    </div>
+                                )}
+
                                 {/* 筛选区域 - 仅出勤详情显示 */}
                                 {detailModal.type === 'present' && detailModal.filters && (
                                     <div className="flex flex-wrap gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
@@ -1048,6 +1093,10 @@ export default function TeacherDashboard() {
                                                                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">出勤天数</th>
                                                                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">出勤率</th>
                                                             </>
+                                                        ) : leaveDetailFilter === 'all' ? (
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                                有无{detailModal.leaveTypeName}
+                                                            </th>
                                                         ) : (
                                                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                                 {scope === 'today' ? '详情' : '次数'}
@@ -1063,10 +1112,10 @@ export default function TeacherDashboard() {
                                                         return (
                                                             <tr
                                                                 key={index}
-                                                                onClick={() => detailModal.type === 'present'
-                                                                    ? handleStudentNameClick({ id: student.id, name: student.name, student_no: student.student_no })
-                                                                    : handleStudentClick(student)
-                                                                }
+                                                                onClick={() => handleStudentNameClick(
+                                                                    { id: student.id, name: student.name, student_no: student.student_no },
+                                                                    detailModal.type === 'present' ? null : detailModal.leaveTypeSlug
+                                                                )}
                                                                 className="hover:bg-gray-50 cursor-pointer transition-colors"
                                                             >
                                                                 {/* 系部列 */}
@@ -1097,6 +1146,19 @@ export default function TeacherDashboard() {
                                                                             </span>
                                                                         </td>
                                                                     </>
+                                                                ) : leaveDetailFilter === 'all' ? (
+                                                                    <td className="px-4 py-4 text-sm">
+                                                                        {student.hasRecord ? (
+                                                                            <span className="inline-flex items-center gap-1">
+                                                                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700">✓ 有</span>
+                                                                                {student.recordDetail && (
+                                                                                    <span className="text-gray-500 text-xs">{student.recordDetail}</span>
+                                                                                )}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="text-gray-300">—</span>
+                                                                        )}
+                                                                    </td>
                                                                 ) : (
                                                                     <td className="px-4 py-4 text-sm">
                                                                         {scope === 'today' ? (
