@@ -1267,18 +1267,27 @@ class AttendanceController extends Controller
                     : $semester->holidays ?? [];
             }
 
-            // Helper function to count working days in a range
+            // Helper function to count working days in a range.
+            // When semester.holidays is configured, it already contains ALL non-school days
+            // (normal weekends + national holidays, EXCLUDING makeup school weekends like 调休).
+            // So: any day NOT in holidays = school day.
+            // Fallback to weekday-only when holidays is not configured.
             $countWorkingDays = function($start, $end) use ($holidays) {
                 if (!$start || !$end) return 0;
                 $count = 0;
                 $current = $start->copy();
-                $maxDays = 400; // Safety limit to prevent infinite loop
+                $maxDays = 400;
                 $dayCount = 0;
+                $useHolidayList = !empty($holidays);
                 while ($current <= $end && $dayCount < $maxDays) {
-                    $dayOfWeek = $current->dayOfWeek;
-                    if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
-                        $dateStr = $current->format('Y-m-d');
+                    $dateStr = $current->format('Y-m-d');
+                    if ($useHolidayList) {
                         if (!in_array($dateStr, $holidays)) {
+                            $count++;
+                        }
+                    } else {
+                        $dayOfWeek = $current->dayOfWeek;
+                        if ($dayOfWeek !== 0 && $dayOfWeek !== 6) {
                             $count++;
                         }
                     }
@@ -1431,11 +1440,24 @@ class AttendanceController extends Controller
             // Calculate present days: working days to today - non-present days
             $presentDays = max(0, $numeratorWorkingDays - $totalNonPresentDays);
 
+            // Determine if today is a rest day (only meaningful for today scope)
+            $isTodayRestDay = false;
+            if ($scope === 'today') {
+                $todayStr = now()->format('Y-m-d');
+                if (!empty($holidays)) {
+                    $isTodayRestDay = in_array($todayStr, $holidays);
+                } else {
+                    // Fallback when no holidays configured: treat weekends as rest days
+                    $isTodayRestDay = in_array(now()->dayOfWeek, [0, 6]);
+                }
+            }
+
             // Build response with leave type counts
             $stats = [
                 'present' => $presentDays,
                 'working_days' => $denominatorWorkingDays,
                 'absent_lessons_as_day' => $absentLessonsAsDay,
+                'is_rest_day' => $isTodayRestDay,
             ];
 
             // Get leave types for mapping
@@ -1810,7 +1832,7 @@ class AttendanceController extends Controller
                         // Priority 4: option (for select input types)
                         elseif ($record->details && $record->leaveType && $record->leaveType->input_config) {
                             $config = is_string($record->leaveType->input_config) ? json_decode($record->leaveType->input_config, true) : $record->leaveType->input_config;
-                            
+
                             if (isset($details['option']) && isset($config['options'])) {
                                 foreach ($config['options'] as $opt) {
                                     $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
@@ -1819,6 +1841,34 @@ class AttendanceController extends Controller
                                         $detailLabel = $optLabel;
                                         break;
                                     }
+                                }
+                            }
+                        }
+
+                        // Priority 5: period_id / period_ids → period name (fallback for manual marks)
+                        if (!$detailLabel) {
+                            $periodsConfig = \DB::table('system_settings')->where('key', 'attendance_periods')->value('value');
+                            $periodsConfig = $periodsConfig ? json_decode($periodsConfig, true) : [];
+                            $periodIds = [];
+                            if (isset($details['period_ids']) && is_array($details['period_ids'])) {
+                                $periodIds = $details['period_ids'];
+                            } elseif (isset($details['periods']) && is_array($details['periods'])) {
+                                $periodIds = $details['periods'];
+                            } elseif ($record->period_id) {
+                                $periodIds = [$record->period_id];
+                            }
+                            if (!empty($periodIds) && !empty($periodsConfig)) {
+                                $periodNames = [];
+                                foreach ($periodIds as $pid) {
+                                    foreach ($periodsConfig as $p) {
+                                        if ((int)$p['id'] === (int)$pid) {
+                                            $periodNames[] = $p['name'];
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (!empty($periodNames)) {
+                                    $detailLabel = implode('、', $periodNames);
                                 }
                             }
                         }

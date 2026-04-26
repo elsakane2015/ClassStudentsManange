@@ -450,14 +450,23 @@ export default function StudentDashboard() {
         // Show "present" if configured
         if (dashboardConfig.show_normal_attendance && stats.present !== undefined) {
             if (scope === 'today') {
-                // Today: show binary 已出勤/未出勤 (threshold already applied server-side)
-                const isPresent = (stats.present || 0) >= 1;
-                entries.push({
-                    key: 'present',
-                    name: '正常出勤',
-                    value: isPresent ? '已出勤' : '未出勤',
-                    color: isPresent ? 'green' : 'red'
-                });
+                // Today: rest day, or 已出勤/未出勤
+                if (stats.is_rest_day) {
+                    entries.push({
+                        key: 'present',
+                        name: '正常出勤',
+                        value: '今日休息',
+                        color: 'gray'
+                    });
+                } else {
+                    const isPresent = (stats.present || 0) >= 1;
+                    entries.push({
+                        key: 'present',
+                        name: '正常出勤',
+                        value: isPresent ? '已出勤' : '未出勤',
+                        color: isPresent ? 'green' : 'red'
+                    });
+                }
             } else {
                 const presentDays = stats.present || 0;
                 const workingDays = stats.working_days || 0;
