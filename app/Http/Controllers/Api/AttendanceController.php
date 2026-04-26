@@ -1297,6 +1297,11 @@ class AttendanceController extends Controller
             if ($scope === 'today') {
                 $statsStartDate = now()->startOfDay();
                 $statsEndDate = now()->endOfDay();
+                // Today is always 1 day regardless of weekday/weekend
+                $denominatorWorkingDays = 1;
+            } elseif ($scope === 'week') {
+                $statsStartDate = now()->startOfWeek(\Carbon\Carbon::MONDAY);
+                $statsEndDate = now()->endOfDay();
                 $denominatorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
             } elseif ($scope === 'month') {
                 $statsStartDate = now()->startOfMonth();
@@ -1305,17 +1310,11 @@ class AttendanceController extends Controller
             } elseif ($scope === 'semester') {
                 if ($semester && $semester->start_date) {
                     $semesterStart = \Carbon\Carbon::parse($semester->start_date);
-                    // Calculate semester end date
                     $semesterEnd = $semesterStart->copy()->addWeeks($semester->total_weeks ?? 20)->subDay();
-                    
-                    // Stats are calculated from semester start to TODAY
                     $statsStartDate = $semesterStart;
-                    $statsEndDate = min($today, $semesterEnd); // Don't go past semester end
-                    
-                    // Denominator is TOTAL semester working days (start to end)
+                    $statsEndDate = min($today, $semesterEnd);
                     $denominatorWorkingDays = $countWorkingDays($semesterStart, $semesterEnd);
                 } else {
-                    // Fallback when no semester is configured
                     $statsStartDate = now()->startOfMonth();
                     $statsEndDate = now()->endOfDay();
                     $denominatorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
@@ -1323,17 +1322,16 @@ class AttendanceController extends Controller
                 }
             }
 
-            // Safety check: ensure we have valid working days
-            if ($denominatorWorkingDays <= 0) {
-                \Log::warning('studentStats: denominatorWorkingDays is ' . $denominatorWorkingDays . ', scope=' . $scope);
-                // Recalculate with current month as fallback
+            // Safety check: only fall back for non-today scopes when working_days is still 0
+            if ($denominatorWorkingDays <= 0 && $scope !== 'today') {
+                \Log::warning('studentStats: denominatorWorkingDays is 0, scope=' . $scope . ', falling back to month');
                 $statsStartDate = now()->startOfMonth();
                 $statsEndDate = now()->endOfDay();
                 $denominatorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
             }
 
-            // Working days from start to today (for numerator calculation)
-            $numeratorWorkingDays = $countWorkingDays($statsStartDate, $statsEndDate);
+            // Numerator working days (same range; for today always 1)
+            $numeratorWorkingDays = ($scope === 'today') ? 1 : $countWorkingDays($statsStartDate, $statsEndDate);
 
             // Build base query for the stats period
             $query = AttendanceRecord::where('student_id', $studentId)
@@ -1436,7 +1434,8 @@ class AttendanceController extends Controller
             // Build response with leave type counts
             $stats = [
                 'present' => $presentDays,
-                'working_days' => $denominatorWorkingDays
+                'working_days' => $denominatorWorkingDays,
+                'absent_lessons_as_day' => $absentLessonsAsDay,
             ];
 
             // Get leave types for mapping
@@ -1564,6 +1563,9 @@ class AttendanceController extends Controller
 
             if ($scope === 'today') {
                 $startDate = now()->startOfDay();
+                $endDate = now()->endOfDay();
+            } elseif ($scope === 'week') {
+                $startDate = now()->startOfWeek(\Carbon\Carbon::MONDAY);
                 $endDate = now()->endOfDay();
             } elseif ($scope === 'month') {
                 $startDate = now()->startOfMonth();

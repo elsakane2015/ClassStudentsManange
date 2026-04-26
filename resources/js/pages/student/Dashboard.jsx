@@ -99,7 +99,7 @@ export default function StudentDashboard() {
     const [selectedAttendanceDate, setSelectedAttendanceDate] = useState(new Date());
     const [isClassAdmin, setIsClassAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [scope, setScope] = useState('today'); // today, month, semester
+    const [scope, setScope] = useState('today'); // today, week, month, semester
     const [detailModal, setDetailModal] = useState({ isOpen: false, title: '', records: [] });
     const [statsExpanded, setStatsExpanded] = useState(true); // Stats section collapsed state
     const [dashboardConfig, setDashboardConfig] = useState({
@@ -447,16 +447,27 @@ export default function StudentDashboard() {
         const entries = [];
         const leaveTypesConfig = stats._leave_types_config || {};
 
-        // Show "present" if configured - display as "出勤天数/工作日天数"
+        // Show "present" if configured
         if (dashboardConfig.show_normal_attendance && stats.present !== undefined) {
-            const presentDays = stats.present || 0;
-            const workingDays = stats.working_days || 0;
-            entries.push({
-                key: 'present',
-                name: '正常出勤',
-                value: `${presentDays}/${workingDays}`,
-                color: 'green'
-            });
+            if (scope === 'today') {
+                // Today: show binary 已出勤/未出勤 (threshold already applied server-side)
+                const isPresent = (stats.present || 0) >= 1;
+                entries.push({
+                    key: 'present',
+                    name: '正常出勤',
+                    value: isPresent ? '已出勤' : '未出勤',
+                    color: isPresent ? 'green' : 'red'
+                });
+            } else {
+                const presentDays = stats.present || 0;
+                const workingDays = stats.working_days || 0;
+                entries.push({
+                    key: 'present',
+                    name: '正常出勤',
+                    value: `${presentDays}/${workingDays}天`,
+                    color: 'green'
+                });
+            }
         }
 
         // Add all leave types if configured (show even if count is 0)
@@ -497,7 +508,7 @@ export default function StudentDashboard() {
         }
 
         return entries;
-    }, [stats, leaveTypes, dashboardConfig]);
+    }, [stats, leaveTypes, dashboardConfig, user, scope]);
 
     if (loading) {
         return (
@@ -541,6 +552,16 @@ export default function StudentDashboard() {
                                         }`}
                                 >
                                     今日
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setScope('week')}
+                                    className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'week'
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    本周
                                 </button>
                                 <button
                                     type="button"
