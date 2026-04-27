@@ -115,6 +115,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const [students, setStudents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
+    const [studentFilter, setStudentFilter] = useState('all'); // 'all' | 'marked'
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [periods, setPeriods] = useState([]); // 节次列表
     const [timeSlots, setTimeSlots] = useState([]); // 时段列表（上午/下午/全天）
@@ -197,11 +198,26 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         setSelectedStudentIds(newSet);
     };
 
+    // 过滤后的学生列表（用于渲染、全选）
+    const visibleStudents = students.filter(s => {
+        if (studentFilter === 'all') return true;
+        const records = s.attendance || [];
+        return records.some(r => r.status !== 'present');
+    });
+
     const toggleAll = () => {
-        if (selectedStudentIds.size === students.length) {
-            setSelectedStudentIds(new Set());
+        const visibleIds = visibleStudents.map(s => s.id);
+        const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedStudentIds.has(id));
+        if (allSelected) {
+            // 取消勾选当前可见的
+            const next = new Set(selectedStudentIds);
+            visibleIds.forEach(id => next.delete(id));
+            setSelectedStudentIds(next);
         } else {
-            setSelectedStudentIds(new Set(students.map(s => s.id)));
+            // 勾选全部可见的
+            const next = new Set(selectedStudentIds);
+            visibleIds.forEach(id => next.add(id));
+            setSelectedStudentIds(next);
         }
     };
 
@@ -658,6 +674,15 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                         {lt.name}
                                     </button>
                                 ))}
+
+                                <select
+                                    value={studentFilter}
+                                    onChange={e => setStudentFilter(e.target.value)}
+                                    className="ml-auto text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                >
+                                    <option value="all">全部</option>
+                                    <option value="marked">有标记</option>
+                                </select>
                             </div>
 
                             <div className="overflow-y-auto max-h-[60vh] border rounded-md">
@@ -668,7 +693,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                 <input
                                                     type="checkbox"
                                                     className="h-4 w-4 text-indigo-600 rounded"
-                                                    checked={students.length > 0 && selectedStudentIds.size === students.length}
+                                                    checked={visibleStudents.length > 0 && visibleStudents.every(s => selectedStudentIds.has(s.id))}
                                                     onChange={toggleAll}
                                                 />
                                             </th>
@@ -678,7 +703,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                         </tr>
                                     </thead>
                                     <tbody className="bg-white divide-y divide-gray-200">
-                                        {students.map(student => {
+                                        {visibleStudents.map(student => {
                                             // 获取所有考勤记录
                                             const records = student.attendance || [];
                                             const summary = student.attendance_summary || {};
@@ -775,7 +800,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                 </tr>
                                             );
                                         })}
-                                        {students.length === 0 && !loading && <tr><td colSpan="4" className="text-center py-4 text-gray-500">无学生数据</td></tr>}
+                                        {visibleStudents.length === 0 && !loading && (
+                                            <tr><td colSpan="4" className="text-center py-4 text-gray-500">
+                                                {studentFilter === 'marked' ? '没有有标记的学生' : '无学生数据'}
+                                            </td></tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
