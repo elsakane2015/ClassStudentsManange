@@ -126,6 +126,9 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const [inputModalOpen, setInputModalOpen] = useState(false);
     const [inputData, setInputData] = useState({});
     const [showPeriodDetail, setShowPeriodDetail] = useState(false);
+    const [showPrintOptions, setShowPrintOptions] = useState(false);
+    const [printColumns, setPrintColumns] = useState(2);
+    const [viewColumns, setViewColumns] = useState(1);
 
     useEffect(() => {
         if (isOpen && date) {
@@ -455,6 +458,114 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         }
     };
 
+    const handlePrint = () => {
+        setShowPrintOptions(false);
+        const cols = Math.max(1, Math.min(10, printColumns || 2));
+
+        const safeParseDetails = (raw) => {
+            if (!raw) return {};
+            if (typeof raw === 'object') return raw;
+            try { return JSON.parse(raw); } catch (e) { return {}; }
+        };
+
+        const deduplicateRecords = (records) => {
+            const nonPresent = records.filter(r => r.status !== 'present');
+            const seen = new Set();
+            return nonPresent.filter(r => {
+                const details = safeParseDetails(r.details);
+                const displayLabel = r.display_label || details.display_label || '';
+                let key;
+                if (r.source_type === 'leave_request' && r.source_id) {
+                    key = `leave-${r.source_id}`;
+                } else if (displayLabel) {
+                    key = `label-${r.leave_type_id}-${displayLabel}`;
+                } else if (r.id) {
+                    key = `id-${r.id}`;
+                } else {
+                    key = `${r.status}-${r.period_id}-${details.option || 'none'}`;
+                }
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+        };
+
+        const statusColorMap = {
+            absent: '#dc2626', late: '#d97706', leave: '#2563eb',
+            early_leave: '#ea580c', excused: '#9333ea',
+        };
+
+        const buildStatusHtml = (student) => {
+            const uniqueRecords = deduplicateRecords(student.attendance || []);
+            if (uniqueRecords.length === 0) return '<span style="color:#9ca3af">-</span>';
+
+            return uniqueRecords.map(r => {
+                const details = safeParseDetails(r.details);
+                const displayLabel = r.display_label || details.display_label;
+                const lt = r.leave_type || leaveTypes.find(l => l.id === r.leave_type_id);
+                const ltName = lt?.name || '';
+
+                let label;
+                if (displayLabel) {
+                    label = (ltName && !displayLabel.includes(ltName))
+                        ? `${ltName}(${displayLabel})` : displayLabel;
+                } else {
+                    label = ltName || r.status;
+                    if (details.time) label += `(${details.time})`;
+                    else if (details.option_label) label += `(${details.option_label})`;
+                    else if (details.option) label += `(${details.option})`;
+                }
+
+                let prefix = '';
+                if (r.approval_status === 'pending') prefix = '待审:';
+                else if (r.approval_status === 'approved') prefix = '批准:';
+                else if (r.approval_status === 'rejected') prefix = '驳回:';
+
+                const color = statusColorMap[r.status] || '#6b7280';
+                return `<span style="color:${color};white-space:nowrap">${prefix}${label}</span>`;
+            }).join(' <span style="color:#d1d5db">|</span> ');
+        };
+
+        const filterLabel = studentFilter === 'marked' ? '有标记' : '全部';
+        const items = visibleStudents.map(s => ({
+            no: s.student_no || '',
+            name: s.user?.name || '',
+            statusHtml: buildStatusHtml(s),
+        }));
+
+        const cards = items.map(s => `
+            <div style="break-inside:avoid;border:1px solid #e5e7eb;border-radius:4px;padding:4px 6px;margin-bottom:3px;font-size:11px;line-height:1.4">
+                <div style="white-space:nowrap">
+                    <span style="color:#9ca3af;font-family:monospace">${s.no}</span>
+                    <strong style="margin-left:5px">${s.name}</strong>
+                </div>
+                <div style="margin-top:2px;font-size:10px">${s.statusHtml}</div>
+            </div>`).join('');
+
+        const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>考勤标记 - ${formattedDate}</title>
+<style>
+  body{font-family:sans-serif;padding:8mm;margin:0}
+  h2{font-size:13px;margin:0 0 6px;font-weight:600}
+  .meta{font-size:11px;color:#6b7280;margin-bottom:8px}
+  .grid{column-count:${cols};column-gap:6px}
+  @media print{body{padding:5mm} @page{margin:8mm}}
+</style></head>
+<body>
+<h2>考勤标记 - ${formattedDate}</h2>
+<div class="meta">${filterLabel} · 共 ${items.length} 人 · ${cols} 列</div>
+<div class="grid">${cards}</div>
+</body></html>`;
+
+        const w = window.open('', '_blank', 'width=960,height=720');
+        if (!w) { alert('请允许弹出窗口以打印'); return; }
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        setTimeout(() => w.print(), 400);
+    };
+
     const handleInputConfirm = () => {
         if (!pendingAction) return;
 
@@ -527,7 +638,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             const s = status || 'leave';
             // Use red style for roll_call absents (旷课)
             const styleKey = displayLabel.includes('旷课') ? 'absent' : s;
-            const classes = `px-2 py-0.5 rounded text-xs font-medium ${styles[styleKey] || styles.unmarked} truncate max-w-[200px] ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
+            const classes = `px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${styles[styleKey] || styles.unmarked} ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
 
             // 构建完整标签：状态前缀 + 请假类型名称(节次信息)
             // 例如：批准:病假(第1节、早读、早操)
@@ -631,7 +742,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         }
 
         const s = status || 'unmarked';
-        const classes = `px-2 py-0.5 rounded text-xs font-medium ${styles[s] || styles.unmarked} truncate max-w-[150px] ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
+        const classes = `px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${styles[s] || styles.unmarked} ${onClick ? 'cursor-pointer hover:opacity-80 ring-1 ring-offset-1 ring-transparent hover:ring-red-300 transition-all' : ''}`;
 
         return (
             <span
@@ -675,139 +786,238 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                     </button>
                                 ))}
 
-                                <select
-                                    value={studentFilter}
-                                    onChange={e => setStudentFilter(e.target.value)}
-                                    className="ml-auto text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                >
-                                    <option value="all">全部</option>
-                                    <option value="marked">有标记</option>
-                                </select>
+                                <div className="ml-auto flex items-center gap-2">
+                                    <select
+                                        value={studentFilter}
+                                        onChange={e => setStudentFilter(e.target.value)}
+                                        className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    >
+                                        <option value="all">全部</option>
+                                        <option value="marked">有标记</option>
+                                    </select>
+
+                                    {/* 弹窗内列数选择 */}
+                                    <div className="flex items-center border border-gray-300 rounded overflow-hidden text-sm">
+                                        {[1, 2, 3].map(n => (
+                                            <button
+                                                key={n}
+                                                onClick={() => setViewColumns(n)}
+                                                className={`px-2 py-1 transition-colors ${viewColumns === n ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                                title={`${n}列显示`}
+                                            >
+                                                {n}列
+                                            </button>
+                                        ))}
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="8"
+                                            value={viewColumns}
+                                            onChange={e => setViewColumns(Math.max(1, parseInt(e.target.value) || 1))}
+                                            className="w-10 border-l border-gray-300 px-1 py-1 text-center focus:outline-none"
+                                            title="自定义列数"
+                                        />
+                                    </div>
+
+                                    {/* 打印按钮 */}
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setShowPrintOptions(v => !v)}
+                                            title="打印 / 导出"
+                                            className="flex items-center gap-1 px-2 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 text-gray-600"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                                            </svg>
+                                            打印
+                                        </button>
+
+                                        {showPrintOptions && (
+                                            <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-20 w-44">
+                                                <div className="text-xs font-medium text-gray-700 mb-2">每行列数</div>
+                                                <div className="flex gap-1 mb-2">
+                                                    {[1, 2, 3].map(n => (
+                                                        <button
+                                                            key={n}
+                                                            onClick={() => setPrintColumns(n)}
+                                                            className={`flex-1 py-1 rounded text-sm border transition-colors ${printColumns === n ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-300 hover:bg-gray-50'}`}
+                                                        >
+                                                            {n}列
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <span className="text-xs text-gray-500 whitespace-nowrap">自定义:</span>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        max="8"
+                                                        value={printColumns}
+                                                        onChange={e => setPrintColumns(Math.max(1, parseInt(e.target.value) || 1))}
+                                                        className="w-full border border-gray-300 rounded px-2 py-0.5 text-sm"
+                                                    />
+                                                </div>
+                                                <button
+                                                    onClick={handlePrint}
+                                                    className="w-full bg-indigo-600 text-white rounded py-1.5 text-sm hover:bg-indigo-700"
+                                                >
+                                                    打印
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
 
-                            <div className="overflow-y-auto max-h-[60vh] border rounded-md">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50 sticky top-0">
-                                        <tr>
-                                            <th scope="col" className="px-6 py-3 text-left w-12">
-                                                <input
-                                                    type="checkbox"
-                                                    className="h-4 w-4 text-indigo-600 rounded"
-                                                    checked={visibleStudents.length > 0 && visibleStudents.every(s => selectedStudentIds.has(s.id))}
-                                                    onChange={toggleAll}
-                                                />
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                            {viewColumns > 1 ? (
+                                /* 多列卡片视图（截屏友好） */
+                                <div className="overflow-y-auto max-h-[60vh] border rounded-md p-2">
+                                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${viewColumns}, minmax(0, 1fr))`, gap: '4px' }}>
                                         {visibleStudents.map(student => {
-                                            // 获取所有考勤记录
                                             const records = student.attendance || [];
-                                            const summary = student.attendance_summary || {};
-
+                                            const nonPresentRecords = records.filter(r => r.status !== 'present');
+                                            const seenKeys = new Set();
+                                            const uniqueRecords = nonPresentRecords.filter(r => {
+                                                const details = typeof r.details === 'string' ? JSON.parse(r.details || '{}') : (r.details || {});
+                                                const displayLabel = r.display_label || details.display_label || '';
+                                                let key;
+                                                if (r.source_type === 'leave_request' && r.source_id) key = `leave-${r.source_id}`;
+                                                else if (displayLabel) key = `label-${r.leave_type_id}-${displayLabel}`;
+                                                else if (r.id) key = `id-${r.id}`;
+                                                else key = `${r.status}-${r.period_id}-${(typeof r.details === 'string' ? JSON.parse(r.details || '{}') : (r.details || {})).option || 'none'}`;
+                                                if (seenKeys.has(key)) return false;
+                                                seenKeys.add(key);
+                                                return true;
+                                            });
                                             return (
-                                                <tr key={student.id} className={selectedStudentIds.has(student.id) ? 'bg-indigo-50' : 'hover:bg-gray-50'}>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <input
-                                                            type="checkbox"
-                                                            className="h-4 w-4 text-indigo-600 rounded"
-                                                            checked={selectedStudentIds.has(student.id)}
-                                                            onChange={() => toggleSelection(student.id)}
-                                                        />
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{student.student_no}</td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{student.user?.name}</td>
-                                                    <td className="px-6 py-4">
-                                                        {/* 显示异常状态，无异常则显示 - */}
-                                                        {(() => {
-                                                            // 过滤掉 status='present' 的记录，只显示异常状态
-                                                            const nonPresentRecords = records.filter(r => r.status !== 'present');
-
-                                                            // 去重：同一请假请求的多条记录只显示一次
-                                                            const seenKeys = new Set();
-                                                            const uniqueRecords = nonPresentRecords.filter(r => {
-                                                                // 解析 details
-                                                                const details = typeof r.details === 'string'
-                                                                    ? JSON.parse(r.details || '{}')
-                                                                    : (r.details || {});
-
-                                                                // 获取 display_label 用于去重
-                                                                const displayLabel = r.display_label || details.display_label || '';
-
-                                                                // 对于自主请假（source_type = leave_request），按 source_id 去重
-                                                                // 或者按 display_label + leave_type_id 去重
-                                                                let key;
-                                                                if (r.source_type === 'leave_request' && r.source_id) {
-                                                                    // 优先用 source_id，确保同一请假请求只显示一次
-                                                                    key = `leave-${r.source_id}`;
-                                                                } else if (displayLabel) {
-                                                                    // 用 display_label + leave_type_id 去重
-                                                                    key = `label-${r.leave_type_id}-${displayLabel}`;
-                                                                } else if (r.id) {
-                                                                    key = `id-${r.id}`;
-                                                                } else {
-                                                                    key = `${r.status}-${r.period_id}-${details.option || 'none'}`;
-                                                                }
-
-                                                                if (seenKeys.has(key)) return false;
-                                                                seenKeys.add(key);
-                                                                return true;
-                                                            });
-
-                                                            // 如果没有异常记录，显示 "-"（出勤是默认状态，无需标记）
-                                                            if (uniqueRecords.length === 0) {
-                                                                return <span className="text-gray-400">-</span>;
-                                                            }
-
-                                                            // 显示所有异常记录（已去重）
-                                                            return (
-                                                                <div className="flex flex-wrap items-center gap-1">
-                                                                    {uniqueRecords.map((record, idx) => {
-                                                                        const details = typeof record.details === 'string'
-                                                                            ? JSON.parse(record.details || '{}')
-                                                                            : (record.details || {});
-
-                                                                        // 获取 display_label：优先使用 record.display_label，其次使用 details.display_label
-                                                                        const displayLabel = record.display_label || details.display_label;
-
-                                                                        return (
-                                                                            <React.Fragment key={record.id || idx}>
-                                                                                <StatusBadge
-                                                                                    status={record.status}
-                                                                                    details={record.details}
-                                                                                    leaveTypeId={record.leave_type_id}
-                                                                                    leaveType={record.leave_type}
-                                                                                    displayLabel={displayLabel}
-                                                                                    periodId={record.period_id}
-                                                                                    period={record.period}
-                                                                                    isSelfApplied={record.source_type === 'leave_request'}
-                                                                                    approvalStatus={record.approval_status}
-                                                                                    onClick={() => handleDeleteRecord(student.id, record)}
-                                                                                />
-                                                                                {idx < uniqueRecords.length - 1 && (
-                                                                                    <span className="text-gray-400">|</span>
-                                                                                )}
-                                                                            </React.Fragment>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            );
-                                                        })()}
-                                                    </td>
-                                                </tr>
+                                                <div key={student.id} className="border border-gray-200 rounded p-1.5 text-xs">
+                                                    <div className="flex items-baseline gap-1 mb-1 min-w-0">
+                                                        <span className="font-mono text-gray-400 shrink-0 text-[10px]">{student.student_no}</span>
+                                                        <span className="font-semibold text-gray-900 truncate">{student.user?.name}</span>
+                                                    </div>
+                                                    {uniqueRecords.length === 0 ? (
+                                                        <span className="text-gray-400">-</span>
+                                                    ) : (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {uniqueRecords.map((record, idx) => {
+                                                                const details = typeof record.details === 'string' ? JSON.parse(record.details || '{}') : (record.details || {});
+                                                                const displayLabel = record.display_label || details.display_label;
+                                                                return (
+                                                                    <StatusBadge
+                                                                        key={record.id || idx}
+                                                                        status={record.status}
+                                                                        details={record.details}
+                                                                        leaveTypeId={record.leave_type_id}
+                                                                        leaveType={record.leave_type}
+                                                                        displayLabel={displayLabel}
+                                                                        periodId={record.period_id}
+                                                                        period={record.period}
+                                                                        approvalStatus={record.approval_status}
+                                                                    />
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             );
                                         })}
                                         {visibleStudents.length === 0 && !loading && (
-                                            <tr><td colSpan="4" className="text-center py-4 text-gray-500">
+                                            <div className="col-span-full text-center py-4 text-gray-500">
                                                 {studentFilter === 'marked' ? '没有有标记的学生' : '无学生数据'}
-                                            </td></tr>
+                                            </div>
                                         )}
-                                    </tbody>
-                                </table>
-                            </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                /* 单列表格视图（默认，支持勾选操作） */
+                                <div className="overflow-y-auto max-h-[60vh] border rounded-md">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50 sticky top-0">
+                                            <tr>
+                                                <th scope="col" className="px-6 py-3 text-left w-12">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="h-4 w-4 text-indigo-600 rounded"
+                                                        checked={visibleStudents.length > 0 && visibleStudents.every(s => selectedStudentIds.has(s.id))}
+                                                        onChange={toggleAll}
+                                                    />
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">学号</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {visibleStudents.map(student => {
+                                                const records = student.attendance || [];
+                                                return (
+                                                    <tr key={student.id} className={selectedStudentIds.has(student.id) ? 'bg-indigo-50' : 'hover:bg-gray-50'}>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="h-4 w-4 text-indigo-600 rounded"
+                                                                checked={selectedStudentIds.has(student.id)}
+                                                                onChange={() => toggleSelection(student.id)}
+                                                            />
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">{student.student_no}</td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{student.user?.name}</td>
+                                                        <td className="px-6 py-4">
+                                                            {(() => {
+                                                                const nonPresentRecords = records.filter(r => r.status !== 'present');
+                                                                const seenKeys = new Set();
+                                                                const uniqueRecords = nonPresentRecords.filter(r => {
+                                                                    const details = typeof r.details === 'string' ? JSON.parse(r.details || '{}') : (r.details || {});
+                                                                    const displayLabel = r.display_label || details.display_label || '';
+                                                                    let key;
+                                                                    if (r.source_type === 'leave_request' && r.source_id) key = `leave-${r.source_id}`;
+                                                                    else if (displayLabel) key = `label-${r.leave_type_id}-${displayLabel}`;
+                                                                    else if (r.id) key = `id-${r.id}`;
+                                                                    else key = `${r.status}-${r.period_id}-${details.option || 'none'}`;
+                                                                    if (seenKeys.has(key)) return false;
+                                                                    seenKeys.add(key);
+                                                                    return true;
+                                                                });
+                                                                if (uniqueRecords.length === 0) return <span className="text-gray-400">-</span>;
+                                                                return (
+                                                                    <div className="flex flex-wrap items-center gap-1">
+                                                                        {uniqueRecords.map((record, idx) => {
+                                                                            const details = typeof record.details === 'string' ? JSON.parse(record.details || '{}') : (record.details || {});
+                                                                            const displayLabel = record.display_label || details.display_label;
+                                                                            return (
+                                                                                <React.Fragment key={record.id || idx}>
+                                                                                    <StatusBadge
+                                                                                        status={record.status}
+                                                                                        details={record.details}
+                                                                                        leaveTypeId={record.leave_type_id}
+                                                                                        leaveType={record.leave_type}
+                                                                                        displayLabel={displayLabel}
+                                                                                        periodId={record.period_id}
+                                                                                        period={record.period}
+                                                                                        isSelfApplied={record.source_type === 'leave_request'}
+                                                                                        approvalStatus={record.approval_status}
+                                                                                        onClick={() => handleDeleteRecord(student.id, record)}
+                                                                                    />
+                                                                                    {idx < uniqueRecords.length - 1 && <span className="text-gray-400">|</span>}
+                                                                                </React.Fragment>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            {visibleStudents.length === 0 && !loading && (
+                                                <tr><td colSpan="4" className="text-center py-4 text-gray-500">
+                                                    {studentFilter === 'marked' ? '没有有标记的学生' : '无学生数据'}
+                                                </td></tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                         </Dialog.Panel>
                     </div>
                 </div>
