@@ -1175,22 +1175,26 @@ class AttendanceController extends Controller
                     return $record;
                 });
             
-            // 合并同一天、同一时段的记录（避免"上午"显示5条）
+            // 合并同一天同一次申请的多条记录（一次请假按多个节次创建多条，日历只显示一次）
             $grouped = [];
             foreach ($attendance as $record) {
                 $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
                 $timeSlotId = $details['time_slot_id'] ?? null;
-                
-                // 如果有 time_slot_id，按日期+时段合并
-                if ($timeSlotId) {
-                    $key = $record->date . '_ts_' . $timeSlotId . '_' . $record->leave_type_id . '_' . $record->approval_status;
-                    if (!isset($grouped[$key])) {
-                        $grouped[$key] = $record;
-                    }
-                    // 已存在则跳过（保留第一条）
+                $dateStr = is_object($record->date) ? $record->date->format('Y-m-d') : $record->date;
+
+                if ($record->leave_batch_id) {
+                    // 优先按 leave_batch_id+date 去重：同一次申请同一天只显示一条
+                    $key = $dateStr . '_batch_' . $record->leave_batch_id;
+                } elseif ($timeSlotId) {
+                    // 旧数据兜底：按 date+time_slot_id 去重
+                    $key = $dateStr . '_ts_' . $timeSlotId . '_' . $record->leave_type_id . '_' . $record->approval_status;
                 } else {
-                    // 没有 time_slot_id 的记录保持原样
-                    $grouped[] = $record;
+                    // 无批次无时段：每条单独显示（roll_call 等）
+                    $key = 'id_' . $record->id;
+                }
+
+                if (!isset($grouped[$key])) {
+                    $grouped[$key] = $record;
                 }
             }
             
