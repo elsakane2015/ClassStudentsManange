@@ -72,7 +72,11 @@ class LeaveRequestController extends Controller
 
         // 只获取有 leave_batch_id 的记录（新版请假申请）和无 batch_id 的旧记录
         $records = $query->orderBy('created_at', 'desc')->get();
-        
+
+        // 加载节次配置，用于将 period_id 解析为可读名称
+        $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+        $periodMap = collect($attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [])->keyBy('id');
+
         // 按 leave_batch_id 分组（同一次申请的所有记录归为一组）
         // 如果没有 batch_id（旧数据），则按 student_id + date + leave_type_id + approval_status 分组
         $groupedRequests = $records->groupBy(function($record) {
@@ -81,7 +85,7 @@ class LeaveRequestController extends Controller
             }
             // 兼容旧数据：按单日分组
             return $record->student_id . '_' . $record->date->format('Y-m-d') . '_' . $record->leave_type_id . '_' . $record->approval_status;
-        })->map(function($group) {
+        })->map(function($group) use ($periodMap) {
             $first = $group->first();
             $dates = $group->pluck('date')->sort();
             $startDate = $dates->first();
@@ -123,14 +127,21 @@ class LeaveRequestController extends Controller
                 'approver_name' => $first->approver?->name,
                 'created_at' => $first->created_at,
                 'record_ids' => $group->pluck('id')->toArray(),
-                'records' => $group->map(fn($r) => [
-                    'id'        => $r->id,
-                    'date'      => $r->date->format('Y-m-d'),
-                    'period_id' => $r->period_id,
-                    'label'     => $r->display_label
-                        ?? (is_array($r->details) ? ($r->details['display_label'] ?? null) : null)
-                        ?? (is_string($r->details) ? (json_decode($r->details, true)['display_label'] ?? null) : null),
-                ])->sortBy(['date', 'period_id'])->values(),
+                'records' => $group->map(function($r) use ($periodMap) {
+                    // 优先用 period_id 查节次名，避免同一时段所有 record 显示相同标签（如"下午"×4）
+                    if ($r->period_id !== null && $periodMap->has($r->period_id)) {
+                        $label = $periodMap->get($r->period_id)['name'];
+                    } else {
+                        $details = is_array($r->details) ? $r->details : (json_decode($r->details ?? '{}', true) ?? []);
+                        $label = $r->display_label ?? $details['display_label'] ?? null;
+                    }
+                    return [
+                        'id'        => $r->id,
+                        'date'      => $r->date->format('Y-m-d'),
+                        'period_id' => $r->period_id,
+                        'label'     => $label,
+                    ];
+                })->sortBy(['date', 'period_id'])->values(),
             ];
         })->values();
 
