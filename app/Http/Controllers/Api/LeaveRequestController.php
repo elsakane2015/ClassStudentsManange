@@ -501,9 +501,42 @@ class LeaveRequestController extends Controller
                 );
             }
 
+            // 若有节次被排除，重算剩余 records 的 display_label 和 option_periods
+            $newDisplayLabel  = null;
+            $newOptionPeriods = null;
+            if (!empty($excludedRecordIds) && $relatedRecords->isNotEmpty()) {
+                $approvedPeriodIds = $relatedRecords
+                    ->pluck('period_id')
+                    ->filter(fn($pid) => $pid !== null)
+                    ->sort()
+                    ->values()
+                    ->toArray();
+
+                if (!empty($approvedPeriodIds)) {
+                    $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                    $periodMap = collect($attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [])->keyBy('id');
+
+                    $periodNames = array_values(array_filter(
+                        array_map(fn($pid) => $periodMap->has($pid) ? $periodMap->get($pid)['name'] : null, $approvedPeriodIds)
+                    ));
+
+                    if (!empty($periodNames)) {
+                        $newDisplayLabel  = $this->generatePeriodDisplayLabel($periodNames);
+                        $newOptionPeriods = count($approvedPeriodIds);
+                    }
+                }
+            }
+
             foreach ($relatedRecords as $r) {
                 $details = is_array($r->details) ? $r->details : (json_decode($r->details ?? '{}', true) ?? []);
                 unset($details['roll_call_pending']); // 批准后清除点名标记
+
+                // 更新为实际批准的节次信息
+                if ($newDisplayLabel !== null) {
+                    $details['display_label']  = $newDisplayLabel;
+                    $details['option_periods'] = $newOptionPeriods;
+                }
+
                 $updateData = [
                     'status'          => 'excused',
                     'approval_status' => 'approved',
