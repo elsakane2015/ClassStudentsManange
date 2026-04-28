@@ -63,6 +63,13 @@ class LeaveRequestController extends Controller
             $query->where('approval_status', $request->status);
         }
 
+        if ($request->has('date_from')) {
+            $query->whereDate('date', '>=', $request->date_from);
+        }
+        if ($request->has('date_to')) {
+            $query->whereDate('date', '<=', $request->date_to);
+        }
+
         // 只获取有 leave_batch_id 的记录（新版请假申请）和无 batch_id 的旧记录
         $records = $query->orderBy('created_at', 'desc')->get();
         
