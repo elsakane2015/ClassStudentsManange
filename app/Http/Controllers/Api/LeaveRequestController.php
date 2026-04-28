@@ -123,6 +123,14 @@ class LeaveRequestController extends Controller
                 'approver_name' => $first->approver?->name,
                 'created_at' => $first->created_at,
                 'record_ids' => $group->pluck('id')->toArray(),
+                'records' => $group->map(fn($r) => [
+                    'id'        => $r->id,
+                    'date'      => $r->date->format('Y-m-d'),
+                    'period_id' => $r->period_id,
+                    'label'     => $r->display_label
+                        ?? (is_array($r->details) ? ($r->details['display_label'] ?? null) : null)
+                        ?? (is_string($r->details) ? (json_decode($r->details, true)['display_label'] ?? null) : null),
+                ])->sortBy(['date', 'period_id'])->values(),
             ];
         })->values();
 
@@ -455,7 +463,10 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Not your class'], 403);
         }
 
-        $approvedCount = DB::transaction(function () use ($record, $user) {
+        $newLeaveTypeId    = $request->input('leave_type_id');
+        $excludedRecordIds = $request->input('excluded_record_ids', []);
+
+        $approvedCount = DB::transaction(function () use ($record, $user, $newLeaveTypeId, $excludedRecordIds) {
             if ($record->leave_batch_id) {
                 $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
                     ->where('approval_status', 'pending')
@@ -471,16 +482,28 @@ class LeaveRequestController extends Controller
                     ->get();
             }
 
+            // 删除教师不批准的节次记录
+            if (!empty($excludedRecordIds)) {
+                AttendanceRecord::whereIn('id', $excludedRecordIds)->delete();
+                $relatedRecords = $relatedRecords->filter(
+                    fn($r) => !in_array($r->id, $excludedRecordIds)
+                );
+            }
+
             foreach ($relatedRecords as $r) {
                 $details = is_array($r->details) ? $r->details : (json_decode($r->details ?? '{}', true) ?? []);
                 unset($details['roll_call_pending']); // 批准后清除点名标记
-                $r->update([
-                    'status' => 'excused',
+                $updateData = [
+                    'status'          => 'excused',
                     'approval_status' => 'approved',
-                    'approver_id' => $user->id,
-                    'approved_at' => now(),
-                    'details' => empty($details) ? null : $details,
-                ]);
+                    'approver_id'     => $user->id,
+                    'approved_at'     => now(),
+                    'details'         => empty($details) ? null : $details,
+                ];
+                if ($newLeaveTypeId) {
+                    $updateData['leave_type_id'] = $newLeaveTypeId;
+                }
+                $r->update($updateData);
             }
 
             return $relatedRecords->count();
