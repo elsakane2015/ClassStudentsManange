@@ -131,16 +131,17 @@ export default function StudentDashboard() {
         // eslint-disable-next-line
     }, []);
 
-    // Fetch data and stats after leaveTypes AND periods are loaded
+    // Fetch data and stats after leaveTypes are loaded
+    // periods 可能为空（未配置节次），不应阻塞加载
     useEffect(() => {
-        if (leaveTypes.length > 0 && periods.length > 0) {
+        if (leaveTypes.length > 0) {
             currentScopeRef.current = scope;
             fetchData();
             fetchStats(scope);
             initialLoadRef.current = false;
         }
         // eslint-disable-next-line
-    }, [leaveTypes, periods]);
+    }, [leaveTypes]);
 
     // Refetch stats when scope changes (after initial load)
     useEffect(() => {
@@ -419,26 +420,8 @@ export default function StudentDashboard() {
 
             setEvents(calendarEvents);
 
-            // Calculate Stats dynamically
-            const newStats = { present: 0 };
-            leaveTypes.forEach(type => {
-                newStats[type.slug] = 0;
-            });
-
-            if (attendance && Array.isArray(attendance)) {
-                attendance.forEach(r => {
-                    if (newStats[r.status] !== undefined) {
-                        newStats[r.status]++;
-                    }
-                });
-            }
-
-            setStats(newStats);
-            setLoading(false);
-
         } catch (error) {
             console.error("Failed to fetch calendar data", error);
-            setLoading(false);
         }
     };
 
