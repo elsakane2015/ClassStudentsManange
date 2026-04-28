@@ -589,6 +589,7 @@ class RollCallController extends Controller
                                 'source_type' => 'roll_call',
                                 'source_id' => $rollCall->id,
                                 'is_self_applied' => false,
+                                'approval_status' => null,
                                 'details' => [
                                     'roll_call_type' => $type->name,
                                     'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
@@ -616,6 +617,7 @@ class RollCallController extends Controller
                             'status' => 'leave',
                             'leave_type_id' => $type->leave_type_id,
                             'is_self_applied' => false,
+                            'approval_status' => null,
                             'details' => [
                                 'roll_call_type' => $type->name,
                                 'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
@@ -829,6 +831,7 @@ class RollCallController extends Controller
                                 'source_type' => 'roll_call',
                                 'source_id' => $rollCall->id,
                                 'is_self_applied' => false,
+                                'approval_status' => null,
                                 'details' => [
                                     'roll_call_type' => $type->name,
                                     'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
@@ -856,6 +859,7 @@ class RollCallController extends Controller
                             'status' => 'leave',
                             'leave_type_id' => $type->leave_type_id,
                             'is_self_applied' => false,
+                            'approval_status' => null,
                             'details' => [
                                 'roll_call_type' => $type->name,
                                 'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
