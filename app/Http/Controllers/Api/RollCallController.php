@@ -575,6 +575,29 @@ class RollCallController extends Controller
                 // 如果配置了节次，为每个节次创建考勤记录
                 if (!empty($periodIds)) {
                     foreach ($periodIds as $index => $periodId) {
+                        // 若该节次存在待审批的自主请假，不覆盖，仅附加点名信息待教师决定
+                        $pendingRecord = AttendanceRecord::where('student_id', $record->student_id)
+                            ->where('date', $rollCall->roll_call_time->toDateString())
+                            ->where('period_id', $periodId)
+                            ->where('is_self_applied', true)
+                            ->where('approval_status', 'pending')
+                            ->first();
+
+                        if ($pendingRecord) {
+                            $d = is_array($pendingRecord->details) ? $pendingRecord->details : (json_decode($pendingRecord->details ?? '{}', true) ?? []);
+                            $d['roll_call_pending'] = [
+                                'roll_call_type'      => $type->name,
+                                'roll_call_time'      => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                                'roll_call_id'        => $rollCall->id,
+                                'leave_type_id'       => $type->leave_type_id,
+                                'roll_call_record_id' => $record->id,
+                                'period_index'        => $index + 1,
+                                'total_periods'       => count($periodIds),
+                            ];
+                            $pendingRecord->update(['details' => $d]);
+                            continue;
+                        }
+
                         AttendanceRecord::updateOrCreate(
                             [
                                 'student_id' => $record->student_id,
@@ -602,30 +625,49 @@ class RollCallController extends Controller
                         );
                     }
                 } else {
-                    // 未配置节次时，创建一条无节次关联的考勤记录
-                    AttendanceRecord::updateOrCreate(
-                        [
-                            'student_id' => $record->student_id,
-                            'date' => $rollCall->roll_call_time->toDateString(),
-                            'period_id' => null,
-                            'source_type' => 'roll_call',
-                            'source_id' => $rollCall->id,
-                        ],
-                        [
-                            'school_id' => $rollCall->school_id,
-                            'class_id' => $rollCall->class_id,
-                            'status' => 'leave',
-                            'leave_type_id' => $type->leave_type_id,
-                            'is_self_applied' => false,
-                            'approval_status' => null,
-                            'details' => [
-                                'roll_call_type' => $type->name,
-                                'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
-                                'original_status' => 'absent',
-                                'roll_call_record_id' => $record->id,
+                    // 未配置节次时，检查是否有全天待审批的自主请假
+                    $pendingRecord = AttendanceRecord::where('student_id', $record->student_id)
+                        ->where('date', $rollCall->roll_call_time->toDateString())
+                        ->whereNull('period_id')
+                        ->where('is_self_applied', true)
+                        ->where('approval_status', 'pending')
+                        ->first();
+
+                    if ($pendingRecord) {
+                        $d = is_array($pendingRecord->details) ? $pendingRecord->details : (json_decode($pendingRecord->details ?? '{}', true) ?? []);
+                        $d['roll_call_pending'] = [
+                            'roll_call_type'      => $type->name,
+                            'roll_call_time'      => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                            'roll_call_id'        => $rollCall->id,
+                            'leave_type_id'       => $type->leave_type_id,
+                            'roll_call_record_id' => $record->id,
+                        ];
+                        $pendingRecord->update(['details' => $d]);
+                    } else {
+                        AttendanceRecord::updateOrCreate(
+                            [
+                                'student_id' => $record->student_id,
+                                'date' => $rollCall->roll_call_time->toDateString(),
+                                'period_id' => null,
+                                'source_type' => 'roll_call',
+                                'source_id' => $rollCall->id,
                             ],
-                        ]
-                    );
+                            [
+                                'school_id' => $rollCall->school_id,
+                                'class_id' => $rollCall->class_id,
+                                'status' => 'leave',
+                                'leave_type_id' => $type->leave_type_id,
+                                'is_self_applied' => false,
+                                'approval_status' => null,
+                                'details' => [
+                                    'roll_call_type' => $type->name,
+                                    'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                                    'original_status' => 'absent',
+                                    'roll_call_record_id' => $record->id,
+                                ],
+                            ]
+                        );
+                    }
                 }
             }
 
@@ -817,6 +859,29 @@ class RollCallController extends Controller
                 // 如果配置了节次，为每个节次创建考勤记录
                 if (!empty($periodIds)) {
                     foreach ($periodIds as $index => $periodId) {
+                        // 若该节次存在待审批的自主请假，不覆盖，仅附加点名信息待教师决定
+                        $pendingRecord = AttendanceRecord::where('student_id', $record->student_id)
+                            ->where('date', $rollCall->roll_call_time->toDateString())
+                            ->where('period_id', $periodId)
+                            ->where('is_self_applied', true)
+                            ->where('approval_status', 'pending')
+                            ->first();
+
+                        if ($pendingRecord) {
+                            $d = is_array($pendingRecord->details) ? $pendingRecord->details : (json_decode($pendingRecord->details ?? '{}', true) ?? []);
+                            $d['roll_call_pending'] = [
+                                'roll_call_type'      => $type->name,
+                                'roll_call_time'      => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                                'roll_call_id'        => $rollCall->id,
+                                'leave_type_id'       => $type->leave_type_id,
+                                'roll_call_record_id' => $record->id,
+                                'period_index'        => $index + 1,
+                                'total_periods'       => count($periodIds),
+                            ];
+                            $pendingRecord->update(['details' => $d]);
+                            continue;
+                        }
+
                         AttendanceRecord::updateOrCreate(
                             [
                                 'student_id' => $record->student_id,
@@ -844,30 +909,49 @@ class RollCallController extends Controller
                         );
                     }
                 } else {
-                    // 未配置节次时，创建一条无节次关联的考勤记录
-                    AttendanceRecord::updateOrCreate(
-                        [
-                            'student_id' => $record->student_id,
-                            'date' => $rollCall->roll_call_time->toDateString(),
-                            'period_id' => null,
-                            'source_type' => 'roll_call',
-                            'source_id' => $rollCall->id,
-                        ],
-                        [
-                            'school_id' => $rollCall->school_id,
-                            'class_id' => $rollCall->class_id,
-                            'status' => 'leave',
-                            'leave_type_id' => $type->leave_type_id,
-                            'is_self_applied' => false,
-                            'approval_status' => null,
-                            'details' => [
-                                'roll_call_type' => $type->name,
-                                'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
-                                'original_status' => 'absent',
-                                'roll_call_record_id' => $record->id,
+                    // 未配置节次时，检查是否有全天待审批的自主请假
+                    $pendingRecord = AttendanceRecord::where('student_id', $record->student_id)
+                        ->where('date', $rollCall->roll_call_time->toDateString())
+                        ->whereNull('period_id')
+                        ->where('is_self_applied', true)
+                        ->where('approval_status', 'pending')
+                        ->first();
+
+                    if ($pendingRecord) {
+                        $d = is_array($pendingRecord->details) ? $pendingRecord->details : (json_decode($pendingRecord->details ?? '{}', true) ?? []);
+                        $d['roll_call_pending'] = [
+                            'roll_call_type'      => $type->name,
+                            'roll_call_time'      => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                            'roll_call_id'        => $rollCall->id,
+                            'leave_type_id'       => $type->leave_type_id,
+                            'roll_call_record_id' => $record->id,
+                        ];
+                        $pendingRecord->update(['details' => $d]);
+                    } else {
+                        AttendanceRecord::updateOrCreate(
+                            [
+                                'student_id' => $record->student_id,
+                                'date' => $rollCall->roll_call_time->toDateString(),
+                                'period_id' => null,
+                                'source_type' => 'roll_call',
+                                'source_id' => $rollCall->id,
                             ],
-                        ]
-                    );
+                            [
+                                'school_id' => $rollCall->school_id,
+                                'class_id' => $rollCall->class_id,
+                                'status' => 'leave',
+                                'leave_type_id' => $type->leave_type_id,
+                                'is_self_applied' => false,
+                                'approval_status' => null,
+                                'details' => [
+                                    'roll_call_type' => $type->name,
+                                    'roll_call_time' => $rollCall->roll_call_time->setTimezone('Asia/Shanghai')->format('H:i'),
+                                    'original_status' => 'absent',
+                                    'roll_call_record_id' => $record->id,
+                                ],
+                            ]
+                        );
+                    }
                 }
             }
 

@@ -465,11 +465,14 @@ class LeaveRequestController extends Controller
             }
 
             foreach ($relatedRecords as $r) {
+                $details = is_array($r->details) ? $r->details : (json_decode($r->details ?? '{}', true) ?? []);
+                unset($details['roll_call_pending']); // 批准后清除点名标记
                 $r->update([
                     'status' => 'excused',
                     'approval_status' => 'approved',
                     'approver_id' => $user->id,
                     'approved_at' => now(),
+                    'details' => empty($details) ? null : $details,
                 ]);
             }
 
@@ -515,11 +518,39 @@ class LeaveRequestController extends Controller
             }
 
             foreach ($relatedRecords as $r) {
-                $r->update([
-                    'approval_status' => 'rejected',
-                    'approver_id' => $user->id,
-                    'rejection_reason' => $request->input('reason'),
-                ]);
+                $details = is_array($r->details) ? $r->details : (json_decode($r->details ?? '{}', true) ?? []);
+                $rcp = $details['roll_call_pending'] ?? null;
+
+                if ($rcp) {
+                    // 有点名记录：驳回后自动转为点名旷课
+                    $rollCallDetails = [
+                        'roll_call_type'      => $rcp['roll_call_type'],
+                        'roll_call_time'      => $rcp['roll_call_time'],
+                        'original_status'     => 'absent',
+                        'roll_call_record_id' => $rcp['roll_call_record_id'] ?? null,
+                    ];
+                    if (isset($rcp['period_index'])) {
+                        $rollCallDetails['period_index'] = $rcp['period_index'];
+                        $rollCallDetails['total_periods'] = $rcp['total_periods'];
+                    }
+                    $r->update([
+                        'source_type'      => 'roll_call',
+                        'source_id'        => $rcp['roll_call_id'],
+                        'is_self_applied'  => false,
+                        'approval_status'  => null,
+                        'leave_type_id'    => $rcp['leave_type_id'],
+                        'status'           => 'leave',
+                        'approver_id'      => $user->id,
+                        'rejection_reason' => $request->input('reason'),
+                        'details'          => $rollCallDetails,
+                    ]);
+                } else {
+                    $r->update([
+                        'approval_status'  => 'rejected',
+                        'approver_id'      => $user->id,
+                        'rejection_reason' => $request->input('reason'),
+                    ]);
+                }
             }
 
             return $relatedRecords->count();

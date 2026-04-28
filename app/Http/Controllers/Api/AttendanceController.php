@@ -758,7 +758,20 @@ class AttendanceController extends Controller
                     $record->display_label = $statusLabel . '(' . $details['roll_call_type'] . ')';
                 }
             }
-            
+
+            // 待审批 + 有点名记录：展示层显示为点名旷课（仅改内存，不写库）
+            // 审批列表仍因 is_self_applied=true 而能看到该记录
+            if ($record->approval_status === 'pending') {
+                $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+                if (isset($details['roll_call_pending'])) {
+                    $rcp = $details['roll_call_pending'];
+                    $ltModel = \App\Models\LeaveType::find($rcp['leave_type_id'] ?? null);
+                    $statusLabel = $ltModel ? $ltModel->name : '旷课';
+                    $record->display_label = $statusLabel . '(' . $rcp['roll_call_type'] . ')';
+                    $record->approval_status = null; // 考勤弹窗不显示"待审:"前缀
+                }
+            }
+
             return $record;
         });
         
