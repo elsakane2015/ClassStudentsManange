@@ -224,7 +224,7 @@ export default function LeaveRequestForm() {
             if (err.response?.status === 409) {
                 setError("检测到冲突！该日期您已有请假或考勤记录。");
             } else {
-                setError(err.response?.data?.message || '提交失败，请重试。');
+                setError(err.response?.data?.error || err.response?.data?.message || '提交失败，请重试。');
             }
         } finally {
             submittingRef.current = false;

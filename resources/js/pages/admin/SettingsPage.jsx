@@ -225,6 +225,8 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
         data.student_requestable = formData.get('student_requestable') === 'on';
         data.use_conversion = formData.get('use_conversion') === 'on';
         data.counts_as_absence = formData.get('counts_as_absence') === 'on';
+        data.limit_days = data.limit_days ? parseInt(data.limit_days, 10) : null;
+        data.limit_times = data.limit_times ? parseInt(data.limit_times, 10) : null;
 
         // Construct config based on input type
         let finalConfig = {};
@@ -444,6 +446,37 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
                     <option value="female">仅女生</option>
                     <option value="male">仅男生</option>
                 </select>
+            </div>
+
+            <div className="col-span-2 border-t pt-4 mt-2">
+                <label className="label mb-2">申请次数限制</label>
+                <p className="text-xs text-gray-500 mb-3">限制该类型请假在指定天数内最多可申请几次，留空表示不限制</p>
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="text-xs text-gray-500">统计天数</label>
+                        <input
+                            name="limit_days"
+                            type="number"
+                            min="1"
+                            defaultValue={initialData?.limit_days ?? ''}
+                            placeholder="例如：30"
+                            className="input-field"
+                        />
+                        <p className="text-xs text-gray-400 mt-1">从申请开始日期向前统计多少天</p>
+                    </div>
+                    <div>
+                        <label className="text-xs text-gray-500">最多次数</label>
+                        <input
+                            name="limit_times"
+                            type="number"
+                            min="1"
+                            defaultValue={initialData?.limit_times ?? ''}
+                            placeholder="例如：2"
+                            className="input-field"
+                        />
+                        <p className="text-xs text-gray-400 mt-1">同一学生、同一请假类型的申请次数上限</p>
+                    </div>
+                </div>
             </div>
 
             {/* 统计卡片显示配置 */}
@@ -1175,6 +1208,7 @@ export default function SettingsPage() {
                                                     <th className="text-center">状态</th>
                                                     <th className="text-center">学生可申请</th>
                                                     <th className="text-center">适用性别</th>
+                                                    <th className="text-center">申请限制</th>
                                                     <th className="text-center pr-4 sm:pr-6">操作</th>
                                                 </tr>
                                             </thead>
@@ -1190,6 +1224,9 @@ export default function SettingsPage() {
                                                         <td className="text-center">{lt.is_active ? <span className="badge-green">启用</span> : <span className="badge-gray">停用</span>}</td>
                                                         <td className="text-center">{lt.student_requestable ? <span className="badge-green">是</span> : <span className="badge-gray">否</span>}</td>
                                                         <td className="text-center text-xs">{lt.gender_restriction === 'female' ? '仅女生' : lt.gender_restriction === 'male' ? '仅男生' : '全部'}</td>
+                                                        <td className="text-center text-xs text-gray-600">
+                                                            {lt.limit_days && lt.limit_times ? `${lt.limit_days}天${lt.limit_times}次` : '不限'}
+                                                        </td>
                                                         <td className="text-center pr-4 sm:pr-6 space-x-2">
                                                             <button onClick={() => { setEditingLeaveType(lt); setShowLeaveTypeForm(true) }} className="text-indigo-600" title="编辑"><PencilIcon className="h-4 w-4" /></button>
                                                             <button onClick={() => toggleLeaveTypeActive(lt)} className="text-gray-500 text-xs underline" title="切换状态">切换状态</button>

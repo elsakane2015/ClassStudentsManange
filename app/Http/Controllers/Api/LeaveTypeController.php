@@ -41,7 +41,9 @@ class LeaveTypeController extends Controller
             'input_config' => 'nullable|array',
             'display_unit' => 'nullable|string|max:20',
             'use_conversion' => 'boolean',
-            'counts_as_absence' => 'boolean'
+            'counts_as_absence' => 'boolean',
+            'limit_days' => 'nullable|integer|min:1|max:3650',
+            'limit_times' => 'nullable|integer|min:1|max:1000'
         ]);
         
         // School ID logic
@@ -73,7 +75,9 @@ class LeaveTypeController extends Controller
             'input_config' => 'nullable|array',
             'display_unit' => 'nullable|string|max:20',
             'use_conversion' => 'boolean',
-            'counts_as_absence' => 'boolean'
+            'counts_as_absence' => 'boolean',
+            'limit_days' => 'nullable|integer|min:1|max:3650',
+            'limit_times' => 'nullable|integer|min:1|max:1000'
         ]);
 
         // Self-Healing: Fix missing columns if needed
@@ -84,6 +88,11 @@ class LeaveTypeController extends Controller
             }
             if (!\Illuminate\Support\Facades\Schema::hasColumn('leave_types', 'counts_as_absence')) {
                  \Illuminate\Support\Facades\DB::statement("ALTER TABLE leave_types ADD COLUMN counts_as_absence TINYINT(1) NOT NULL DEFAULT 1");
+                 \Illuminate\Support\Facades\Schema::getConnection()->getSchemaBuilder()->getConnection()->reconnect();
+            }
+            if (!\Illuminate\Support\Facades\Schema::hasColumn('leave_types', 'limit_days')) {
+                 \Illuminate\Support\Facades\DB::statement("ALTER TABLE leave_types ADD COLUMN limit_days SMALLINT UNSIGNED NULL AFTER counts_as_absence");
+                 \Illuminate\Support\Facades\DB::statement("ALTER TABLE leave_types ADD COLUMN limit_times SMALLINT UNSIGNED NULL AFTER limit_days");
                  \Illuminate\Support\Facades\Schema::getConnection()->getSchemaBuilder()->getConnection()->reconnect();
             }
         } catch (\Exception $e) {

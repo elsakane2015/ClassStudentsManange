@@ -198,6 +198,15 @@ class LeaveRequestController extends Controller
             ->where('school_id', $student->school_id)
             ->first();
 
+        if (!$leaveType) {
+            return response()->json(['error' => 'Leave type not found'], 422);
+        }
+
+        $limitError = $this->checkLeaveTypeRequestLimit($student->id, $leaveType, $request->start_date, $request->end_date);
+        if ($limitError) {
+            return response()->json(['error' => $limitError], 422);
+        }
+
         // Build details
         $details = [];
         $requestDetails = $request->details;
@@ -808,6 +817,46 @@ class LeaveRequestController extends Controller
             'present_count' => $presentCount,
             'on_leave_count' => $onLeaveCount,
         ]);
+    }
+
+    private function checkLeaveTypeRequestLimit(int $studentId, $leaveType, string $startDate, string $endDate): ?string
+    {
+        $limitDays = (int) ($leaveType->limit_days ?? 0);
+        $limitTimes = (int) ($leaveType->limit_times ?? 0);
+
+        if ($limitDays <= 0 || $limitTimes <= 0) {
+            return null;
+        }
+
+        $start = Carbon::parse($startDate);
+        $end = Carbon::parse($endDate);
+        $windowStart = $start->copy()->subDays($limitDays - 1)->toDateString();
+
+        $records = AttendanceRecord::where('student_id', $studentId)
+            ->where('leave_type_id', $leaveType->id)
+            ->whereBetween('date', [$windowStart, $end->toDateString()])
+            ->where('is_self_applied', true)
+            ->where(function ($q) {
+                $q->whereNull('approval_status')
+                  ->orWhereIn('approval_status', ['pending', 'approved']);
+            })
+            ->get(['id', 'leave_batch_id']);
+
+        $usedTimes = $records
+            ->map(fn ($record) => $record->leave_batch_id ? 'batch_' . $record->leave_batch_id : 'record_' . $record->id)
+            ->unique()
+            ->count();
+
+        if ($usedTimes >= $limitTimes) {
+            return sprintf(
+                '%s限制为%d天内最多申请%d次，当前已达到限制。',
+                $leaveType->name,
+                $limitDays,
+                $limitTimes
+            );
+        }
+
+        return null;
     }
 
     /**
