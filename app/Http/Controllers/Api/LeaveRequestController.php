@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceRecord;
+use App\Models\RollCall;
+use App\Models\RollCallRecord;
+use App\Models\TimeSlot;
 use App\Services\LeaveConflictService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -553,6 +556,8 @@ class LeaveRequestController extends Controller
                     $updateData['leave_type_id'] = $newLeaveTypeId;
                 }
                 $r->update($updateData);
+                $r->refresh();
+                $this->syncRollCallAfterApproval($r);
             }
 
             return $relatedRecords->count();
@@ -695,6 +700,114 @@ class LeaveRequestController extends Controller
         });
 
         return response()->json(['message' => 'Leave request deleted successfully.', 'deleted_count' => $deletedCount]);
+    }
+
+    /**
+     * When a self-applied leave is approved, it wins over any roll-call absence
+     * recorded for the same student/date/period.
+     */
+    private function syncRollCallAfterApproval(AttendanceRecord $record): void
+    {
+        $details = is_array($record->details) ? $record->details : (json_decode($record->details ?? '{}', true) ?? []);
+        $periodIds = $this->resolveRecordPeriodIds($record, $details);
+        $rollCallRecordIds = collect();
+
+        $rcp = $details['roll_call_pending'] ?? null;
+        if (!empty($rcp['roll_call_record_id'])) {
+            $rollCallRecordIds->push((int) $rcp['roll_call_record_id']);
+        }
+
+        $rollCallQuery = AttendanceRecord::where('student_id', $record->student_id)
+            ->whereDate('date', $record->date)
+            ->where('source_type', 'roll_call')
+            ->where(function ($q) {
+                $q->whereNull('approval_status')
+                  ->orWhere('is_self_applied', false);
+            });
+
+        if (!empty($periodIds)) {
+            $rollCallQuery->whereIn('period_id', $periodIds);
+        } else {
+            $rollCallQuery->whereNull('period_id');
+        }
+
+        $rollCallRecords = $rollCallQuery->get();
+        foreach ($rollCallRecords as $rollCallAttendance) {
+            $rollCallDetails = is_array($rollCallAttendance->details)
+                ? $rollCallAttendance->details
+                : (json_decode($rollCallAttendance->details ?? '{}', true) ?? []);
+
+            if (!empty($rollCallDetails['roll_call_record_id'])) {
+                $rollCallRecordIds->push((int) $rollCallDetails['roll_call_record_id']);
+            }
+        }
+
+        if ($rollCallRecords->isNotEmpty()) {
+            AttendanceRecord::whereIn('id', $rollCallRecords->pluck('id'))->delete();
+        }
+
+        $rollCallRecordIds = $rollCallRecordIds->filter()->unique()->values();
+        if ($rollCallRecordIds->isEmpty()) {
+            return;
+        }
+
+        $leaveTypeName = $record->leaveType?->name ?? '请假';
+        $leaveDetail = $leaveTypeName . '(' . $this->getOptionLabel($record) . ')';
+
+        RollCallRecord::whereIn('id', $rollCallRecordIds)->update([
+            'status' => 'on_leave',
+            'leave_type_id' => $record->leave_type_id,
+            'leave_detail' => $leaveDetail,
+            'leave_status' => 'approved',
+        ]);
+
+        $rollCallIds = RollCallRecord::whereIn('id', $rollCallRecordIds)
+            ->pluck('roll_call_id')
+            ->unique();
+
+        foreach ($rollCallIds as $rollCallId) {
+            $this->recalculateRollCallCounts((int) $rollCallId);
+        }
+    }
+
+    private function resolveRecordPeriodIds(AttendanceRecord $record, array $details): array
+    {
+        if ($record->period_id !== null) {
+            return [(int) $record->period_id];
+        }
+
+        if (!empty($details['period_ids']) && is_array($details['period_ids'])) {
+            return array_values(array_unique(array_map('intval', $details['period_ids'])));
+        }
+
+        $timeSlotId = $details['time_slot_id'] ?? null;
+        if (!$timeSlotId && !empty($details['option']) && preg_match('/^time_slot_(\d+)$/', $details['option'], $matches)) {
+            $timeSlotId = (int) $matches[1];
+        }
+
+        if ($timeSlotId) {
+            $timeSlot = TimeSlot::find($timeSlotId);
+            if ($timeSlot) {
+                return array_values(array_unique(array_map('intval', $timeSlot->period_ids ?? [])));
+            }
+        }
+
+        return [];
+    }
+
+    private function recalculateRollCallCounts(int $rollCallId): void
+    {
+        $presentCount = RollCallRecord::where('roll_call_id', $rollCallId)
+            ->where('status', 'present')
+            ->count();
+        $onLeaveCount = RollCallRecord::where('roll_call_id', $rollCallId)
+            ->where('status', 'on_leave')
+            ->count();
+
+        RollCall::where('id', $rollCallId)->update([
+            'present_count' => $presentCount,
+            'on_leave_count' => $onLeaveCount,
+        ]);
     }
 
     /**
