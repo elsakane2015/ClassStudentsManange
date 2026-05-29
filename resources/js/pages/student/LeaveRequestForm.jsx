@@ -118,23 +118,41 @@ export default function LeaveRequestForm() {
             }
 
             const options = config?.options || [];
-            if (options.length > 0 && !formData.details.option) {
-                const firstOpt = options[0];
-                const firstOptKey = typeof firstOpt === 'object' ? firstOpt.key : firstOpt;
-                const firstOptLabel = typeof firstOpt === 'object' && firstOpt.label ? firstOpt.label : firstOptKey;
-                const firstOptPeriods = typeof firstOpt === 'object' && firstOpt.periods ? firstOpt.periods : 1;
+            if (options.length > 0) {
+                const selectedOpt = formData.details.option
+                    ? (options.find(opt => (typeof opt === 'object' ? opt.key : opt) === formData.details.option) || options[0])
+                    : options[0];
+                const optKey = typeof selectedOpt === 'object' ? selectedOpt.key : selectedOpt;
+                const optLabel = typeof selectedOpt === 'object' && selectedOpt.label ? selectedOpt.label : optKey;
+                const matchingSlot = timeSlots.find(slot => {
+                    const slotKey = `time_slot_${slot.id}`;
+                    return optKey === slotKey || optKey === String(slot.id);
+                });
+
+                if (formData.details.option && (formData.time_slot_id || !matchingSlot)) return;
+
+                const periodIds = matchingSlot?.period_ids || [];
                 setFormData(prev => ({
                     ...prev,
+                    time_slot_id: matchingSlot?.id || prev.time_slot_id,
                     details: {
                         ...prev.details,
-                        option: firstOptKey,
-                        option_label: firstOptLabel,
-                        option_periods: firstOptPeriods
+                        option: optKey,
+                        option_label: optLabel,
+                        ...(matchingSlot ? {
+                            time_slot_id: matchingSlot.id,
+                            time_slot_name: matchingSlot.name,
+                            period_ids: periodIds,
+                            option_periods: periodIds.length
+                        } : {
+                            option_periods: typeof selectedOpt === 'object' && selectedOpt.periods ? selectedOpt.periods : 1
+                        })
                     }
                 }));
+                if (matchingSlot) setSelectedTimeSlotId(matchingSlot.id);
             }
         }
-    }, [formData.type, leaveTypes]);
+    }, [formData.type, formData.details.option, formData.time_slot_id, leaveTypes, timeSlots]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;

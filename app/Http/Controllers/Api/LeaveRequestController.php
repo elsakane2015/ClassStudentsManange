@@ -219,6 +219,11 @@ class LeaveRequestController extends Controller
         // 处理时段：优先使用用户自定义选择的节次，否则使用时段的默认节次
         $periodIds = $request->sessions ?? [];
         $timeSlotId = $request->time_slot_id;
+
+        if (empty($timeSlotId) && !empty($details['option']) && preg_match('/^time_slot_(\d+)$/', $details['option'], $matches)) {
+            $timeSlotId = (int) $matches[1];
+        }
+
         $isCustomSelection = false; // 用户是否自定义选择了节次
         
         if ($timeSlotId) {
