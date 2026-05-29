@@ -24,7 +24,8 @@ export default function RollCallHistoryPage() {
         isOpen: false,
         rollCall: null,
         records: [],
-        loading: false
+        loading: false,
+        statusFilter: 'non_present'
     });
     const printRef = useRef();
 
@@ -118,6 +119,16 @@ export default function RollCallHistoryPage() {
         }
     };
 
+    const closeAbsentModal = () => {
+        setAbsentModal({
+            isOpen: false,
+            rollCall: null,
+            records: [],
+            loading: false,
+            statusFilter: 'non_present'
+        });
+    };
+
     const handleRestoreRollCall = async (id) => {
         if (!confirm('确定要恢复此点名吗？恢复后状态将变为"进行中"，您可以继续进行点名操作。')) return;
 
@@ -137,23 +148,26 @@ export default function RollCallHistoryPage() {
             isOpen: true,
             rollCall,
             records: [],
-            loading: true
+            loading: true,
+            statusFilter: 'non_present'
         });
 
         try {
             const res = await axios.get(`/roll-calls/${rollCall.id}`);
             const records = res.data.records || [];
-            // Filter non-present records
-            const absentRecords = records.filter(r => r.status !== 'present');
             setAbsentModal(prev => ({
                 ...prev,
-                records: absentRecords,
+                records,
                 loading: false
             }));
         } catch (err) {
             console.error('Failed to fetch absent records:', err);
             setAbsentModal(prev => ({ ...prev, loading: false }));
         }
+    };
+
+    const setAbsentModalFilter = (statusFilter) => {
+        setAbsentModal(prev => ({ ...prev, statusFilter }));
     };
 
     const handlePrint = () => {
@@ -171,6 +185,7 @@ export default function RollCallHistoryPage() {
                     .info { text-align: center; color: #666; margin-bottom: 20px; font-size: 14px; }
                     .summary { display: flex; justify-content: center; gap: 30px; margin-bottom: 20px; }
                     .summary span { font-size: 14px; }
+                    .summary button { border: 0; background: transparent; padding: 0; font: inherit; }
                     table { width: 100%; border-collapse: collapse; }
                     th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
                     th { background: #f5f5f5; font-weight: bold; }
@@ -216,13 +231,50 @@ export default function RollCallHistoryPage() {
     };
 
     const getRecordStatusText = (record) => {
+        if (record.status === 'present') return '出勤';
         if (record.status === 'absent') return '缺勤';
+        if (record.status === 'pending') return '待点';
         if (record.status === 'on_leave') {
             const detail = record.leave_detail || record.leave_type?.name || '请假';
             return detail;
         }
         return record.status;
     };
+
+    const getAbsentCount = (rollCall) => {
+        if (!rollCall) return 0;
+        return Math.max((rollCall.total_students || 0) - (rollCall.present_count || 0) - (rollCall.on_leave_count || 0), 0);
+    };
+
+    const getFilteredAbsentModalRecords = () => {
+        switch (absentModal.statusFilter) {
+            case 'present':
+                return absentModal.records.filter(record => record.status === 'present');
+            case 'absent':
+                return absentModal.records.filter(record => record.status === 'absent' || record.status === 'pending');
+            case 'on_leave':
+                return absentModal.records.filter(record => record.status === 'on_leave');
+            case 'non_present':
+            default:
+                return absentModal.records.filter(record => record.status !== 'present');
+        }
+    };
+
+    const getFilterEmptyText = () => {
+        switch (absentModal.statusFilter) {
+            case 'present':
+                return '暂无出勤记录';
+            case 'absent':
+                return '暂无缺勤记录';
+            case 'on_leave':
+                return '暂无请假记录';
+            case 'non_present':
+            default:
+                return '全员出勤，无缺勤/请假记录';
+        }
+    };
+
+    const filteredAbsentModalRecords = getFilteredAbsentModalRecords();
 
     return (
         <Layout>
@@ -414,7 +466,7 @@ export default function RollCallHistoryPage() {
             {absentModal.isOpen && (
                 <div className="fixed inset-0 z-50 overflow-y-auto">
                     <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
-                        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => setAbsentModal({ isOpen: false, rollCall: null, records: [], loading: false })} />
+                        <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={closeAbsentModal} />
 
                         <div className="relative inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full">
                             {/* Header */}
@@ -430,7 +482,7 @@ export default function RollCallHistoryPage() {
                                         </p>
                                     </div>
                                     <button
-                                        onClick={() => setAbsentModal({ isOpen: false, rollCall: null, records: [], loading: false })}
+                                        onClick={closeAbsentModal}
                                         className="text-white/80 hover:text-white"
                                     >
                                         <XMarkIcon className="h-6 w-6" />
@@ -450,19 +502,40 @@ export default function RollCallHistoryPage() {
                                 </div>
 
                                 {/* Summary */}
-                                <div className="flex gap-6 mb-4 text-sm">
-                                    <span>出勤: <span className="text-green-600 font-medium">{absentModal.rollCall?.present_count}人</span></span>
-                                    <span>缺勤: <span className="text-red-600 font-medium">{absentModal.rollCall?.total_students - absentModal.rollCall?.present_count - absentModal.rollCall?.on_leave_count}人</span></span>
-                                    <span>请假: <span className="text-blue-600 font-medium">{absentModal.rollCall?.on_leave_count}人</span></span>
+                                <div className="summary flex gap-6 mb-4 text-sm">
+                                    <button
+                                        type="button"
+                                        onClick={() => setAbsentModalFilter('present')}
+                                        className={`rounded-md px-2 py-1 transition-colors ${absentModal.statusFilter === 'present' ? 'bg-green-50 ring-1 ring-green-200' : 'hover:bg-gray-100'}`}
+                                        title="筛选出勤学生"
+                                    >
+                                        出勤: <span className="text-green-600 font-medium">{absentModal.rollCall?.present_count || 0}人</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setAbsentModalFilter('absent')}
+                                        className={`rounded-md px-2 py-1 transition-colors ${absentModal.statusFilter === 'absent' ? 'bg-red-50 ring-1 ring-red-200' : 'hover:bg-gray-100'}`}
+                                        title="筛选缺勤学生"
+                                    >
+                                        缺勤: <span className="text-red-600 font-medium">{getAbsentCount(absentModal.rollCall)}人</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setAbsentModalFilter('on_leave')}
+                                        className={`rounded-md px-2 py-1 transition-colors ${absentModal.statusFilter === 'on_leave' ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-100'}`}
+                                        title="筛选请假学生"
+                                    >
+                                        请假: <span className="text-blue-600 font-medium">{absentModal.rollCall?.on_leave_count || 0}人</span>
+                                    </button>
                                 </div>
 
                                 {absentModal.loading ? (
                                     <div className="flex items-center justify-center py-8">
                                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
                                     </div>
-                                ) : absentModal.records.length === 0 ? (
+                                ) : filteredAbsentModalRecords.length === 0 ? (
                                     <div className="text-center py-8 text-gray-500">
-                                        全员出勤，无缺勤/请假记录 🎉
+                                        {getFilterEmptyText()}
                                     </div>
                                 ) : (
                                     <div className="overflow-x-auto max-h-96">
@@ -477,7 +550,7 @@ export default function RollCallHistoryPage() {
                                                 </tr>
                                             </thead>
                                             <tbody className="bg-white divide-y divide-gray-200">
-                                                {absentModal.records.map((record, index) => (
+                                                {filteredAbsentModalRecords.map((record, index) => (
                                                     <tr key={record.id} className="hover:bg-gray-50">
                                                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                                                             {index + 1}
@@ -492,7 +565,7 @@ export default function RollCallHistoryPage() {
                                                             {record.student?.user?.name || '-'}
                                                         </td>
                                                         <td className="px-4 py-3 whitespace-nowrap text-sm">
-                                                            <span className={record.status === 'absent' ? 'text-red-600 font-medium' : 'text-blue-600'}>
+                                                            <span className={record.status === 'present' ? 'text-green-600 font-medium' : record.status === 'absent' || record.status === 'pending' ? 'text-red-600 font-medium' : 'text-blue-600'}>
                                                                 {getRecordStatusText(record)}
                                                             </span>
                                                         </td>
@@ -506,7 +579,7 @@ export default function RollCallHistoryPage() {
 
                             {/* Footer */}
                             <div className="bg-gray-50 px-6 py-4 flex justify-end gap-3">
-                                {absentModal.records.length > 0 && (
+                                {filteredAbsentModalRecords.length > 0 && (
                                     <button
                                         onClick={handlePrint}
                                         className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
@@ -516,7 +589,7 @@ export default function RollCallHistoryPage() {
                                     </button>
                                 )}
                                 <button
-                                    onClick={() => setAbsentModal({ isOpen: false, rollCall: null, records: [], loading: false })}
+                                    onClick={closeAbsentModal}
                                     className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                                 >
                                     关闭
