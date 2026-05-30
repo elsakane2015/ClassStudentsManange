@@ -589,25 +589,25 @@ export default function StudentDashboard() {
                     {/* Stats Cards - Collapsible Content */}
                     {statsExpanded && (
                         <div className="p-4">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
                                 {/* Pending Requests Card for Class Admin */}
                                 {isClassAdmin && dashboardConfig.show_my_pending !== false && stats.pending_requests !== undefined && (
                                     <Link
                                         to="/teacher/approvals?status=pending"
-                                        className="bg-gray-50 p-4 rounded-lg border-l-4 border-amber-500 hover:bg-gray-100 transition cursor-pointer"
+                                        className="bg-gray-50 p-3 rounded-lg border-l-4 border-amber-500 hover:bg-gray-100 transition cursor-pointer sm:p-4"
                                     >
                                         <div className="text-gray-500 text-sm">待审批请假</div>
-                                        <div className="text-2xl font-bold text-amber-600">{stats.pending_requests}</div>
+                                        <div className="break-words text-xl font-bold text-amber-600 sm:text-2xl">{stats.pending_requests}</div>
                                     </Link>
                                 )}
                                 {statsEntries.map(stat => (
                                     <div
                                         key={stat.key}
-                                        className={`bg-gray-50 p-4 rounded-lg border-l-4 border-${stat.color}-500 hover:bg-gray-100 transition cursor-pointer`}
+                                        className={`bg-gray-50 p-3 rounded-lg border-l-4 border-${stat.color}-500 hover:bg-gray-100 transition cursor-pointer sm:p-4`}
                                         onClick={() => handleCardClick(stat.key, stat.name)}
                                     >
                                         <div className="text-gray-500 text-sm">{stat.name}</div>
-                                        <div className="text-2xl font-bold">{stat.value}</div>
+                                        <div className="break-words text-xl font-bold sm:text-2xl">{stat.value}</div>
                                     </div>
                                 ))}
                                 {/* WeChat Bind Card for Class Admins */}

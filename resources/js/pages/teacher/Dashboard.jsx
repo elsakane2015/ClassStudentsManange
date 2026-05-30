@@ -560,15 +560,15 @@ export default function TeacherDashboard() {
             className={`bg-white overflow-hidden rounded-lg shadow ${onClick ? 'cursor-pointer hover:shadow-lg transition-shadow' : ''}`}
             onClick={onClick}
         >
-            <div className="p-5">
+            <div className="p-3 sm:p-5">
                 <div className="flex items-center">
-                    <div className={`flex-shrink-0 rounded-md p-3 ${color}`}>
+                    <div className={`flex-shrink-0 rounded-md p-2 sm:p-3 ${color}`}>
                         {icon}
                     </div>
-                    <div className="ml-5 w-0 flex-1">
+                    <div className="ml-3 w-0 flex-1 sm:ml-5">
                         <dl>
                             <dt className="truncate text-sm font-medium text-gray-500">{title}</dt>
-                            <dd className="text-2xl font-semibold text-gray-900">{value}</dd>
+                            <dd className="break-words text-xl font-semibold text-gray-900 sm:text-2xl">{value}</dd>
                             {subtitle && <dd className="text-xs text-gray-500 mt-1">{subtitle}</dd>}
                         </dl>
                     </div>
@@ -688,7 +688,7 @@ export default function TeacherDashboard() {
                         {/* Stats Cards - Collapsible Content */}
                         {statsExpanded && (
                             <div className="p-4">
-                                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                                <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">
                                     {/* 1. Student Total - 分层显示 */}
                                     {dashboardConfig.show_student_count && (
                                         <StatCard
