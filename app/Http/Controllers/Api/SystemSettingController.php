@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 
 use App\Models\SystemSetting;
+use App\Services\AttendancePeriodService;
 
 class SystemSettingController extends Controller
 {
@@ -14,8 +15,9 @@ class SystemSettingController extends Controller
         return response()->json(SystemSetting::all());
     }
 
-    public function update(Request $request)
+    public function update(Request $request, AttendancePeriodService $periodService)
     {
+        abort_unless(in_array($request->user()?->role, ['system_admin', 'school_admin'], true), 403, '无权修改系统设置');
         // Mitigate "MySQL server has gone away" issues
         try {
             \Illuminate\Support\Facades\DB::reconnect();
@@ -43,6 +45,23 @@ class SystemSettingController extends Controller
         ]);
 
         foreach ($data['settings'] as $setting) {
+            if ($setting['key'] === 'attendance_periods') {
+                $periods = is_array($setting['value'])
+                    ? $setting['value']
+                    : json_decode((string) $setting['value'], true);
+
+                if (!is_array($periods)) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'attendance_periods' => '节次配置必须是有效的 JSON 数组',
+                    ]);
+                }
+
+                $setting['value'] = json_encode(
+                    $periodService->validateConfiguration($periods),
+                    JSON_UNESCAPED_UNICODE
+                );
+            }
+
             SystemSetting::updateOrCreate(
                 ['key' => $setting['key']],
                 ['value' => $setting['value']]

@@ -99,7 +99,7 @@ class AuthController extends Controller
 
     public function me(Request $request)
     {
-        $user = $request->user()->load('student');
+        $user = $request->user()->load(['student', 'dutyDepartments:id,name']);
         
         // Check if student is a roll call admin
         $isRollCallAdmin = false;

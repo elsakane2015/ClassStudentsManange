@@ -21,6 +21,7 @@ import RollCallHistoryPage from './pages/teacher/RollCallHistoryPage';
 import RollCallAdminsPage from './pages/teacher/RollCallAdminsPage';
 import WechatPushPage from './pages/teacher/WechatPushPage';
 import EmailNotificationSettings from './pages/teacher/EmailNotificationSettings';
+import EveningStudyPage from './pages/teacher/EveningStudyPage';
 import SettingsPage from './pages/admin/SettingsPage';
 import StaffPage from './pages/admin/StaffPage';
 import PermissionsPage from './pages/admin/PermissionsPage';
@@ -98,6 +99,7 @@ function App() {
             {/* WeChat Push */}
             <Route path="/teacher/wechat" element={<RequireAuth><WechatPushPage /></RequireAuth>} />
             <Route path="/teacher/email-notifications" element={<RequireAuth><EmailNotificationSettings /></RequireAuth>} />
+            <Route path="/evening-study" element={<RequireAuth><EveningStudyPage /></RequireAuth>} />
 
             <Route path="/admin/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
             <Route path="/admin/staff" element={<RequireAuth><StaffPage /></RequireAuth>} />

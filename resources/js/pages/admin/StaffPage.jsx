@@ -16,6 +16,7 @@ export default function StaffPage() {
     const [admins, setAdmins] = useState([]); // Keep for backward compatibility
     const [managers, setManagers] = useState([]);
     const [teachers, setTeachers] = useState([]);
+    const [dutyTeachers, setDutyTeachers] = useState([]);
 
     const [editingUser, setEditingUser] = useState(null);
     const [showForm, setShowForm] = useState(false);
@@ -36,6 +37,7 @@ export default function StaffPage() {
             if (role === 'department_manager') setManagers(res.data);
             if (role === 'manager') setManagers(res.data); // Backward compatibility
             if (role === 'teacher') setTeachers(res.data);
+            if (role === 'duty_teacher') setDutyTeachers(res.data);
         } catch (error) {
             console.error(error);
         }
@@ -60,8 +62,10 @@ export default function StaffPage() {
             fetchUsers('system_admin');
             fetchUsers('school_admin');
             fetchUsers('department_manager');
+            fetchUsers('duty_teacher');
         } else if (user?.role === 'school_admin') {
             fetchUsers('department_manager');
+            fetchUsers('duty_teacher');
         }
         fetchUsers('teacher');
     }, [user]);
@@ -73,6 +77,9 @@ export default function StaffPage() {
         let deptIds = [];
         if (['manager', 'department_manager'].includes(userData.role) && userData.managed_departments?.length > 0) {
             deptIds = userData.managed_departments.map(d => d.id);
+        }
+        if (userData.role === 'duty_teacher' && userData.duty_departments?.length > 0) {
+            deptIds = userData.duty_departments.map(d => d.id);
         }
 
         // Teacher: userData.teacher_classes (array) -> map ids
@@ -135,8 +142,10 @@ export default function StaffPage() {
         tabs.push({ key: 'system_admin', name: '系统管理员' });
         tabs.push({ key: 'school_admin', name: '校管理员' });
         tabs.push({ key: 'department_manager', name: '系部管理员' });
+        tabs.push({ key: 'duty_teacher', name: '系部值班老师' });
     } else if (user?.role === 'school_admin') {
         tabs.push({ key: 'department_manager', name: '系部管理员' });
+        tabs.push({ key: 'duty_teacher', name: '系部值班老师' });
     } else if (user?.role === 'department_manager') {
         // Department managers can only see teachers
     }
@@ -198,7 +207,7 @@ export default function StaffPage() {
                                             <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">邮箱(账号)</th>
                                             {!['system_admin', 'school_admin', 'admin'].includes(tab.key) && (
                                                 <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">
-                                                    {['manager', 'department_manager'].includes(tab.key) ? '负责系部' : '负责班级'}
+                                                    {['manager', 'department_manager', 'duty_teacher'].includes(tab.key) ? '负责系部' : '负责班级'}
                                                 </th>
                                             )}
                                             <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
@@ -216,6 +225,7 @@ export default function StaffPage() {
                                                 case 'admin': data = admins; break; // Backward compatibility
                                                 case 'manager': data = managers; break; // Backward compatibility
                                                 case 'teacher': data = teachers; break;
+                                                case 'duty_teacher': data = dutyTeachers; break;
                                                 default: data = [];
                                             }
                                             return data.map((person) => (
@@ -227,6 +237,11 @@ export default function StaffPage() {
                                                             {['department_manager', 'manager'].includes(tab.key) && (
                                                                 person.managed_departments?.length > 0
                                                                     ? person.managed_departments.map(d => d.name).join(', ')
+                                                                    : <span className="text-gray-400">未分配</span>
+                                                            )}
+                                                            {tab.key === 'duty_teacher' && (
+                                                                person.duty_departments?.length > 0
+                                                                    ? person.duty_departments.map(d => d.name).join(', ')
                                                                     : <span className="text-gray-400">未分配</span>
                                                             )}
                                                             {tab.key === 'teacher' && (
@@ -252,6 +267,7 @@ export default function StaffPage() {
                                                 case 'admin': data = admins; break;
                                                 case 'manager': data = managers; break;
                                                 case 'teacher': data = teachers; break;
+                                                case 'duty_teacher': data = dutyTeachers; break;
                                                 default: data = [];
                                             }
                                             return data.length === 0 && (
@@ -279,6 +295,7 @@ export default function StaffPage() {
                                     currentTabRole === 'system_admin' ? '系统管理员' :
                                         currentTabRole === 'school_admin' ? '校管理员' :
                                             currentTabRole === 'department_manager' ? '系部管理员' :
+                                                currentTabRole === 'duty_teacher' ? '系部值班老师' :
                                                 currentTabRole === 'admin' ? '校管理员' :
                                                     currentTabRole === 'manager' ? '系部管理员' :
                                                         '班主任'
@@ -319,7 +336,7 @@ export default function StaffPage() {
                                     </div>
 
                                     {/* Role Specific Fields */}
-                                    {['manager', 'department_manager'].includes(currentTabRole) && (
+                                    {['manager', 'department_manager', 'duty_teacher'].includes(currentTabRole) && (
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700">负责系部</label>
                                             <select
@@ -333,8 +350,9 @@ export default function StaffPage() {
                                             >
                                                 {departments.map(d => {
                                                     // Find all managers for this department (except current user if editing)
-                                                    const currentManagers = managers.filter(m =>
-                                                        m.managed_departments?.some(md => md.id === d.id) &&
+                                                    const assignedPeople = currentTabRole === 'duty_teacher' ? dutyTeachers : managers;
+                                                    const currentManagers = assignedPeople.filter(m =>
+                                                        (currentTabRole === 'duty_teacher' ? m.duty_departments : m.managed_departments)?.some(md => md.id === d.id) &&
                                                         m.id !== editingUser?.id
                                                     );
                                                     const managerNames = currentManagers.map(m => m.name).join(', ');
@@ -345,7 +363,7 @@ export default function StaffPage() {
                                                     );
                                                 })}
                                             </select>
-                                            <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。一个系部可以有多个管理员。</p>
+                                            <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。一个系部可以配置多名人员。</p>
                                         </div>
                                     )}
 

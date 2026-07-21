@@ -90,11 +90,14 @@ export default function Layout({ children }) {
             ...(isClassAdmin ? [{ name: '管理班级考勤', href: '/student/class-attendance' }] : []),
             ...(isRollCallAdmin ? [{ name: '点名', href: '/roll-call' }] : []),
         ]
+        : user?.role === 'duty_teacher'
+        ? [{ name: '夜自习点名', href: '/evening-study' }]
         : [
             { name: '概览', href: '/teacher/dashboard' },
             ...(canApproveLeave ? [{ name: '审批记录', href: '/teacher/approvals' }] : []),
             { name: '学生管理', href: '/teacher/students' },
             ...(canManageRollCall ? [{ name: '点名', href: '/roll-call' }] : []),
+            ...(hasPermission('evening_study.view') ? [{ name: '夜自习', href: '/evening-study' }] : []),
             ...(showWechatMenu ? [{ name: '微信推送', href: '/teacher/wechat' }] : []),
             ...(user?.role === 'teacher' ? [{ name: '家长通知', href: '/teacher/email-notifications' }] : []),
             ...(['system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user?.role) ? [{ name: '人员管理', href: '/admin/staff' }] : []),

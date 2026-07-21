@@ -23,6 +23,13 @@ class OptionsController extends Controller
             $depts = $user->managedDepartments()->select('departments.id', 'departments.name')->get();
             return response()->json($depts);
         }
+
+
+        if ($user->role === 'duty_teacher') {
+            return response()->json(
+                $user->dutyDepartments()->select('departments.id', 'departments.name')->get()
+            );
+        }
         
         return response()->json([]);
     }
@@ -56,6 +63,12 @@ class OptionsController extends Controller
         if ($user->role === 'teacher') {
             // Teacher ONLY sees their own classes
             $query->where('teacher_id', $user->id);
+        } elseif ($user->role === 'duty_teacher') {
+            $dutyDeptIds = $user->dutyDepartments()->pluck('departments.id');
+            if ($deptId && !$dutyDeptIds->contains((int) $deptId)) {
+                return response()->json([]);
+            }
+            $query->whereIn('department_id', $dutyDeptIds);
         } elseif (in_array($user->role, ['department_manager', 'manager'])) {
             // Manager ONLY sees their department's classes (use many-to-many)
             $managedDeptIds = $user->managedDepartments()->pluck('departments.id');

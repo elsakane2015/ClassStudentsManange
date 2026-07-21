@@ -29,4 +29,10 @@ class Department extends Model
     {
         return $this->hasMany(SchoolClass::class);
     }
+
+    public function dutyTeachers()
+    {
+        return $this->belongsToMany(User::class, 'department_duty_teachers', 'department_id', 'user_id')
+            ->withTimestamps();
+    }
 }

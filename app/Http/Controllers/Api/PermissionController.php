@@ -26,7 +26,7 @@ class PermissionController extends Controller
      */
     public function getRolePermissions()
     {
-        $roles = ['system_admin', 'school_admin', 'department_manager', 'teacher', 'student'];
+        $roles = ['system_admin', 'school_admin', 'department_manager', 'duty_teacher', 'teacher', 'student'];
         $permissions = Permission::with(['rolePermissions' => function($query) {
             $query->select('role', 'permission_id', 'can_create', 'can_read', 'can_update', 'can_delete');
         }])->get();

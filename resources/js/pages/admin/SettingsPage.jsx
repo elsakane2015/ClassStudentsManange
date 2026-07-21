@@ -7,8 +7,10 @@ import { PlusIcon, TrashIcon, PencilIcon, CheckCircleIcon } from '@heroicons/rea
 import WechatSettings from './WechatSettings';
 import LeaveImageSettings from './LeaveImageSettings';
 import AttendanceSettings from './AttendanceSettings';
+import EveningStudySettings from './EveningStudySettings';
 import ResendSettings from './ResendSettings';
 import SmsSettings from './SmsSettings';
+import useAuthStore from '../../store/authStore';
 
 // Calendar Component
 import { differenceInCalendarWeeks } from 'date-fns'; // Ensure this is imported
@@ -623,6 +625,7 @@ const SchoolSettings = () => {
 };
 
 export default function SettingsPage() {
+    const { user } = useAuthStore();
     const [activeTab, setActiveTab] = useState('school');
     const [semesters, setSemesters] = useState([]);
     const [leaveTypes, setLeaveTypes] = useState([]);
@@ -705,7 +708,7 @@ export default function SettingsPage() {
                     const periods = typeof settingsObj.attendance_periods === 'string'
                         ? JSON.parse(settingsObj.attendance_periods)
                         : settingsObj.attendance_periods;
-                    setAttendancePeriods(Array.isArray(periods) ? periods : []);
+                    setAttendancePeriods(Array.isArray(periods) ? periods.filter(period => (period.scene || 'regular') === 'regular' && (period.is_active ?? true)) : []);
                 } catch (e) {
                     console.warn('Failed to parse attendance_periods', e);
                     setAttendancePeriods([]);
@@ -907,6 +910,7 @@ export default function SettingsPage() {
                                 <NavButton id="leaveImages" label="请假图片" />
                                 <NavButton id="timeSlots" label="时段管理" />
                                 <NavButton id="attendance" label="考勤规则" />
+                                {user?.role === 'system_admin' && <NavButton id="eveningStudy" label="夜自习状态" />}
                                 <NavButton id="wechat" label="微信推送" />
                                 <NavButton id="resend" label="Resend 发送" />
                                 <NavButton id="sms" label="短信发送" />
@@ -1377,6 +1381,10 @@ export default function SettingsPage() {
                             {/* ATTENDANCE SETTINGS */}
                             {activeTab === 'attendance' && (
                                 <AttendanceSettings />
+                            )}
+
+                            {activeTab === 'eveningStudy' && (
+                                <EveningStudySettings />
                             )}
 
                             {/* LEAVE IMAGE SETTINGS */}

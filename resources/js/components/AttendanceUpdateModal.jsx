@@ -146,7 +146,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                         const periodsData = typeof settingsObj.attendance_periods === 'string'
                             ? JSON.parse(settingsObj.attendance_periods)
                             : settingsObj.attendance_periods;
-                        setPeriods(Array.isArray(periodsData) ? periodsData : []);
+                        setPeriods(Array.isArray(periodsData) ? periodsData.filter(period => (period.scene || 'regular') === 'regular' && (period.is_active ?? true)) : []);
                     } catch (e) {
                         console.warn('Failed to parse attendance_periods', e);
                         setPeriods([]);

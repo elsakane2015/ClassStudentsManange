@@ -47,6 +47,12 @@ class User extends Authenticatable
             ->withTimestamps();
     }
 
+    public function dutyDepartments()
+    {
+        return $this->belongsToMany(Department::class, 'department_duty_teachers', 'user_id', 'department_id')
+            ->withTimestamps();
+    }
+
     /**
      * Check if user has a specific permission
      */
@@ -139,9 +145,9 @@ class User extends Authenticatable
             return true;
         }
 
-        // School admin can manage department_manager and teacher
+        // School admin can manage department managers, duty teachers and teachers.
         if ($this->role === 'school_admin') {
-            return in_array($targetUser->role, ['department_manager', 'teacher']);
+            return in_array($targetUser->role, ['department_manager', 'duty_teacher', 'teacher']);
         }
 
         // Department manager can manage teachers in their department

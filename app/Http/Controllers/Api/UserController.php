@@ -32,6 +32,8 @@ class UserController extends Controller
         // Eager load relationships
         if (in_array($targetRole, ['department_manager', 'manager'])) {
             $query->with('managedDepartments');
+        } elseif ($targetRole === 'duty_teacher') {
+            $query->with('dutyDepartments');
         } elseif ($targetRole === 'teacher') {
             $query->with('teacherClasses.department');
         }
@@ -47,7 +49,7 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:6',
-            'role' => ['required', Rule::in(['system_admin', 'school_admin', 'department_manager', 'teacher', 'manager', 'admin'])], // Support old and new
+            'role' => ['required', Rule::in(['system_admin', 'school_admin', 'department_manager', 'duty_teacher', 'teacher', 'manager', 'admin'])], // Support old and new
             'department_ids' => 'nullable|array',
             'department_ids.*' => 'exists:departments,id',
             'class_ids' => 'nullable|array',
@@ -80,6 +82,10 @@ class UserController extends Controller
         // Assignments
         if (in_array($role, ['department_manager', 'manager']) && $request->filled('department_ids')) {
             $user->managedDepartments()->sync($request->department_ids);
+        }
+
+        if ($role === 'duty_teacher' && $request->filled('department_ids')) {
+            $user->dutyDepartments()->sync($request->department_ids);
         }
         
         if ($role === 'teacher' && $request->filled('class_ids')) {
@@ -120,6 +126,10 @@ class UserController extends Controller
                 $user->managedDepartments()->sync($request->department_ids ?? []);
             }
         }
+
+        if ($user->role === 'duty_teacher' && $request->has('department_ids')) {
+            $user->dutyDepartments()->sync($request->department_ids ?? []);
+        }
         
         if ($user->role === 'teacher' && $request->has('class_ids')) {
             \App\Models\SchoolClass::where('teacher_id', $user->id)->update(['teacher_id' => null]);
@@ -152,6 +162,7 @@ class UserController extends Controller
 
         // Nullify foreign keys and detach relationships
         $user->managedDepartments()->detach();
+        $user->dutyDepartments()->detach();
         \App\Models\SchoolClass::where('teacher_id', $user->id)->update(['teacher_id' => null]);
 
         $user->delete();
@@ -175,7 +186,7 @@ class UserController extends Controller
         }
 
         if ($currentUser->role === 'school_admin') {
-            return in_array($targetRole, ['school_admin', 'department_manager', 'teacher']);
+            return in_array($targetRole, ['school_admin', 'department_manager', 'duty_teacher', 'teacher']);
         }
 
         if (in_array($currentUser->role, ['department_manager', 'manager'])) {
@@ -202,7 +213,7 @@ class UserController extends Controller
         }
 
         if ($currentUser->role === 'school_admin') {
-            return in_array($targetRole, ['department_manager', 'teacher']);
+            return in_array($targetRole, ['department_manager', 'duty_teacher', 'teacher']);
         }
 
         if (in_array($currentUser->role, ['department_manager', 'manager'])) {

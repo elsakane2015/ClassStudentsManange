@@ -20,7 +20,11 @@ class StudentController extends Controller
 
         // Query Builder start
         // Ensure we load User relationship for name
-        $query = \App\Models\Student::with(['user', 'schoolClass.department']);
+        $query = \App\Models\Student::with([
+            'user',
+            'schoolClass.department',
+            'boardingSuspensions' => fn ($query) => $query->activeOn(now()->toDateString())->latest('start_date'),
+        ]);
 
         // 1. Teacher: Filter by assigned classes
         if ($user->role === 'teacher') {
@@ -81,6 +85,7 @@ class StudentController extends Controller
                 'email' => $student->user ? $student->user->email : null,
                 'is_manager' => $student->is_manager ?? false,
                 'is_class_admin' => $student->is_class_admin ?? false,
+                'active_boarding_suspension' => $student->boardingSuspensions->first(),
             ];
         });
 

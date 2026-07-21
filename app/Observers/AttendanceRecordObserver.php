@@ -23,6 +23,10 @@ class AttendanceRecordObserver
 
     private function scheduleNotification(AttendanceRecord $record): void
     {
+        if ($record->scene === 'evening_study') {
+            return;
+        }
+
         $recordId = $record->id;
         $connection = DB::connection($record->getConnectionName());
 

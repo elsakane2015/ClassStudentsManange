@@ -62,7 +62,7 @@ fi
 # ============================================
 # Laravel 的 migrate 是幂等的，只会运行未执行过的迁移
 echo "Running database migrations..."
-php artisan migrate --force || true
+php artisan migrate --force
 echo "✓ Database migrations completed!"
 
 # ============================================

@@ -7,6 +7,9 @@ use App\Models\AttendanceRecord;
 use App\Models\RollCall;
 use App\Models\RollCallRecord;
 use App\Models\TimeSlot;
+use App\Models\BoardingSuspension;
+use App\Models\EveningStudyStatus;
+use App\Services\AttendancePeriodService;
 use App\Services\LeaveConflictService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -29,10 +32,12 @@ use Illuminate\Validation\Rule;
 class LeaveRequestController extends Controller
 {
     protected $conflictService;
+    protected AttendancePeriodService $periodService;
 
-    public function __construct(LeaveConflictService $conflictService)
+    public function __construct(LeaveConflictService $conflictService, AttendancePeriodService $periodService)
     {
         $this->conflictService = $conflictService;
+        $this->periodService = $periodService;
     }
 
     /**
@@ -43,7 +48,8 @@ class LeaveRequestController extends Controller
         $user = $request->user();
         
         // Query attendance_records for self-applied leaves
-        $query = AttendanceRecord::with(['student.user', 'class', 'leaveType', 'approver'])
+        $query = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->with(['student.user', 'class', 'leaveType', 'approver', 'requestedEveningStatus', 'eveningStudyStatus'])
             ->where('is_self_applied', true);
 
         if ($user->role === 'student') {
@@ -64,6 +70,9 @@ class LeaveRequestController extends Controller
 
         if ($request->has('status')) {
             $query->where('approval_status', $request->status);
+        }
+        if ($request->has('scene')) {
+            $query->where('scene', $request->scene);
         }
 
         if ($request->has('date_from')) {
@@ -123,6 +132,10 @@ class LeaveRequestController extends Controller
                 'half_day_label' => $this->getOptionLabel($first),
                 'details' => $first->details,
                 'reason' => $first->reason,
+                'scene' => $first->scene,
+                'destination' => $first->destination,
+                'requested_evening_status' => $first->requestedEveningStatus,
+                'evening_study_status' => $first->eveningStudyStatus,
                 'images' => $first->images,
                 'status' => $first->approval_status ?? 'approved',
                 'approval_status' => $first->approval_status,
@@ -143,6 +156,8 @@ class LeaveRequestController extends Controller
                         'date'      => $r->date->format('Y-m-d'),
                         'period_id' => $r->period_id,
                         'label'     => $label,
+                        'scene'     => $r->scene,
+                        'destination' => $r->destination,
                     ];
                 })->sortBy(['date', 'period_id'])->values(),
             ];
@@ -181,6 +196,8 @@ class LeaveRequestController extends Controller
             'reason' => 'nullable|string',
             'images' => 'nullable|array',
             'images.*' => 'string',
+            'evening_study_status_id' => 'nullable|exists:evening_study_statuses,id',
+            'destination' => 'nullable|string|max:500',
         ]);
         
         $student = $user->student;
@@ -345,6 +362,52 @@ class LeaveRequestController extends Controller
             ]);
         }
 
+        $selectedPeriods = collect($periodIds)->map(fn ($id) => $this->periodService->find((int) $id));
+        if ($selectedPeriods->contains(null)) {
+            return response()->json(['error' => '包含无效节次，请刷新后重试'], 422);
+        }
+        $scenes = $selectedPeriods->pluck('scene')->unique()->values();
+        if ($scenes->count() > 1) {
+            return response()->json(['error' => '普通考勤和夜自习不能在同一次申请中混选'], 422);
+        }
+        $isEveningStudy = $scenes->first() === 'evening_study';
+        $requestedEveningStatus = null;
+        $defaultEveningStatus = null;
+
+        if ($isEveningStudy) {
+            if (!$student->is_boarding) {
+                return response()->json(['error' => '夜自习请假仅对住宿生开放'], 422);
+            }
+            if (count($periodIds) !== 1 || $selectedPeriods->first()['audience_scope'] !== 'boarding') {
+                return response()->json(['error' => '请选择一个仅对住宿生开放的夜自习节次'], 422);
+            }
+            $requestedEveningStatus = EveningStudyStatus::whereKey($request->evening_study_status_id)
+                ->where('school_id', $student->school_id)
+                ->where('is_active', true)
+                ->where('student_requestable', true)
+                ->where('leave_type_id', $leaveType->id)
+                ->first();
+            if (!$requestedEveningStatus) {
+                return response()->json(['error' => '请选择与请假类型匹配的夜自习状态'], 422);
+            }
+            if (!$request->filled('destination')) {
+                return response()->json(['error' => '请填写夜自习期间的具体去向'], 422);
+            }
+            $defaultEveningStatus = EveningStudyStatus::where('school_id', $student->school_id)
+                ->where('is_active', true)->where('is_default', true)->first();
+            if (!$defaultEveningStatus) {
+                return response()->json(['error' => '系统尚未配置夜自习默认状态'], 422);
+            }
+            $hasSuspension = BoardingSuspension::where('student_id', $student->id)
+                ->whereNull('revoked_at')
+                ->whereDate('start_date', '<=', $request->end_date)
+                ->whereDate('end_date', '>=', $request->start_date)
+                ->exists();
+            if ($hasSuspension) {
+                return response()->json(['error' => '申请日期内住宿许可已暂停，不能申请夜自习请假'], 422);
+            }
+        }
+
         // Create attendance records (UNIFIED DATA SOURCE)
         $start = Carbon::parse($request->start_date);
         $end = Carbon::parse($request->end_date);
@@ -356,7 +419,7 @@ class LeaveRequestController extends Controller
         DB::beginTransaction();
         try {
             // Lock the student's records in this date range to prevent concurrent inserts (TOCTOU fix)
-            $lockedRecords = AttendanceRecord::where('student_id', $student->id)
+            $lockedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $student->id)
                 ->whereBetween('date', [$request->start_date, $request->end_date])
                 ->where(function ($q) {
                     $q->where('source_type', 'leave_request')
@@ -389,13 +452,14 @@ class LeaveRequestController extends Controller
                         'is_custom' => $isCustomSelection
                     ]);
                     foreach ($periodIds as $periodId) {
-                        $record = AttendanceRecord::create([
+                        $period = $this->periodService->find((int) $periodId);
+                        $record = AttendanceRecord::withoutGlobalScope('day_attendance')->create([
                             'student_id' => $student->id,
                             'school_id' => $student->school_id,
                             'class_id' => $student->class_id,
                             'date' => $start->toDateString(),
                             'period_id' => $periodId,
-                            'status' => 'leave',
+                            'status' => $isEveningStudy ? $defaultEveningStatus->base_status : 'leave',
                             'leave_type_id' => $leaveType?->id,
                             'leave_batch_id' => $leaveBatchId, // 关联同一次申请
                             'details' => !empty($details) ? $details : null,
@@ -404,12 +468,20 @@ class LeaveRequestController extends Controller
                             'approval_status' => 'pending',
                             'reason' => $request->reason,
                             'source_type' => 'self_applied',
+                            'scene' => $period['scene'],
+                            'counts_in_day_stats' => $period['counts_in_day_stats'],
+                            'period_name_snapshot' => $period['name'],
+                            'requested_evening_status_id' => $requestedEveningStatus?->id,
+                            'requested_status_name_snapshot' => $requestedEveningStatus?->name,
+                            'evening_study_status_id' => $defaultEveningStatus?->id,
+                            'status_name_snapshot' => $defaultEveningStatus?->name,
+                            'destination' => $request->destination,
                         ]);
                         $createdRecords[] = $record;
                     }
                 } else {
                     // 无特定节次，创建一条全天记录
-                    $record = AttendanceRecord::create([
+                    $record = AttendanceRecord::withoutGlobalScope('day_attendance')->create([
                         'student_id' => $student->id,
                         'school_id' => $student->school_id,
                         'class_id' => $student->class_id,
@@ -442,7 +514,7 @@ class LeaveRequestController extends Controller
         $firstRecord = $createdRecords[0] ?? null;
 
         // Trigger WeChat push notification
-        if ($firstRecord) {
+        if ($firstRecord && !$isEveningStudy) {
             try {
                 $pushService = app(\App\Services\WechatPushService::class);
                 $pushService->sendLeaveRequestNotification($firstRecord);
@@ -470,6 +542,8 @@ class LeaveRequestController extends Controller
             'reason' => $request->reason,
             'status' => 'pending',
             'record_count' => count($createdRecords),
+            'scene' => $isEveningStudy ? 'evening_study' : 'regular',
+            'destination' => $request->destination,
         ], 201);
     }
 
@@ -486,7 +560,7 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        $record = AttendanceRecord::findOrFail($id);
+        $record = AttendanceRecord::withoutGlobalScope('day_attendance')->findOrFail($id);
 
         // Ensure teacher/class admin owns this class
         if ($user->role === 'teacher') {
@@ -503,12 +577,12 @@ class LeaveRequestController extends Controller
 
         $approvedCount = DB::transaction(function () use ($record, $user, $newLeaveTypeId, $excludedRecordIds) {
             if ($record->leave_batch_id) {
-                $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+                $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('leave_batch_id', $record->leave_batch_id)
                     ->where('approval_status', 'pending')
                     ->lockForUpdate()
                     ->get();
             } else {
-                $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+                $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $record->student_id)
                     ->where('date', $record->date)
                     ->where('leave_type_id', $record->leave_type_id)
                     ->where('approval_status', 'pending')
@@ -519,7 +593,7 @@ class LeaveRequestController extends Controller
 
             // 删除教师不批准的节次记录
             if (!empty($excludedRecordIds)) {
-                AttendanceRecord::whereIn('id', $excludedRecordIds)->delete();
+                AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $excludedRecordIds)->delete();
                 $relatedRecords = $relatedRecords->filter(
                     fn($r) => !in_array($r->id, $excludedRecordIds)
                 );
@@ -561,8 +635,14 @@ class LeaveRequestController extends Controller
                     $details['option_periods'] = $newOptionPeriods;
                 }
 
+                $approvedEveningStatus = $r->scene === 'evening_study' ? $r->requestedEveningStatus : null;
+                $canUpdateEveningResult = $approvedEveningStatus
+                    && !$r->manually_overridden_at
+                    && $r->eveningStudySession?->status !== 'completed';
                 $updateData = [
-                    'status'          => 'excused',
+                    'status'          => $approvedEveningStatus
+                        ? ($canUpdateEveningResult ? $approvedEveningStatus->base_status : $r->status)
+                        : 'excused',
                     'approval_status' => 'approved',
                     'approver_id'     => $user->id,
                     'approved_at'     => now(),
@@ -571,9 +651,15 @@ class LeaveRequestController extends Controller
                 if ($newLeaveTypeId) {
                     $updateData['leave_type_id'] = $newLeaveTypeId;
                 }
+                if ($canUpdateEveningResult) {
+                    $updateData['evening_study_status_id'] = $approvedEveningStatus->id;
+                    $updateData['status_name_snapshot'] = $approvedEveningStatus->name;
+                }
                 $r->update($updateData);
                 $r->refresh();
-                $this->syncRollCallAfterApproval($r);
+                if ($r->scene !== 'evening_study') {
+                    $this->syncRollCallAfterApproval($r);
+                }
             }
 
             return $relatedRecords->count();
@@ -595,7 +681,7 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        $record = AttendanceRecord::findOrFail($id);
+        $record = AttendanceRecord::withoutGlobalScope('day_attendance')->findOrFail($id);
 
         if ($isClassAdmin && $record->class_id !== $user->student->class_id) {
             return response()->json(['error' => 'Not your class'], 403);
@@ -603,12 +689,12 @@ class LeaveRequestController extends Controller
         
         $rejectedCount = DB::transaction(function () use ($record, $user, $request) {
             if ($record->leave_batch_id) {
-                $relatedRecords = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+                $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('leave_batch_id', $record->leave_batch_id)
                     ->where('approval_status', 'pending')
                     ->lockForUpdate()
                     ->get();
             } else {
-                $relatedRecords = AttendanceRecord::where('student_id', $record->student_id)
+                $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $record->student_id)
                     ->where('date', $record->date)
                     ->where('leave_type_id', $record->leave_type_id)
                     ->where('approval_status', 'pending')
@@ -668,7 +754,7 @@ class LeaveRequestController extends Controller
     public function destroy(Request $request, $id)
     {
         $user = $request->user();
-        $record = AttendanceRecord::findOrFail($id);
+        $record = AttendanceRecord::withoutGlobalScope('day_attendance')->findOrFail($id);
         
         // Students can only cancel their own pending requests
         if ($user->role === 'student') {
@@ -691,12 +777,12 @@ class LeaveRequestController extends Controller
         
         $deletedCount = DB::transaction(function () use ($record, $user) {
             if ($record->leave_batch_id) {
-                $query = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id);
+                $query = AttendanceRecord::withoutGlobalScope('day_attendance')->where('leave_batch_id', $record->leave_batch_id);
                 if ($user->role === 'student') {
                     $query->where('approval_status', 'pending');
                 }
             } else {
-                $query = AttendanceRecord::where('student_id', $record->student_id)
+                $query = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $record->student_id)
                     ->where('date', $record->date)
                     ->where('leave_type_id', $record->leave_type_id)
                     ->where('is_self_applied', true);
@@ -712,7 +798,7 @@ class LeaveRequestController extends Controller
                 return 0;
             }
 
-            return AttendanceRecord::whereIn('id', $ids)->delete();
+            return AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $ids)->delete();
         });
 
         return response()->json(['message' => 'Leave request deleted successfully.', 'deleted_count' => $deletedCount]);
@@ -733,7 +819,7 @@ class LeaveRequestController extends Controller
             $rollCallRecordIds->push((int) $rcp['roll_call_record_id']);
         }
 
-        $rollCallQuery = AttendanceRecord::where('student_id', $record->student_id)
+        $rollCallQuery = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $record->student_id)
             ->whereDate('date', $record->date)
             ->where('source_type', 'roll_call')
             ->where(function ($q) {
@@ -759,7 +845,7 @@ class LeaveRequestController extends Controller
         }
 
         if ($rollCallRecords->isNotEmpty()) {
-            AttendanceRecord::whereIn('id', $rollCallRecords->pluck('id'))->delete();
+            AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $rollCallRecords->pluck('id'))->delete();
         }
 
         $rollCallRecordIds = $rollCallRecordIds->filter()->unique()->values();
@@ -839,7 +925,7 @@ class LeaveRequestController extends Controller
         $end = Carbon::parse($endDate);
         $windowStart = $start->copy()->subDays($limitDays - 1)->toDateString();
 
-        $records = AttendanceRecord::where('student_id', $studentId)
+        $records = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $studentId)
             ->where('leave_type_id', $leaveType->id)
             ->whereBetween('date', [$windowStart, $end->toDateString()])
             ->where('is_self_applied', true)

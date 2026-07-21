@@ -17,6 +17,9 @@ function semesterDateRange(semester) {
 }
 
 function slotLabel(request) {
+    if (request.scene === 'evening_study') {
+        return `夜自习 · ${request.requested_evening_status?.name || '状态待确认'}`;
+    }
     let d = null;
     try { d = typeof request.details === 'string' ? JSON.parse(request.details) : request.details; } catch (e) {}
     if (d?.display_label) return d.option_periods ? `${d.display_label} (${d.option_periods}节)` : d.display_label;
@@ -223,6 +226,7 @@ export default function ApprovalHistory() {
     const [requests, setRequests]   = useState([]);
     const [loading, setLoading]     = useState(true);
     const [filter, setFilter]       = useState(searchParams.get('status') || 'all');
+    const [scene, setScene]         = useState('all');
     const [semesters, setSemesters] = useState([]);
     const [selectedSemesterId, setSelectedSemesterId] = useState(null);
     const [leaveTypes, setLeaveTypes] = useState([]);
@@ -251,7 +255,7 @@ export default function ApprovalHistory() {
     useEffect(() => {
         if (selectedSemesterId === null) return;
         fetchRequests();
-    }, [filter, selectedSemesterId]);
+    }, [filter, scene, selectedSemesterId]);
 
     const fetchRequests = async () => {
         setLoading(true);
@@ -260,6 +264,7 @@ export default function ApprovalHistory() {
         try {
             const params = {};
             if (filter !== 'all') params.status = filter;
+            if (scene !== 'all') params.scene = scene;
             const semester = semesters.find(s => s.id === selectedSemesterId);
             if (semester) {
                 const { date_from, date_to } = semesterDateRange(semester);
@@ -422,6 +427,7 @@ export default function ApprovalHistory() {
                     )}
                 </p>
                 {(() => { const r = reasonText(request); return r ? <p className="mt-1 italic">"{r}"</p> : null; })()}
+                {request.scene === 'evening_study' && request.destination && <p className="mt-1 text-cyan-700">具体去向：{request.destination}</p>}
             </div>
 
             <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
@@ -490,6 +496,7 @@ export default function ApprovalHistory() {
                     )}
                 </p>
                 {r && <p className="text-xs text-gray-500 italic truncate">"{r}"</p>}
+                {request.scene === 'evening_study' && request.destination && <p className="text-xs text-cyan-700 truncate">去向：{request.destination}</p>}
                 <div className="text-[10px] text-gray-400 space-y-0.5">
                     {request.created_at && <p>提交: {format(new Date(request.created_at), 'MM-dd HH:mm')}</p>}
                     {request.approved_at && (request.status === 'approved' || request.status === 'rejected') && (
@@ -539,6 +546,11 @@ export default function ApprovalHistory() {
                             </button>
                         ))}
                     </div>
+                    <select value={scene} onChange={e => setScene(e.target.value)} className="text-sm border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                        <option value="all">全部场景</option>
+                        <option value="regular">普通考勤</option>
+                        <option value="evening_study">夜自习</option>
+                    </select>
                     {/* 学期 */}
                     {semesters.length > 0 && (
                         <select value={selectedSemesterId ?? ''}

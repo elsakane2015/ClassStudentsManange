@@ -13,6 +13,7 @@ export default function PermissionsPage() {
         'system_admin': '系统管理员',
         'school_admin': '校管理员',
         'department_manager': '系部管理员',
+        'duty_teacher': '系部值班老师',
         'teacher': '班主任',
         'student': '学生'
     };

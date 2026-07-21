@@ -18,6 +18,9 @@ use App\Http\Controllers\Api\AttendanceExportController;
 use App\Http\Controllers\Api\WechatController;
 use App\Http\Controllers\Api\ResendController;
 use App\Http\Controllers\Api\SmsController;
+use App\Http\Controllers\Api\BoardingSuspensionController;
+use App\Http\Controllers\Api\EveningStudyController;
+use App\Http\Controllers\Api\EveningStudyStatusController;
 use App\Http\Controllers\InstallController;
 
 // Installation routes (no auth required)
@@ -71,6 +74,25 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/leave-requests/{id}', [LeaveRequestController::class, 'destroy']);
     Route::post('/leave-requests/{id}/approve', [LeaveRequestController::class, 'approve']);
     Route::post('/leave-requests/{id}/reject', [LeaveRequestController::class, 'reject']);
+
+    // Evening study attendance and temporary boarding suspension
+    Route::get('/evening-study/periods', [EveningStudyController::class, 'periods']);
+    Route::get('/evening-study/classes', [EveningStudyController::class, 'classes']);
+    Route::post('/evening-study/sessions', [EveningStudyController::class, 'start']);
+    Route::get('/evening-study/sessions/{eveningStudySession}', [EveningStudyController::class, 'show']);
+    Route::put('/evening-study/sessions/{eveningStudySession}/records', [EveningStudyController::class, 'updateRecords']);
+    Route::post('/evening-study/teacher-leave', [EveningStudyController::class, 'markLeave']);
+    Route::post('/evening-study/sessions/{eveningStudySession}/complete', [EveningStudyController::class, 'complete']);
+    Route::post('/evening-study/sessions/{eveningStudySession}/reopen', [EveningStudyController::class, 'reopen']);
+    Route::get('/evening-study/history', [EveningStudyController::class, 'history']);
+    Route::get('/evening-study-statuses', [EveningStudyStatusController::class, 'index']);
+    Route::post('/evening-study-statuses', [EveningStudyStatusController::class, 'store']);
+    Route::put('/evening-study-statuses/{eveningStudyStatus}', [EveningStudyStatusController::class, 'update']);
+    Route::delete('/evening-study-statuses/{eveningStudyStatus}', [EveningStudyStatusController::class, 'destroy']);
+    Route::post('/evening-study-statuses/suspension-status', [EveningStudyStatusController::class, 'setSuspensionStatus']);
+    Route::get('/boarding-suspensions', [BoardingSuspensionController::class, 'index']);
+    Route::post('/boarding-suspensions', [BoardingSuspensionController::class, 'store']);
+    Route::post('/boarding-suspensions/{boardingSuspension}/revoke', [BoardingSuspensionController::class, 'revoke']);
 
     // Leave Image Upload
     Route::get('/leave-image/settings', [\App\Http\Controllers\Api\LeaveImageController::class, 'settings']);
@@ -148,7 +170,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         
         try {
             $periods = json_decode($attendancePeriods, true) ?: [];
-            return response()->json(collect($periods)->values());
+            return response()->json(collect($periods)
+                ->filter(fn ($period) => ($period['scene'] ?? 'regular') === 'regular')
+                ->filter(fn ($period) => $period['is_active'] ?? true)
+                ->values());
         } catch (\Exception $e) {
             return response()->json([]);
         }

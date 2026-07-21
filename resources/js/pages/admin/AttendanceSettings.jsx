@@ -98,7 +98,16 @@ export default function AttendanceSettings() {
             const regularCount = attendancePeriods.filter(p => p.type === 'regular').length;
             name = `第${regularCount + 1}节`;
         }
-        const newPeriod = { id: maxId + 1, name: name || '新节次', type: type, order: attendancePeriods.length };
+        const newPeriod = {
+            id: maxId + 1,
+            name: name || '新节次',
+            type,
+            order: attendancePeriods.length,
+            audience_scope: 'all',
+            scene: 'regular',
+            counts_in_day_stats: true,
+            is_active: true,
+        };
         setAttendancePeriods([...attendancePeriods, newPeriod]);
         setNewPeriodName('');
     };
@@ -120,6 +129,12 @@ export default function AttendanceSettings() {
 
     const updatePeriodName = (id, newName) => {
         setAttendancePeriods(attendancePeriods.map(p => p.id === id ? { ...p, name: newName } : p));
+    };
+
+    const updatePeriod = (id, changes) => {
+        setAttendancePeriods(periods => periods.map(period => (
+            period.id === id ? { ...period, ...changes } : period
+        )));
     };
 
     const movePeriod = (fromIndex, toIndex) => {
@@ -197,14 +212,23 @@ export default function AttendanceSettings() {
                     ) : (
                         <div className="space-y-2">
                             {attendancePeriods.map((period, index) => (
-                                <div key={period.id} className="flex items-center gap-3 bg-white p-3 rounded-lg border hover:shadow-sm transition-shadow">
+                                <div key={period.id} className="grid grid-cols-[auto_auto_minmax(8rem,1fr)] gap-3 bg-white p-3 rounded-lg border hover:shadow-sm transition-shadow md:grid-cols-[auto_auto_minmax(10rem,1fr)_8rem_8rem_auto_auto_auto] md:items-center">
                                     <div className="flex flex-col gap-0.5">
                                         <button type="button" onClick={() => index > 0 && movePeriod(index, index - 1)} disabled={index === 0} className={`p-0.5 rounded text-xs ${index === 0 ? 'text-gray-200' : 'text-gray-400 hover:bg-gray-100'}`}>▲</button>
                                         <button type="button" onClick={() => index < attendancePeriods.length - 1 && movePeriod(index, index + 1)} disabled={index === attendancePeriods.length - 1} className={`p-0.5 rounded text-xs ${index === attendancePeriods.length - 1 ? 'text-gray-200' : 'text-gray-400 hover:bg-gray-100'}`}>▼</button>
                                     </div>
                                     <span className="text-xs text-gray-400 w-5 text-center">{index + 1}</span>
                                     <input type="text" value={period.name} onChange={(e) => updatePeriodName(period.id, e.target.value)} className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="节次名称" />
-                                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${period.type === 'special' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>{period.type === 'special' ? '特殊' : '普通'}</span>
+                                    <select value={period.scene || 'regular'} onChange={(e) => updatePeriod(period.id, { scene: e.target.value, audience_scope: e.target.value === 'evening_study' ? 'boarding' : (period.audience_scope || 'all') })} className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
+                                        <option value="regular">普通考勤</option>
+                                        <option value="evening_study">夜自习</option>
+                                    </select>
+                                    <select value={period.audience_scope || 'all'} onChange={(e) => updatePeriod(period.id, { audience_scope: e.target.value })} className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
+                                        <option value="all">全体学生</option>
+                                        <option value="boarding">仅住宿生</option>
+                                    </select>
+                                    <label className="flex items-center gap-1.5 text-xs text-gray-600 whitespace-nowrap"><input type="checkbox" checked={period.counts_in_day_stats ?? true} onChange={(e) => updatePeriod(period.id, { counts_in_day_stats: e.target.checked })} className="rounded border-gray-300 text-indigo-600" />计入日常统计</label>
+                                    <label className="flex items-center gap-1.5 text-xs text-gray-600 whitespace-nowrap"><input type="checkbox" checked={period.is_active ?? true} onChange={(e) => updatePeriod(period.id, { is_active: e.target.checked })} className="rounded border-gray-300 text-indigo-600" />启用</label>
                                     <button type="button" onClick={() => removePeriod(period.id)} className="text-gray-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg transition-colors"><TrashIcon className="h-4 w-4" /></button>
                                 </div>
                             ))}

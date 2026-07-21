@@ -128,6 +128,12 @@ export default function LeaveHistory() {
                                                 return leave.half_day_label ? `仅${leave.half_day_label}` : (leave.half_day ? `仅${leave.half_day}` : '全天');
                                             })()}
                                         </div>
+                                        {leave.scene === 'evening_study' && (
+                                            <p className="mt-1 text-sm text-cyan-700">
+                                                夜自习状态：{leave.requested_evening_status?.name || '-'}
+                                                {leave.destination ? ` · 去向：${leave.destination}` : ''}
+                                            </p>
+                                        )}
                                         {/* 显示申请理由或文本说明 */}
                                         {(() => {
                                             let details = null;

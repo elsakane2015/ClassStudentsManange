@@ -49,6 +49,12 @@ export default function StudentList() {
     // Form State
     const [showForm, setShowForm] = useState(false);
     const [editingStudent, setEditingStudent] = useState(null);
+    const [suspensionStudent, setSuspensionStudent] = useState(null);
+    const [suspensionForm, setSuspensionForm] = useState({ start_date: '', end_date: '', reason: '', destination: '' });
+    const [eveningLeaveStudent, setEveningLeaveStudent] = useState(null);
+    const [eveningPeriods, setEveningPeriods] = useState([]);
+    const [eveningStatuses, setEveningStatuses] = useState([]);
+    const [eveningLeaveForm, setEveningLeaveForm] = useState({ date: '', period_id: '', status_id: '', destination: '', reason: '' });
     const [formData, setFormData] = useState({
         name: '', student_no: '', gender: 'male', is_boarding: false, parent_contact: '', parent_email: '',
         class_id: '', email: '', password: ''
@@ -200,6 +206,72 @@ export default function StudentList() {
             const validationErrors = error.response?.data?.errors;
             const firstError = validationErrors ? Object.values(validationErrors).flat()[0] : null;
             alert('操作失败: ' + (error.response?.data?.error || firstError || error.message));
+        }
+    };
+
+    const openSuspension = (student) => {
+        const date = new Date();
+        date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+        const currentDate = date.toISOString().slice(0, 10);
+        setSuspensionStudent(student);
+        setSuspensionForm({ start_date: currentDate, end_date: currentDate, reason: '', destination: '' });
+    };
+
+    const saveSuspension = async (event) => {
+        event.preventDefault();
+        try {
+            await axios.post('/boarding-suspensions', { student_id: suspensionStudent.id, ...suspensionForm });
+            setSuspensionStudent(null);
+            fetchStudents(meta.current_page);
+        } catch (error) {
+            alert(error.response?.data?.message || Object.values(error.response?.data?.errors || {}).flat()[0] || '暂停住宿失败');
+        }
+    };
+
+    const revokeSuspension = async () => {
+        const reason = prompt('请输入撤销原因');
+        if (!reason) return;
+        try {
+            await axios.post(`/boarding-suspensions/${suspensionStudent.active_boarding_suspension.id}/revoke`, { reason });
+            setSuspensionStudent(null);
+            fetchStudents(meta.current_page);
+        } catch (error) {
+            alert(error.response?.data?.message || '撤销失败');
+        }
+    };
+
+    const openEveningLeave = async (student) => {
+        const date = new Date();
+        date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+        const currentDate = date.toISOString().slice(0, 10);
+        try {
+            const [periodRes, statusRes] = await Promise.all([
+                axios.get('/evening-study/periods'),
+                axios.get('/evening-study-statuses'),
+            ]);
+            const availableStatuses = (statusRes.data.statuses || []).filter(status => !status.is_default);
+            setEveningPeriods(periodRes.data || []);
+            setEveningStatuses(availableStatuses);
+            setEveningLeaveForm({ date: currentDate, period_id: String(periodRes.data?.[0]?.id || ''), status_id: String(availableStatuses[0]?.id || ''), destination: '', reason: '' });
+            setEveningLeaveStudent(student);
+        } catch (error) {
+            alert(error.response?.data?.message || '夜自习配置加载失败');
+        }
+    };
+
+    const saveEveningLeave = async (event) => {
+        event.preventDefault();
+        try {
+            await axios.post('/evening-study/teacher-leave', {
+                student_id: eveningLeaveStudent.id,
+                ...eveningLeaveForm,
+                period_id: Number(eveningLeaveForm.period_id),
+                status_id: Number(eveningLeaveForm.status_id),
+            });
+            setEveningLeaveStudent(null);
+            setNotice({ type: 'success', text: '夜自习请假状态已标记' });
+        } catch (error) {
+            alert(error.response?.data?.message || Object.values(error.response?.data?.errors || {}).flat()[0] || '标记失败');
         }
     };
 
@@ -472,7 +544,7 @@ export default function StudentList() {
                                                             <option value="0">走读</option>
                                                             <option value="1">住宿</option>
                                                         </select>
-                                                    ) : (student.is_boarding ? '是' : '否')}
+                                                    ) : (student.is_boarding ? <span>{student.active_boarding_suspension ? <span className="font-medium text-orange-700">是 · 已暂停</span> : '是'}</span> : '否')}
                                                 </td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.department_name}</td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.enrollment_year || '-'}</td>
@@ -490,6 +562,8 @@ export default function StudentList() {
                                                     {!batchEditing && (
                                                         <>
                                                             <button onClick={() => handleEdit(student)} className="text-indigo-600 hover:text-indigo-900">编辑</button>
+                                                            {student.is_boarding && <button onClick={() => openSuspension(student)} className="text-orange-600 hover:text-orange-900">{student.active_boarding_suspension ? '查看暂停' : '暂停住宿'}</button>}
+                                                            {student.is_boarding && !student.active_boarding_suspension && <button onClick={() => openEveningLeave(student)} className="text-cyan-700 hover:text-cyan-900">夜自习请假</button>}
                                                             <button onClick={() => toggleClassAdmin(student)} className={student.is_class_admin ? "text-orange-600 hover:text-orange-900" : "text-blue-600 hover:text-blue-900"}>
                                                                 {student.is_class_admin ? '取消班级管理员' : '指定班级管理员'}
                                                             </button>
@@ -606,6 +680,50 @@ export default function StudentList() {
                                     <button type="submit" className="inline-flex w-full justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 sm:col-start-2">保存</button>
                                     <button type="button" onClick={() => setShowForm(false)} className="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:col-start-1 sm:mt-0">取消</button>
                                 </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {suspensionStudent && (
+                <div className="fixed inset-0 z-20 overflow-y-auto">
+                    <div className="flex min-h-full items-end justify-center p-4 sm:items-center">
+                        <div className="fixed inset-0 bg-gray-500/75" onClick={() => setSuspensionStudent(null)} />
+                        <div className="relative w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
+                            <h3 className="text-lg font-semibold text-gray-900">{suspensionStudent.name} · 暂停住宿许可</h3>
+                            {suspensionStudent.active_boarding_suspension ? (
+                                <div className="mt-4 space-y-3 text-sm text-gray-700">
+                                    <p><span className="text-gray-500">有效期：</span>{suspensionStudent.active_boarding_suspension.start_date} 至 {suspensionStudent.active_boarding_suspension.end_date}</p>
+                                    <p><span className="text-gray-500">原因：</span>{suspensionStudent.active_boarding_suspension.reason}</p>
+                                    <p><span className="text-gray-500">去向：</span>{suspensionStudent.active_boarding_suspension.destination || '-'}</p>
+                                    <div className="flex justify-end gap-3 pt-3"><button onClick={() => setSuspensionStudent(null)} className="rounded-md border border-gray-300 px-4 py-2">关闭</button><button onClick={revokeSuspension} className="rounded-md bg-red-600 px-4 py-2 text-white">撤销暂停</button></div>
+                                </div>
+                            ) : (
+                                <form onSubmit={saveSuspension} className="mt-4 space-y-4">
+                                    <div className="grid grid-cols-2 gap-4"><label className="text-sm text-gray-700">开始日期<input required type="date" value={suspensionForm.start_date} onChange={e => setSuspensionForm({ ...suspensionForm, start_date: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" /></label><label className="text-sm text-gray-700">结束日期<input required type="date" min={suspensionForm.start_date} value={suspensionForm.end_date} onChange={e => setSuspensionForm({ ...suspensionForm, end_date: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" /></label></div>
+                                    <label className="block text-sm text-gray-700">原因<textarea required rows="3" value={suspensionForm.reason} onChange={e => setSuspensionForm({ ...suspensionForm, reason: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" /></label>
+                                    <label className="block text-sm text-gray-700">临时去向<input value={suspensionForm.destination} onChange={e => setSuspensionForm({ ...suspensionForm, destination: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" placeholder="家中或其他地点" /></label>
+                                    <div className="flex justify-end gap-3"><button type="button" onClick={() => setSuspensionStudent(null)} className="rounded-md border border-gray-300 px-4 py-2">取消</button><button type="submit" className="rounded-md bg-indigo-600 px-4 py-2 text-white">确认暂停</button></div>
+                                </form>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {eveningLeaveStudent && (
+                <div className="fixed inset-0 z-20 overflow-y-auto">
+                    <div className="flex min-h-full items-end justify-center p-4 sm:items-center">
+                        <div className="fixed inset-0 bg-gray-500/75" onClick={() => setEveningLeaveStudent(null)} />
+                        <div className="relative w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
+                            <h3 className="text-lg font-semibold text-gray-900">{eveningLeaveStudent.name} · 标记夜自习请假</h3>
+                            <form onSubmit={saveEveningLeave} className="mt-4 space-y-4">
+                                <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm text-gray-700">日期<input required type="date" value={eveningLeaveForm.date} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, date: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" /></label><label className="text-sm text-gray-700">夜自习节次<select required value={eveningLeaveForm.period_id} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, period_id: e.target.value })} className="mt-1 w-full rounded-md border-gray-300">{eveningPeriods.map(period => <option key={period.id} value={period.id}>{period.name}</option>)}</select></label></div>
+                                <label className="block text-sm text-gray-700">状态<select required value={eveningLeaveForm.status_id} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, status_id: e.target.value })} className="mt-1 w-full rounded-md border-gray-300">{eveningStatuses.map(status => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
+                                <label className="block text-sm text-gray-700">具体去向<input required value={eveningLeaveForm.destination} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, destination: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" placeholder="宿舍、家中或活动地点" /></label>
+                                <label className="block text-sm text-gray-700">备注<textarea rows="3" value={eveningLeaveForm.reason} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, reason: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" /></label>
+                                <div className="flex justify-end gap-3"><button type="button" onClick={() => setEveningLeaveStudent(null)} className="rounded-md border border-gray-300 px-4 py-2">取消</button><button type="submit" className="rounded-md bg-indigo-600 px-4 py-2 text-white">保存标记</button></div>
                             </form>
                         </div>
                     </div>

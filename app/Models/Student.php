@@ -36,4 +36,17 @@ class Student extends Model
     {
         return $this->hasMany(AttendanceRecord::class);
     }
+
+    public function boardingSuspensions()
+    {
+        return $this->hasMany(BoardingSuspension::class);
+    }
+
+    public function activeBoardingSuspension($date = null)
+    {
+        return $this->boardingSuspensions()
+            ->activeOn($date ?? now()->toDateString())
+            ->latest('start_date')
+            ->first();
+    }
 }
