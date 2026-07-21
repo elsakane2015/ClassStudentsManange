@@ -10,6 +10,8 @@ class EmailNotificationPreference extends Model
 
     protected $casts = [
         'enabled' => 'boolean',
+        'email_enabled' => 'boolean',
+        'sms_enabled' => 'boolean',
         'enabled_events' => 'array',
     ];
 

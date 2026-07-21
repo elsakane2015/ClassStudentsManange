@@ -6,6 +6,7 @@ use App\Models\AttendanceRecord;
 use App\Observers\AttendanceRecordObserver;
 use App\Services\ParentEmailNotificationService;
 use App\Services\ResendEmailService;
+use App\Services\SmsService;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -16,6 +17,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(ResendEmailService::class);
+        $this->app->singleton(SmsService::class);
         $this->app->singleton(ParentEmailNotificationService::class);
     }
 

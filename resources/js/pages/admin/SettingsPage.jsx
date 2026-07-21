@@ -8,6 +8,7 @@ import WechatSettings from './WechatSettings';
 import LeaveImageSettings from './LeaveImageSettings';
 import AttendanceSettings from './AttendanceSettings';
 import ResendSettings from './ResendSettings';
+import SmsSettings from './SmsSettings';
 
 // Calendar Component
 import { differenceInCalendarWeeks } from 'date-fns'; // Ensure this is imported
@@ -908,6 +909,7 @@ export default function SettingsPage() {
                                 <NavButton id="attendance" label="考勤规则" />
                                 <NavButton id="wechat" label="微信推送" />
                                 <NavButton id="resend" label="Resend 发送" />
+                                <NavButton id="sms" label="短信发送" />
                             </nav>
                         </div>
 
@@ -1390,6 +1392,10 @@ export default function SettingsPage() {
                             {/* RESEND EMAIL */}
                             {activeTab === 'resend' && (
                                 <ResendSettings />
+                            )}
+
+                            {activeTab === 'sms' && (
+                                <SmsSettings />
                             )}
                         </div>
                     </div>

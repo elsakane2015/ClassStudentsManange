@@ -6,6 +6,7 @@ use App\Models\AttendanceRecord;
 use App\Models\EmailNotificationLog;
 use App\Models\EmailNotificationPreference;
 use App\Models\LeaveType;
+use App\Models\SmsNotificationLog;
 use App\Models\SystemSetting;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
@@ -20,8 +21,10 @@ class ParentEmailNotificationService
     private array $processedKeys = [];
     private array $preferenceCache = [];
 
-    public function __construct(private ResendEmailService $resend)
-    {
+    public function __construct(
+        private ResendEmailService $resend,
+        private SmsService $sms
+    ) {
     }
 
     public function eventOptions(User $teacher): array
@@ -68,6 +71,8 @@ class ParentEmailNotificationService
 
         return $this->preferenceCache[$teacher->id] = [
             'enabled' => $preference?->enabled ?? true,
+            'email_enabled' => $preference?->email_enabled ?? true,
+            'sms_enabled' => $preference?->sms_enabled ?? false,
             'enabled_events' => $preference?->enabled_events ?? self::DEFAULT_ENABLED_EVENTS,
         ];
     }
@@ -127,21 +132,74 @@ class ParentEmailNotificationService
         int $relatedId,
         string $dedupeKey
     ): array {
-        if (!$this->resend->isReady()) {
-            return ['success' => false, 'skipped' => 'resend_not_ready'];
-        }
-
         $student = $record->student;
         $class = $student?->schoolClass;
         $teacher = $class?->teacher;
 
-        if (!$student || !$class || !$teacher || !$student->parent_email) {
-            return ['success' => false, 'skipped' => 'missing_recipient_or_teacher'];
+        if (!$student || !$class || !$teacher) {
+            return ['success' => false, 'skipped' => 'missing_student_or_teacher'];
         }
 
         $preference = $this->preferenceFor($teacher);
         if (!$preference['enabled'] || !in_array($eventKey, $preference['enabled_events'], true)) {
             return ['success' => false, 'skipped' => 'event_disabled'];
+        }
+
+        if (!$preference['email_enabled'] && !$preference['sms_enabled']) {
+            return ['success' => false, 'skipped' => 'channels_disabled'];
+        }
+
+        $variables = $this->templateVariables($record, $eventName, $teacher);
+        $results = [];
+
+        if ($preference['email_enabled']) {
+            $results['email'] = $this->sendEmailChannel(
+                $record,
+                $eventKey,
+                $relatedType,
+                $relatedId,
+                $dedupeKey,
+                $variables
+            );
+        }
+
+        if ($preference['sms_enabled']) {
+            $results['sms'] = $this->sendSmsChannel(
+                $record,
+                $eventKey,
+                $relatedType,
+                $relatedId,
+                $dedupeKey,
+                $variables
+            );
+        }
+
+        if (count($results) === 1) {
+            return reset($results);
+        }
+
+        return [
+            'success' => collect($results)->contains(fn ($result) => $result['success'] ?? false),
+            'channels' => $results,
+        ];
+    }
+
+    private function sendEmailChannel(
+        AttendanceRecord $record,
+        string $eventKey,
+        string $relatedType,
+        int $relatedId,
+        string $dedupeKey,
+        array $variables
+    ): array {
+        if (!$this->resend->isReady()) {
+            return ['success' => false, 'skipped' => 'resend_not_ready'];
+        }
+
+        $student = $record->student;
+        $teacher = $student->schoolClass->teacher;
+        if (!$student->parent_email) {
+            return ['success' => false, 'skipped' => 'missing_email_recipient'];
         }
 
         if (isset($this->processedKeys[$dedupeKey])) {
@@ -154,14 +212,13 @@ class ParentEmailNotificationService
             return ['success' => true, 'skipped' => 'duplicate'];
         }
 
-        $variables = $this->templateVariables($record, $eventName, $teacher);
         $config = $this->resend->configuration();
         $subject = $this->renderTemplate($config['subject_template'], $variables, false);
         $html = $this->renderTemplate($config['html_template'], $variables, true);
 
         $log = $existingLog ?: new EmailNotificationLog(['dedupe_key' => $dedupeKey]);
         $log->fill([
-            'student_id' => $student->id,
+            'student_id' => $record->student_id,
             'teacher_id' => $teacher->id,
             'recipient' => $student->parent_email,
             'event_key' => $eventKey,
@@ -192,6 +249,72 @@ class ParentEmailNotificationService
             Log::warning('Parent email notification failed', [
                 'student_id' => $student->id,
                 'event_key' => $eventKey,
+                'error' => $result['error'] ?? '未知错误',
+            ]);
+        }
+
+        return $result;
+    }
+
+    private function sendSmsChannel(
+        AttendanceRecord $record,
+        string $eventKey,
+        string $relatedType,
+        int $relatedId,
+        string $baseDedupeKey,
+        array $variables
+    ): array {
+        if (!$this->sms->isReady()) {
+            return ['success' => false, 'skipped' => 'sms_not_ready'];
+        }
+
+        $student = $record->student;
+        $teacher = $student->schoolClass->teacher;
+        if (!$student->parent_contact || !$this->sms->normalizeChinesePhone($student->parent_contact)) {
+            return ['success' => false, 'skipped' => 'missing_sms_recipient'];
+        }
+
+        $dedupeKey = hash('sha256', 'sms|'.$baseDedupeKey);
+        if (isset($this->processedKeys[$dedupeKey])) {
+            return ['success' => true, 'skipped' => 'duplicate'];
+        }
+        $this->processedKeys[$dedupeKey] = true;
+
+        $existingLog = SmsNotificationLog::where('dedupe_key', $dedupeKey)->first();
+        if ($existingLog && in_array($existingLog->status, ['pending', 'success'], true)) {
+            return ['success' => true, 'skipped' => 'duplicate'];
+        }
+
+        $provider = $this->sms->configuration()['provider'];
+        $log = $existingLog ?: new SmsNotificationLog(['dedupe_key' => $dedupeKey]);
+        $log->fill([
+            'student_id' => $student->id,
+            'teacher_id' => $teacher->id,
+            'recipient' => $student->parent_contact,
+            'provider' => $provider,
+            'event_key' => $eventKey,
+            'status' => 'pending',
+            'error_message' => null,
+            'related_type' => $relatedType,
+            'related_id' => $relatedId,
+            'payload' => [
+                'variables' => $variables,
+                'template_variables' => $this->sms->configuration()['template_variables'],
+            ],
+        ])->save();
+
+        $result = $this->sms->send($student->parent_contact, $variables);
+        $log->update([
+            'status' => $result['success'] ? 'success' : 'failed',
+            'provider_message_id' => $result['id'] ?? null,
+            'error_message' => $result['success'] ? null : ($result['error'] ?? '未知错误'),
+        ]);
+
+        if (!$result['success']) {
+            Log::warning('Parent SMS notification failed', [
+                'student_id' => $student->id,
+                'event_key' => $eventKey,
+                'provider' => $provider,
                 'error' => $result['error'] ?? '未知错误',
             ]);
         }

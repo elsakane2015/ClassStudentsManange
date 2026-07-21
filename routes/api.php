@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\AttendanceExportController;
 use App\Http\Controllers\Api\WechatController;
 use App\Http\Controllers\Api\ResendController;
+use App\Http\Controllers\Api\SmsController;
 use App\Http\Controllers\InstallController;
 
 // Installation routes (no auth required)
@@ -108,6 +109,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/resend/test', [ResendController::class, 'sendTest']);
     Route::get('/resend/teacher-settings', [ResendController::class, 'getTeacherSettings']);
     Route::post('/resend/teacher-settings', [ResendController::class, 'saveTeacherSettings']);
+    Route::get('/sms/settings', [SmsController::class, 'getSettings']);
+    Route::post('/sms/settings', [SmsController::class, 'saveSettings']);
+    Route::post('/sms/test', [SmsController::class, 'sendTest']);
 
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/calendar', [AttendanceController::class, 'calendar']);

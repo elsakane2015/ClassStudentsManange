@@ -8,11 +8,15 @@ use App\Models\EmailNotificationPreference;
 use App\Models\Grade;
 use App\Models\School;
 use App\Models\SchoolClass;
+use App\Models\SmsNotificationLog;
 use App\Models\Student;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\ParentEmailNotificationService;
 use App\Services\ResendEmailService;
+use App\Services\Sms\AlibabaSmsProvider;
+use App\Services\Sms\TencentSmsProvider;
+use App\Services\SmsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -144,6 +148,71 @@ class ResendParentNotificationTest extends TestCase
         });
     }
 
+    public function test_sms_providers_build_expected_template_parameters(): void
+    {
+        $aliyun = new AlibabaSmsProvider();
+        $aliyunRequest = $aliyun->buildRequestData([
+            'sign_name' => '测试签名',
+            'template_code' => 'SMS_123456',
+        ], '13800000000', [
+            'student_name' => '张三',
+            'event_name' => '旷课',
+        ]);
+
+        $this->assertSame('13800000000', $aliyunRequest['phoneNumbers']);
+        $this->assertSame('SMS_123456', $aliyunRequest['templateCode']);
+        $this->assertSame(
+            ['student_name' => '张三', 'event_name' => '旷课'],
+            json_decode($aliyunRequest['templateParam'], true)
+        );
+
+        $tencent = new TencentSmsProvider();
+        $tencentRequest = $tencent->buildRequestData([
+            'sdk_app_id' => '1400000000',
+            'sign_name' => '测试签名',
+            'template_id' => '123456',
+        ], '+8613800000000', ['张三', '旷课']);
+
+        $this->assertSame(['+8613800000000'], $tencentRequest['PhoneNumberSet']);
+        $this->assertSame(['张三', '旷课'], $tencentRequest['TemplateParamSet']);
+        $this->assertSame('1400000000', $tencentRequest['SmsSdkAppId']);
+    }
+
+    public function test_teacher_can_send_sms_without_sending_email(): void
+    {
+        Http::fake();
+        [$teacher, $student] = $this->createTeacherAndStudent();
+        EmailNotificationPreference::create([
+            'user_id' => $teacher->id,
+            'enabled' => true,
+            'email_enabled' => false,
+            'sms_enabled' => true,
+            'enabled_events' => ['attendance_absent'],
+        ]);
+        $this->configureSms();
+
+        $provider = \Mockery::mock(AlibabaSmsProvider::class);
+        $provider->shouldReceive('send')
+            ->once()
+            ->withArgs(function ($config, $phone, $named, $ordered) {
+                return $phone === '13800000000'
+                    && $named['student_name'] === '张三'
+                    && $named['event_name'] === '旷课'
+                    && $ordered[0] === '张三';
+            })
+            ->andReturn(['success' => true, 'id' => 'sms_123', 'provider' => 'aliyun']);
+        $this->app->instance(AlibabaSmsProvider::class, $provider);
+
+        $firstRecord = $this->createAttendanceRecord($student, 1, 'absent');
+        $secondRecord = $this->createAttendanceRecord($student, 2, 'absent');
+        $result = app(ParentEmailNotificationService::class)->sendAttendanceNotification($secondRecord);
+
+        $this->assertSame('duplicate', $result['skipped']);
+        $this->assertSame(1, SmsNotificationLog::count());
+        $this->assertSame(0, EmailNotificationLog::count());
+        Http::assertNothingSent();
+    }
+
     private function configureResend(): void
     {
         $service = app(ResendEmailService::class);
@@ -153,6 +222,19 @@ class ResendParentNotificationTest extends TestCase
         SystemSetting::set('resend_from_name', 'Test School');
         SystemSetting::set('resend_subject_template', ResendEmailService::DEFAULT_SUBJECT);
         SystemSetting::set('resend_html_template', ResendEmailService::DEFAULT_HTML);
+        $service->resetConfiguration();
+    }
+
+    private function configureSms(): void
+    {
+        $service = app(SmsService::class);
+        $service->storeCredential('sms_aliyun_access_key_id', 'test-access-key-id');
+        $service->storeCredential('sms_aliyun_access_key_secret', 'test-access-key-secret');
+        SystemSetting::set('sms_enabled', '1');
+        SystemSetting::set('sms_provider', 'aliyun');
+        SystemSetting::set('sms_aliyun_sign_name', '测试签名');
+        SystemSetting::set('sms_aliyun_template_code', 'SMS_123456');
+        SystemSetting::set('sms_template_variables', json_encode(SmsService::DEFAULT_TEMPLATE_VARIABLES));
         $service->resetConfiguration();
     }
 
@@ -188,6 +270,7 @@ class ResendParentNotificationTest extends TestCase
             'class_id' => $class->id,
             'student_no' => '2026001',
             'gender' => 'male',
+            'parent_contact' => '13800000000',
             'parent_email' => 'parent@example.com',
         ]);
 

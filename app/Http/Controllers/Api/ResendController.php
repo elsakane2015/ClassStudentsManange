@@ -8,6 +8,7 @@ use App\Models\Student;
 use App\Models\SystemSetting;
 use App\Services\ParentEmailNotificationService;
 use App\Services\ResendEmailService;
+use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -16,7 +17,8 @@ class ResendController extends Controller
 {
     public function __construct(
         private ResendEmailService $resend,
-        private ParentEmailNotificationService $notifications
+        private ParentEmailNotificationService $notifications,
+        private SmsService $sms
     ) {
     }
 
@@ -116,14 +118,22 @@ class ResendController extends Controller
                 $query->whereNull('parent_email')->orWhere('parent_email', '');
             })
             ->count();
+        $students = (clone $studentQuery)->get(['parent_contact']);
+        $missingParentPhoneCount = $students
+            ->filter(fn ($student) => !$this->sms->normalizeChinesePhone($student->parent_contact))
+            ->count();
 
         return response()->json([
             'enabled' => $preference['enabled'],
+            'email_enabled' => $preference['email_enabled'],
+            'sms_enabled' => $preference['sms_enabled'],
             'enabled_events' => $preference['enabled_events'],
             'events' => $this->notifications->eventOptions($teacher),
             'resend_ready' => $this->resend->isReady(),
+            'sms_ready' => $this->sms->isReady(),
             'student_count' => $studentCount,
             'missing_parent_email_count' => $missingParentEmailCount,
+            'missing_parent_phone_count' => $missingParentPhoneCount,
         ]);
     }
 
@@ -134,6 +144,8 @@ class ResendController extends Controller
 
         $validated = $request->validate([
             'enabled' => 'required|boolean',
+            'email_enabled' => 'required|boolean',
+            'sms_enabled' => 'required|boolean',
             'enabled_events' => 'required|array',
             'enabled_events.*' => 'required|string',
         ]);
@@ -147,12 +159,14 @@ class ResendController extends Controller
             ['user_id' => $teacher->id],
             [
                 'enabled' => $validated['enabled'],
+                'email_enabled' => $validated['email_enabled'],
+                'sms_enabled' => $validated['sms_enabled'],
                 'enabled_events' => array_values(array_unique($validated['enabled_events'])),
             ]
         );
         $this->notifications->clearPreferenceCache($teacher->id);
 
-        return response()->json(['message' => '邮件通知规则已保存']);
+        return response()->json(['message' => '家长通知规则已保存']);
     }
 
     private function authorizeAdmin(Request $request, bool $write): void
