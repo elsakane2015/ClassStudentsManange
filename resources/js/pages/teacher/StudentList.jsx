@@ -2,8 +2,26 @@ import React, { useEffect, useState } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
-import { PlusIcon, ArrowUpTrayIcon, TrashIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import {
+    ArrowUpTrayIcon,
+    CheckIcon,
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    PencilSquareIcon,
+    PlusIcon,
+    TrashIcon,
+    XMarkIcon,
+} from '@heroicons/react/24/outline';
 import useAuthStore from '../../store/authStore';
+
+const createDraft = (student) => ({
+    id: student.id,
+    gender: student.gender || 'male',
+    is_boarding: Boolean(student.is_boarding),
+    email: student.email || '',
+    parent_contact: student.parent_contact || '',
+    parent_email: student.parent_email || '',
+});
 
 export default function StudentList() {
     const { user } = useAuthStore();
@@ -23,12 +41,16 @@ export default function StudentList() {
 
     // Selection
     const [selectedIds, setSelectedIds] = useState([]);
+    const [batchEditing, setBatchEditing] = useState(false);
+    const [drafts, setDrafts] = useState({});
+    const [savingBatch, setSavingBatch] = useState(false);
+    const [notice, setNotice] = useState(null);
 
     // Form State
     const [showForm, setShowForm] = useState(false);
     const [editingStudent, setEditingStudent] = useState(null);
     const [formData, setFormData] = useState({
-        name: '', student_no: '', gender: 'male', parent_contact: '', parent_email: '',
+        name: '', student_no: '', gender: 'male', is_boarding: false, parent_contact: '', parent_email: '',
         class_id: '', email: '', password: ''
     });
 
@@ -56,6 +78,8 @@ export default function StudentList() {
                 setMeta(res.data.meta);
             }
             setSelectedIds([]);
+            setBatchEditing(false);
+            setDrafts({});
         } catch (error) {
             console.error(error);
         } finally {
@@ -146,6 +170,7 @@ export default function StudentList() {
             name: student.name,
             student_no: student.student_no,
             gender: student.gender,
+            is_boarding: Boolean(student.is_boarding),
             parent_contact: student.parent_contact,
             parent_email: student.parent_email || '',
             class_id: student.class_id || '',
@@ -157,7 +182,7 @@ export default function StudentList() {
 
     const openCreate = () => {
         setEditingStudent(null);
-        setFormData({ name: '', student_no: '', gender: 'male', parent_contact: '', parent_email: '', class_id: classes.length === 1 ? classes[0].id : '', email: '', password: 'password123' });
+        setFormData({ name: '', student_no: '', gender: 'male', is_boarding: false, parent_contact: '', parent_email: '', class_id: classes.length === 1 ? classes[0].id : '', email: '', password: 'password123' });
         setShowForm(true);
     };
 
@@ -172,7 +197,56 @@ export default function StudentList() {
             setShowForm(false);
             fetchStudents(meta.current_page);
         } catch (error) {
-            alert('操作失败: ' + (error.response?.data?.error || error.message));
+            const validationErrors = error.response?.data?.errors;
+            const firstError = validationErrors ? Object.values(validationErrors).flat()[0] : null;
+            alert('操作失败: ' + (error.response?.data?.error || firstError || error.message));
+        }
+    };
+
+    const startBatchEditing = () => {
+        setDrafts(Object.fromEntries(students.map(student => [student.id, createDraft(student)])));
+        setSelectedIds([]);
+        setNotice(null);
+        setBatchEditing(true);
+    };
+
+    const cancelBatchEditing = () => {
+        setDrafts({});
+        setBatchEditing(false);
+        setNotice(null);
+    };
+
+    const updateDraft = (studentId, field, value) => {
+        setDrafts(prev => ({
+            ...prev,
+            [studentId]: { ...prev[studentId], [field]: value },
+        }));
+    };
+
+    const changedDrafts = students
+        .filter(student => {
+            const draft = drafts[student.id];
+            if (!draft) return false;
+            const original = createDraft(student);
+            return Object.keys(original).some(key => original[key] !== draft[key]);
+        })
+        .map(student => drafts[student.id]);
+
+    const saveBatchChanges = async () => {
+        if (changedDrafts.length === 0) return;
+
+        setSavingBatch(true);
+        setNotice(null);
+        try {
+            const response = await axios.post('/students/bulk-update', { students: changedDrafts });
+            setNotice({ type: 'success', text: response.data.message });
+            await fetchStudents(meta.current_page);
+        } catch (error) {
+            const validationErrors = error.response?.data?.errors;
+            const firstError = validationErrors ? Object.values(validationErrors).flat()[0] : null;
+            setNotice({ type: 'error', text: error.response?.data?.message || firstError || '保存修改失败' });
+        } finally {
+            setSavingBatch(false);
         }
     };
 
@@ -206,23 +280,44 @@ export default function StudentList() {
                     <h1 className="text-xl font-semibold text-gray-900">学生管理</h1>
                     <p className="mt-2 text-sm text-gray-700">查看及管理您班级的学生信息。</p>
                 </div>
-                <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none space-x-3">
-                    <button
-                        onClick={openCreate}
-                        className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700"
-                    >
-                        <PlusIcon className="h-4 w-4 mr-2" />
-                        手动添加
-                    </button>
-                    <Link
-                        to="/teacher/import"
-                        className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-                    >
-                        <ArrowUpTrayIcon className="h-4 w-4 mr-2" />
-                        批量导入
-                    </Link>
+                <div className="mt-4 flex flex-wrap gap-3 sm:ml-16 sm:mt-0 sm:flex-none sm:justify-end">
+                    {batchEditing ? (
+                        <>
+                            <button type="button" onClick={cancelBatchEditing} disabled={savingBatch} className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50">
+                                <XMarkIcon className="mr-2 h-4 w-4" />
+                                取消
+                            </button>
+                            <button type="button" onClick={saveBatchChanges} disabled={savingBatch || changedDrafts.length === 0} className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
+                                <CheckIcon className="mr-2 h-4 w-4" />
+                                {savingBatch ? '保存中...' : `保存修改${changedDrafts.length ? ` (${changedDrafts.length})` : ''}`}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            {students.length > 0 && (
+                                <button type="button" onClick={startBatchEditing} className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">
+                                    <PencilSquareIcon className="mr-2 h-4 w-4" />
+                                    修改
+                                </button>
+                            )}
+                            <button onClick={openCreate} className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700">
+                                <PlusIcon className="mr-2 h-4 w-4" />
+                                手动添加
+                            </button>
+                            <Link to="/teacher/import" className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">
+                                <ArrowUpTrayIcon className="mr-2 h-4 w-4" />
+                                批量导入
+                            </Link>
+                        </>
+                    )}
                 </div>
             </div>
+
+            {notice && (
+                <div className={`mt-4 rounded-md px-4 py-3 text-sm ${notice.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                    {notice.text}
+                </div>
+            )}
 
             {/* Filters - Only show for admin/department manager */}
             {(isAdmin || isDepartmentManager) && (
@@ -237,6 +332,7 @@ export default function StudentList() {
                         ) : (
                             <select
                                 value={filterDepartment}
+                                disabled={batchEditing}
                                 onChange={(e) => { setFilterDepartment(e.target.value); setFilterClass(''); }}
                                 className="rounded-md border-gray-300 shadow-sm text-sm p-2 border min-w-[150px]"
                             >
@@ -251,6 +347,7 @@ export default function StudentList() {
                         <label className="block text-sm font-medium text-gray-700 mb-1">入学年份</label>
                         <select
                             value={filterYear}
+                            disabled={batchEditing}
                             onChange={(e) => { setFilterYear(e.target.value); setFilterClass(''); }}
                             className="rounded-md border-gray-300 shadow-sm text-sm p-2 border min-w-[120px]"
                         >
@@ -264,6 +361,7 @@ export default function StudentList() {
                         <label className="block text-sm font-medium text-gray-700 mb-1">班级</label>
                         <select
                             value={filterClass}
+                            disabled={batchEditing}
                             onChange={(e) => setFilterClass(e.target.value)}
                             className="rounded-md border-gray-300 shadow-sm text-sm p-2 border min-w-[150px]"
                         >
@@ -315,7 +413,7 @@ export default function StudentList() {
             {/* Table - only show when shouldShowStudents */}
             {shouldShowStudents && (
                 <div className="mt-4 flex flex-col">
-                    <div className="-my-2 -mx-4 overflow-x-auto sm:-mx-6 lg:-mx-8">
+                    <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
                         <div className="inline-block min-w-full py-2 align-middle md:px-6 lg:px-8">
                             <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
                                 <table className="min-w-full divide-y divide-gray-300">
@@ -326,53 +424,82 @@ export default function StudentList() {
                                                     type="checkbox"
                                                     checked={selectedIds.length === students.length && students.length > 0}
                                                     onChange={toggleSelectAll}
+                                                    disabled={batchEditing}
                                                     className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                                                 />
                                             </th>
-                                            <th scope="col" className="py-3.5 pl-2 pr-3 text-left text-sm font-semibold text-gray-900">姓名</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">学号</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">性别</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">系部</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">入学年份</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">班级</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">账号(Email)</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长联系方式</th>
-                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长邮箱</th>
+                                            <th scope="col" className="whitespace-nowrap py-3.5 pl-2 pr-3 text-left text-sm font-semibold text-gray-900">姓名</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">学号</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">性别</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">住宿</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">系部</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">入学年份</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">班级</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">账号(Email)</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长联系方式</th>
+                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长邮箱</th>
                                             <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6"><span className="sr-only">操作</span></th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-200 bg-white">
-                                        {students.map((student) => (
+                                        {students.map((student) => {
+                                            const draft = drafts[student.id] || createDraft(student);
+                                            return (
                                             <tr key={student.id} className={selectedIds.includes(student.id) ? 'bg-indigo-50' : ''}>
                                                 <td className="py-4 pl-4 pr-2">
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedIds.includes(student.id)}
                                                         onChange={() => toggleSelect(student.id)}
+                                                        disabled={batchEditing}
                                                         className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                                                     />
                                                 </td>
                                                 <td className="whitespace-nowrap py-4 pl-2 pr-3 text-sm font-medium text-gray-900">{student.name}</td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.student_no}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.gender === 'male' ? '男' : '女'}</td>
+                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                                    {batchEditing ? (
+                                                        <select aria-label={`${student.name}的性别`} value={draft.gender} onChange={event => updateDraft(student.id, 'gender', event.target.value)} className="w-20 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
+                                                            <option value="male">男</option>
+                                                            <option value="female">女</option>
+                                                            <option value="other">其他</option>
+                                                        </select>
+                                                    ) : (student.gender === 'male' ? '男' : student.gender === 'female' ? '女' : '其他')}
+                                                </td>
+                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                                    {batchEditing ? (
+                                                        <select aria-label={`${student.name}的住宿状态`} value={draft.is_boarding ? '1' : '0'} onChange={event => updateDraft(student.id, 'is_boarding', event.target.value === '1')} className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
+                                                            <option value="0">走读</option>
+                                                            <option value="1">住宿</option>
+                                                        </select>
+                                                    ) : (student.is_boarding ? '是' : '否')}
+                                                </td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.department_name}</td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.enrollment_year || '-'}</td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.class_name}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.email || '-'}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.parent_contact || '-'}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.parent_email || '-'}</td>
+                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                                    {batchEditing ? <input aria-label={`${student.name}的账号`} type="email" value={draft.email} onChange={event => updateDraft(student.id, 'email', event.target.value)} className="w-52 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.email || '-')}
+                                                </td>
+                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                                    {batchEditing ? <input aria-label={`${student.name}的家长联系方式`} type="tel" value={draft.parent_contact} onChange={event => updateDraft(student.id, 'parent_contact', event.target.value)} className="w-36 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.parent_contact || '-')}
+                                                </td>
+                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                                    {batchEditing ? <input aria-label={`${student.name}的家长邮箱`} type="email" value={draft.parent_email} onChange={event => updateDraft(student.id, 'parent_email', event.target.value)} className="w-52 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.parent_email || '-')}
+                                                </td>
                                                 <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6 space-x-2">
-                                                    <button onClick={() => handleEdit(student)} className="text-indigo-600 hover:text-indigo-900">编辑</button>
-                                                    <button
-                                                        onClick={() => toggleClassAdmin(student)}
-                                                        className={student.is_class_admin ? "text-orange-600 hover:text-orange-900" : "text-blue-600 hover:text-blue-900"}
-                                                    >
-                                                        {student.is_class_admin ? '取消班级管理员' : '指定班级管理员'}
-                                                    </button>
-                                                    <button onClick={() => handleDelete(student.id)} className="text-red-600 hover:text-red-900">删除</button>
+                                                    {!batchEditing && (
+                                                        <>
+                                                            <button onClick={() => handleEdit(student)} className="text-indigo-600 hover:text-indigo-900">编辑</button>
+                                                            <button onClick={() => toggleClassAdmin(student)} className={student.is_class_admin ? "text-orange-600 hover:text-orange-900" : "text-blue-600 hover:text-blue-900"}>
+                                                                {student.is_class_admin ? '取消班级管理员' : '指定班级管理员'}
+                                                            </button>
+                                                            <button onClick={() => handleDelete(student.id)} className="text-red-600 hover:text-red-900">删除</button>
+                                                        </>
+                                                    )}
                                                 </td>
                                             </tr>
-                                        ))}
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -390,7 +517,7 @@ export default function StudentList() {
                     <div className="flex gap-2">
                         <button
                             onClick={() => fetchStudents(meta.current_page - 1)}
-                            disabled={meta.current_page === 1}
+                            disabled={meta.current_page === 1 || batchEditing}
                             className="inline-flex items-center px-3 py-1.5 rounded border border-gray-300 bg-white text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                         >
                             <ChevronLeftIcon className="h-4 w-4 mr-1" />
@@ -398,7 +525,7 @@ export default function StudentList() {
                         </button>
                         <button
                             onClick={() => fetchStudents(meta.current_page + 1)}
-                            disabled={meta.current_page === meta.last_page}
+                            disabled={meta.current_page === meta.last_page || batchEditing}
                             className="inline-flex items-center px-3 py-1.5 rounded border border-gray-300 bg-white text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                         >
                             下一页
@@ -430,8 +557,16 @@ export default function StudentList() {
                                         <select value={formData.gender} onChange={e => setFormData({ ...formData, gender: e.target.value })} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border">
                                             <option value="male">男</option>
                                             <option value="female">女</option>
+                                            <option value="other">其他</option>
                                         </select>
                                     </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">住宿状态</label>
+                                    <select value={formData.is_boarding ? '1' : '0'} onChange={e => setFormData({ ...formData, is_boarding: e.target.value === '1' })} className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm sm:text-sm">
+                                        <option value="0">走读生</option>
+                                        <option value="1">住宿生</option>
+                                    </select>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">家长联系方式</label>

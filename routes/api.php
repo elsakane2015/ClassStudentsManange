@@ -126,6 +126,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/students/debug', [StudentController::class, 'debug']); // Debug
     Route::get('/students/import-template', [StudentController::class, 'template']);
     Route::post('/students/import', [StudentController::class, 'import']);
+    Route::post('/students/bulk-update', [StudentController::class, 'bulkUpdate']);
     Route::apiResource('students', StudentController::class); // Added full CRUD for students
     Route::post('/students/{id}/toggle-manager', [StudentController::class, 'toggleManager']);
     Route::get('/student/is-class-admin', [StudentController::class, 'isClassAdmin']);

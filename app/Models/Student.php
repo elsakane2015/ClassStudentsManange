@@ -8,10 +8,11 @@ use Illuminate\Database\Eloquent\Model;
 class Student extends Model
 {
     /** @use HasFactory<\Database\Factories\StudentFactory> */
-    protected $fillable = ['user_id', 'class_id', 'school_id', 'student_no', 'gender', 'parent_contact', 'parent_email', 'is_manager', 'is_class_admin'];
-    
+    protected $fillable = ['user_id', 'class_id', 'school_id', 'student_no', 'gender', 'is_boarding', 'parent_contact', 'parent_email', 'is_manager', 'is_class_admin'];
+
     protected $casts = [
         'birthdate' => 'date',
+        'is_boarding' => 'boolean',
         'is_manager' => 'boolean',
         'is_class_admin' => 'boolean',
     ];

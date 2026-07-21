@@ -9,11 +9,11 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
-use Maatwebsite\Excel\Concerns\WithValidation;
 
 class StudentsImport implements ToCollection, WithHeadingRow
 {
     protected $classId;
+
     protected $schoolId;
 
     public function __construct($classId, $schoolId)
@@ -29,7 +29,7 @@ class StudentsImport implements ToCollection, WithHeadingRow
             $deptName = $row['department_name'] ?? null;
             $gradeName = $row['grade_name'] ?? null;
             $className = $row['class_name'] ?? null;
-            
+
             $name = $row['name'] ?? null;
             $email = $row['email'] ?? null;
             $password = $row['password'] ?? null;
@@ -37,13 +37,14 @@ class StudentsImport implements ToCollection, WithHeadingRow
             $phone = $row['parent_contact'] ?? null;
             $parentEmail = $row['parent_email'] ?? null;
             $gender = $row['gender'] ?? null;
+            $isBoarding = $this->parseBoolean($row['is_boarding'] ?? false, $index);
             $birthdate = $row['birthdate'] ?? null;
 
-            if (!$name || !$studentNo || !$email || !$password) {
-                 continue; 
+            if (! $name || ! $studentNo || ! $email || ! $password) {
+                continue;
             }
 
-            if ($parentEmail && !filter_var($parentEmail, FILTER_VALIDATE_EMAIL)) {
+            if ($parentEmail && ! filter_var($parentEmail, FILTER_VALIDATE_EMAIL)) {
                 throw new \Exception('导入失败：第 '.($index + 2).' 行家长邮箱格式不正确。');
             }
 
@@ -55,7 +56,7 @@ class StudentsImport implements ToCollection, WithHeadingRow
                 $dept = \App\Models\Department::firstOrCreate(
                     ['school_id' => $this->schoolId, 'name' => $deptName]
                 );
-                
+
                 $grade = \App\Models\Grade::firstOrCreate(
                     ['school_id' => $this->schoolId, 'name' => $gradeName]
                 );
@@ -65,54 +66,29 @@ class StudentsImport implements ToCollection, WithHeadingRow
                         'school_id' => $this->schoolId,
                         'department_id' => $dept->id,
                         'grade_id' => $grade->id,
-                        'name' => $className
+                        'name' => $className,
                     ],
                     // Optional: Assign current user (teacher) if creating new? Or leave null.
                 );
                 $targetClassId = $class->id;
             }
 
-            if (!$targetClassId) {
-                throw new \Exception("导入失败：第 " . ($index + 2) . " 行缺少班级信息 (系部/年级/班级)，且未指定默认班级。");
+            if (! $targetClassId) {
+                throw new \Exception('导入失败：第 '.($index + 2).' 行缺少班级信息 (系部/年级/班级)，且未指定默认班级。');
             }
 
-            // 1. Check for Duplicate Student No in School
-            $exists = Student::where('school_id', $this->schoolId)
-                ->where('student_no', $studentNo)
-                ->where('id', '!=', '?') // Logic limitation: create vs update. If update, we should exclude self.
-                ->exists();
-            
-            // Actually, if we use updateOrCreate below, we handle existing students.
-            // But if student exists, we might move them to a new class?
-            // The constraint `students_school_id_student_no_unique` will trigger if we try to create duplicate.
-            // But updateOrCreate prevents that.
-            // The only issue is if `student_no` exists but mapped to DIFFERENT user.
-            
-            // Let's rely on updateOrCreate logic based on User ID or unique search.
-            
-            // 2. Create/Update User
-            $user = User::where('email', $email)->first();
-            
-            // If user exists, check if it's the SAME student?
-            // Hard to verify without student_no check.
-            // Risk: User A exists. Import says User A has student_no 123.
-            // If another Student B has student_no 123, we have a conflict.
-            
-            // Simplified logic: Email is the key.
+            // Email is the account key; an existing account updates its student profile.
             $user = User::updateOrCreate(
                 ['email' => $email],
                 [
                     'uuid' => (string) Str::uuid(),
                     'name' => $name,
-                    'password' => Hash::make((string)$password),
+                    'password' => Hash::make((string) $password),
                     'role' => 'student',
                     'status' => true,
                 ]
             );
 
-            // 3. Create/Update Student
-            // Note: If student exists in another class, this will MOVE them to the new class.
-            // This is usually desired behavior for "Update".
             Student::updateOrCreate(
                 ['user_id' => $user->id],
                 [
@@ -120,11 +96,29 @@ class StudentsImport implements ToCollection, WithHeadingRow
                     'class_id' => $targetClassId,
                     'student_no' => $studentNo,
                     'gender' => $gender,
+                    'is_boarding' => $isBoarding,
                     'birthdate' => $birthdate,
                     'parent_contact' => $phone,
                     'parent_email' => $parentEmail,
                 ]
             );
         }
+    }
+
+    private function parseBoolean(mixed $value, int $index): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        $normalized = strtolower(trim((string) $value));
+        if (in_array($normalized, ['', '0', 'false', 'no', '否', '非住宿'], true)) {
+            return false;
+        }
+        if (in_array($normalized, ['1', 'true', 'yes', '是', '住宿'], true)) {
+            return true;
+        }
+
+        throw new \Exception('导入失败：第 '.($index + 2).' 行 is_boarding 应填写 1/0、是/否或 yes/no。');
     }
 }
