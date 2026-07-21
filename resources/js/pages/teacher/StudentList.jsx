@@ -54,7 +54,8 @@ export default function StudentList() {
     const [eveningLeaveStudent, setEveningLeaveStudent] = useState(null);
     const [eveningPeriods, setEveningPeriods] = useState([]);
     const [eveningStatuses, setEveningStatuses] = useState([]);
-    const [eveningLeaveForm, setEveningLeaveForm] = useState({ date: '', period_id: '', status_id: '', destination: '', reason: '' });
+    const [eveningLeaveTypes, setEveningLeaveTypes] = useState([]);
+    const [eveningLeaveForm, setEveningLeaveForm] = useState({ date: '', period_id: '', leave_type_id: '', status_id: '', destination: '', reason: '' });
     const [formData, setFormData] = useState({
         name: '', student_no: '', gender: 'male', is_boarding: false, parent_contact: '', parent_email: '',
         class_id: '', email: '', password: ''
@@ -245,14 +246,24 @@ export default function StudentList() {
         date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
         const currentDate = date.toISOString().slice(0, 10);
         try {
-            const [periodRes, statusRes] = await Promise.all([
+            const [periodRes, statusRes, leaveTypeRes] = await Promise.all([
                 axios.get('/evening-study/periods'),
                 axios.get('/evening-study-statuses'),
+                axios.get('/leave-types'),
             ]);
-            const availableStatuses = (statusRes.data.statuses || []).filter(status => !status.is_default);
+            const availableStatuses = (statusRes.data.statuses || []).filter(status => status.student_requestable);
+            const availableLeaveTypes = (leaveTypeRes.data || []).filter(type => type.is_active && type.student_requestable);
             setEveningPeriods(periodRes.data || []);
             setEveningStatuses(availableStatuses);
-            setEveningLeaveForm({ date: currentDate, period_id: String(periodRes.data?.[0]?.id || ''), status_id: String(availableStatuses[0]?.id || ''), destination: '', reason: '' });
+            setEveningLeaveTypes(availableLeaveTypes);
+            setEveningLeaveForm({
+                date: currentDate,
+                period_id: String(periodRes.data?.[0]?.id || ''),
+                leave_type_id: String(availableLeaveTypes[0]?.id || ''),
+                status_id: String(availableStatuses[0]?.id || ''),
+                destination: '',
+                reason: '',
+            });
             setEveningLeaveStudent(student);
         } catch (error) {
             alert(error.response?.data?.message || '夜自习配置加载失败');
@@ -266,6 +277,7 @@ export default function StudentList() {
                 student_id: eveningLeaveStudent.id,
                 ...eveningLeaveForm,
                 period_id: Number(eveningLeaveForm.period_id),
+                leave_type_id: Number(eveningLeaveForm.leave_type_id),
                 status_id: Number(eveningLeaveForm.status_id),
             });
             setEveningLeaveStudent(null);
@@ -720,7 +732,7 @@ export default function StudentList() {
                             <h3 className="text-lg font-semibold text-gray-900">{eveningLeaveStudent.name} · 标记夜自习请假</h3>
                             <form onSubmit={saveEveningLeave} className="mt-4 space-y-4">
                                 <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm text-gray-700">日期<input required type="date" value={eveningLeaveForm.date} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, date: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" /></label><label className="text-sm text-gray-700">夜自习节次<select required value={eveningLeaveForm.period_id} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, period_id: e.target.value })} className="mt-1 w-full rounded-md border-gray-300">{eveningPeriods.map(period => <option key={period.id} value={period.id}>{period.name}</option>)}</select></label></div>
-                                <label className="block text-sm text-gray-700">状态<select required value={eveningLeaveForm.status_id} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, status_id: e.target.value })} className="mt-1 w-full rounded-md border-gray-300">{eveningStatuses.map(status => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
+                                <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm text-gray-700">请假类型<select required value={eveningLeaveForm.leave_type_id} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, leave_type_id: e.target.value })} className="mt-1 w-full rounded-md border-gray-300">{eveningLeaveTypes.map(type => <option key={type.id} value={type.id}>{type.name}</option>)}</select></label><label className="block text-sm text-gray-700">夜自习状态<select required value={eveningLeaveForm.status_id} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, status_id: e.target.value })} className="mt-1 w-full rounded-md border-gray-300">{eveningStatuses.map(status => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label></div>
                                 <label className="block text-sm text-gray-700">具体去向<input required value={eveningLeaveForm.destination} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, destination: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" placeholder="宿舍、家中或活动地点" /></label>
                                 <label className="block text-sm text-gray-700">备注<textarea rows="3" value={eveningLeaveForm.reason} onChange={e => setEveningLeaveForm({ ...eveningLeaveForm, reason: e.target.value })} className="mt-1 w-full rounded-md border-gray-300" /></label>
                                 <div className="flex justify-end gap-3"><button type="button" onClick={() => setEveningLeaveStudent(null)} className="rounded-md border border-gray-300 px-4 py-2">取消</button><button type="submit" className="rounded-md bg-indigo-600 px-4 py-2 text-white">保存标记</button></div>

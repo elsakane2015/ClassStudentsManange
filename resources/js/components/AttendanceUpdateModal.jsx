@@ -119,6 +119,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [periods, setPeriods] = useState([]); // 节次列表
     const [timeSlots, setTimeSlots] = useState([]); // 时段列表（上午/下午/全天）
+    const [eveningStatuses, setEveningStatuses] = useState([]);
     const [selectedPeriod, setSelectedPeriod] = useState(null); // 选中的时段ID，null表示全天
 
     // Dynamic Input State
@@ -146,7 +147,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                         const periodsData = typeof settingsObj.attendance_periods === 'string'
                             ? JSON.parse(settingsObj.attendance_periods)
                             : settingsObj.attendance_periods;
-                        setPeriods(Array.isArray(periodsData) ? periodsData.filter(period => (period.scene || 'regular') === 'regular' && (period.is_active ?? true)) : []);
+                        setPeriods(Array.isArray(periodsData) ? periodsData.filter(period => period.is_active ?? true) : []);
                     } catch (e) {
                         console.warn('Failed to parse attendance_periods', e);
                         setPeriods([]);
@@ -161,6 +162,10 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                 slots.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
                 setTimeSlots(slots);
             }).catch(e => console.error("Failed to load time slots"));
+
+            axios.get('/evening-study-statuses').then(res => {
+                setEveningStatuses((res.data.statuses || []).filter(status => status.is_active && !status.is_default));
+            }).catch(e => console.error("Failed to load evening study statuses"));
         }
     }, [isOpen, date]);
 
@@ -221,6 +226,59 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             const next = new Set(selectedStudentIds);
             visibleIds.forEach(id => next.add(id));
             setSelectedStudentIds(next);
+        }
+    };
+
+    const selectedStudents = students.filter(student => selectedStudentIds.has(student.id));
+    const selectedStudentsAreBoarding = selectedStudents.length > 0
+        && selectedStudents.every(student => Boolean(student.is_boarding));
+    const eveningPeriodIds = new Set(
+        periods.filter(period => period.scene === 'evening_study').map(period => Number(period.id))
+    );
+    const regularPeriods = periods.filter(period => (period.scene || 'regular') === 'regular');
+    const isEveningSlot = slot => (slot.period_ids || []).some(periodId => eveningPeriodIds.has(Number(periodId)));
+
+    const executeEveningStudyUpdate = async (details) => {
+        const nightPeriodIds = (details.period_ids || [])
+            .map(Number)
+            .filter(periodId => eveningPeriodIds.has(periodId));
+        const destination = (details.destination || '').trim();
+
+        if (!selectedStudentsAreBoarding) {
+            alert('夜自习仅适用于住宿生，请只选择住宿生后重试');
+            return;
+        }
+        if (nightPeriodIds.length === 0 || !details.evening_status_id) {
+            alert('请选择夜自习节次和状态');
+            return;
+        }
+        if (!destination) {
+            alert('请填写夜自习请假的具体去向');
+            return;
+        }
+
+        try {
+            for (const studentId of selectedStudentIds) {
+                for (const periodId of nightPeriodIds) {
+                    await axios.post('/evening-study/teacher-leave', {
+                        student_id: studentId,
+                        date: formattedDate,
+                        period_id: periodId,
+                        leave_type_id: pendingAction.leaveType.id,
+                        status_id: Number(details.evening_status_id),
+                        destination,
+                        reason: (details.reason || '').trim() || null,
+                    });
+                }
+            }
+
+            setInputModalOpen(false);
+            setPendingAction(null);
+            setInputData({});
+            fetchAttendance();
+        } catch (error) {
+            console.error('Failed to update evening study attendance', error);
+            alert('更新失败: ' + (error.response?.data?.message || error.message));
         }
     };
 
@@ -569,12 +627,17 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const handleInputConfirm = () => {
         if (!pendingAction) return;
 
+        if ((inputData.period_ids || []).some(periodId => eveningPeriodIds.has(Number(periodId)))) {
+            executeEveningStudyUpdate(inputData);
+            return;
+        }
+
         // 如果有periods（旷课），需要将ID转换为节次编号
         let enhancedInputData = { ...inputData };
         if (inputData.periods && Array.isArray(inputData.periods)) {
             // 创建ID到索引的映射
             const periodNumbers = inputData.periods.map(periodId => {
-                const index = periods.findIndex(p => p.id === periodId);
+                const index = regularPeriods.findIndex(p => p.id === periodId);
                 return index + 1; // 节次编号 = 索引 + 1
             });
 
@@ -1065,7 +1128,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                 defaultValue=""
                                                             >
                                                                 <option value="" disabled>请选择节次</option>
-                                                                {periods.map((p, index) => (
+                                                                {regularPeriods.map((p, index) => (
                                                                     <option key={p.id} value={p.id}>第{index + 1}节</option>
                                                                 ))}
                                                             </select>
@@ -1117,14 +1180,14 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                     <label className="block text-sm font-medium text-gray-700 mb-2">选择节次</label>
                                                     <div className="grid grid-cols-4 gap-2">
                                                         {(() => {
-                                                            console.log('[Absent Periods] Rendering periods:', periods.map((p, i) => ({
+                                                            console.log('[Absent Periods] Rendering periods:', regularPeriods.map((p, i) => ({
                                                                 id: p.id,
                                                                 name: p.name,
                                                                 ordinal: p.ordinal,
                                                                 index: i,
                                                                 display: `第${i + 1}节`
                                                             })));
-                                                            return periods.map((p, index) => (
+                                                            return regularPeriods.map((p, index) => (
                                                                 <label key={p.id} className={`flex items-center justify-center p-2 border rounded cursor-pointer ${inputData.periods?.includes(p.id) ? 'bg-indigo-100 border-indigo-500 text-indigo-700' : 'hover:bg-gray-50'}`}>
                                                                     <input
                                                                         type="checkbox"
@@ -1169,7 +1232,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                             );
                                             const filteredSlots = timeSlots.filter(slot => {
                                                 const slotKey = `time_slot_${slot.id}`;
-                                                return allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id));
+                                                const configuredForLeaveType = allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id));
+                                                return configuredForLeaveType || (selectedStudentsAreBoarding && isEveningSlot(slot));
                                             });
 
                                             if (filteredSlots.length === 0) {
@@ -1184,18 +1248,22 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                 <div className="space-y-3">
                                                     <label className="block text-sm font-medium text-gray-700">选择时段</label>
                                                     <div className="flex flex-wrap gap-2">
-                                                        {filteredSlots.map(slot => (
+                                                        {filteredSlots.map(slot => {
+                                                            const eveningSlot = isEveningSlot(slot);
+                                                            const defaultStatus = eveningStatuses[0];
+                                                            return (
                                                             <button
                                                                 key={slot.id}
                                                                 type="button"
                                                                 onClick={() => setInputData({
-                                                                    ...inputData,
                                                                     time_slot_id: slot.id,
                                                                     time_slot_name: slot.name,
                                                                     option: `time_slot_${slot.id}`,
                                                                     option_label: slot.name,
                                                                     option_periods: (slot.period_ids || []).length || 1,
-                                                                    period_ids: slot.period_ids || []
+                                                                    period_ids: slot.period_ids || [],
+                                                                    is_evening_study: eveningSlot,
+                                                                    evening_status_id: eveningSlot ? defaultStatus?.id || '' : undefined,
                                                                 })}
                                                                 className={`px-4 py-2 rounded-lg border text-sm transition-colors ${inputData.time_slot_id === slot.id
                                                                     ? 'bg-indigo-600 text-white border-indigo-600'
@@ -1203,14 +1271,57 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                     }`}
                                                             >
                                                                 {slot.name}
+                                                                {eveningSlot && <span className="ml-1 text-xs">住宿生</span>}
                                                                 <span className={`text-xs ml-1 ${inputData.time_slot_id === slot.id ? 'text-indigo-200' : 'text-gray-400'}`}>
                                                                     ({(slot.period_ids || []).length || 1}节)
                                                                 </span>
                                                             </button>
-                                                        ))}
+                                                            );
+                                                        })}
                                                     </div>
 
-                                                    {inputData.time_slot_id && (
+                                                    {inputData.is_evening_study && (() => {
+                                                        const statusOptions = eveningStatuses;
+                                                        return (
+                                                            <div className="space-y-3 rounded-md border border-cyan-200 bg-cyan-50 p-3">
+                                                                <div>
+                                                                    <label className="block text-sm font-medium text-gray-700 mb-1">夜自习状态</label>
+                                                                    {statusOptions.length > 0 ? (
+                                                                        <select
+                                                                            value={inputData.evening_status_id || ''}
+                                                                            onChange={event => setInputData({ ...inputData, evening_status_id: Number(event.target.value) })}
+                                                                            className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                                        >
+                                                                            {statusOptions.map(status => <option key={status.id} value={status.id}>{status.name}</option>)}
+                                                                        </select>
+                                                                    ) : (
+                                                                        <p className="text-sm text-red-600">请先在系统设置中配置可用的夜自习状态</p>
+                                                                    )}
+                                                                </div>
+                                                                <div>
+                                                                    <label className="block text-sm font-medium text-gray-700 mb-1">具体去向</label>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={inputData.destination || ''}
+                                                                        onChange={event => setInputData({ ...inputData, destination: event.target.value })}
+                                                                        placeholder="宿舍、家中或其他地点"
+                                                                        className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+                                                                    <textarea
+                                                                        rows={2}
+                                                                        value={inputData.reason || ''}
+                                                                        onChange={event => setInputData({ ...inputData, reason: event.target.value })}
+                                                                        className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
+
+                                                    {inputData.time_slot_id && !inputData.is_evening_study && (
                                                         <div className="mt-2">
                                                             <button
                                                                 type="button"
@@ -1225,7 +1336,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                         点击可单独选择/取消节次：
                                                                     </div>
                                                                     <div className="flex flex-wrap gap-2">
-                                                                        {periods.map(period => {
+                                                                        {regularPeriods.map(period => {
                                                                             const isSelected = inputData.period_ids?.includes(period.id);
                                                                             const selectedSlot = timeSlots.find(s => s.id === inputData.time_slot_id);
                                                                             const isInSlot = selectedSlot?.period_ids?.includes(period.id);
@@ -1312,7 +1423,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                 选择节次 <span className="text-gray-400 font-normal">(点名时只在选定节次显示为活动状态)</span>
                                                             </label>
                                                             <div className="flex flex-wrap gap-2">
-                                                                {periods.map((period, index) => {
+                                                                {regularPeriods.map((period, index) => {
                                                                     const isSelected = (inputData.period_ids || []).includes(period.id);
                                                                     return (
                                                                         <button

@@ -18,7 +18,7 @@ function semesterDateRange(semester) {
 
 function slotLabel(request) {
     if (request.scene === 'evening_study') {
-        return `夜自习 · ${request.requested_evening_status?.name || '状态待确认'}`;
+        return `夜自习 · ${request.requested_evening_status?.name || request.requested_status_name_snapshot || '状态待确认'}`;
     }
     let d = null;
     try { d = typeof request.details === 'string' ? JSON.parse(request.details) : request.details; } catch (e) {}

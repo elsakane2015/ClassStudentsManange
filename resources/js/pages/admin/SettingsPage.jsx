@@ -708,7 +708,7 @@ export default function SettingsPage() {
                     const periods = typeof settingsObj.attendance_periods === 'string'
                         ? JSON.parse(settingsObj.attendance_periods)
                         : settingsObj.attendance_periods;
-                    setAttendancePeriods(Array.isArray(periods) ? periods.filter(period => (period.scene || 'regular') === 'regular' && (period.is_active ?? true)) : []);
+                    setAttendancePeriods(Array.isArray(periods) ? periods.filter(period => period.is_active ?? true) : []);
                 } catch (e) {
                     console.warn('Failed to parse attendance_periods', e);
                     setAttendancePeriods([]);

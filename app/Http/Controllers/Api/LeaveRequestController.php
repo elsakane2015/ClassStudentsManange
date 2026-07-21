@@ -135,7 +135,9 @@ class LeaveRequestController extends Controller
                 'scene' => $first->scene,
                 'destination' => $first->destination,
                 'requested_evening_status' => $first->requestedEveningStatus,
+                'requested_status_name_snapshot' => $first->requested_status_name_snapshot,
                 'evening_study_status' => $first->eveningStudyStatus,
+                'status_name_snapshot' => $first->status_name_snapshot,
                 'images' => $first->images,
                 'status' => $first->approval_status ?? 'approved',
                 'approval_status' => $first->approval_status,
@@ -385,10 +387,9 @@ class LeaveRequestController extends Controller
                 ->where('school_id', $student->school_id)
                 ->where('is_active', true)
                 ->where('student_requestable', true)
-                ->where('leave_type_id', $leaveType->id)
                 ->first();
             if (!$requestedEveningStatus) {
-                return response()->json(['error' => '请选择与请假类型匹配的夜自习状态'], 422);
+                return response()->json(['error' => '请选择可申请的夜自习状态'], 422);
             }
             if (!$request->filled('destination')) {
                 return response()->json(['error' => '请填写夜自习期间的具体去向'], 422);

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AttendanceRecord;
 use App\Models\EveningStudyStatus;
 use App\Models\School;
 use App\Models\SystemSetting;
@@ -15,8 +16,7 @@ class EveningStudyStatusController extends Controller
     public function index(Request $request)
     {
         $schoolId = $this->schoolId($request);
-        $query = EveningStudyStatus::with('leaveType:id,name,slug')
-            ->where('school_id', $schoolId)
+        $query = EveningStudyStatus::where('school_id', $schoolId)
             ->orderBy('sort_order')
             ->orderBy('id');
 
@@ -46,7 +46,7 @@ class EveningStudyStatusController extends Controller
             return EveningStudyStatus::create([...$data, 'school_id' => $schoolId]);
         });
 
-        return response()->json($status->load('leaveType:id,name,slug'), 201);
+        return response()->json($status, 201);
     }
 
     public function update(Request $request, EveningStudyStatus $eveningStudyStatus)
@@ -67,7 +67,7 @@ class EveningStudyStatusController extends Controller
             $eveningStudyStatus->update($data);
         });
 
-        return response()->json($eveningStudyStatus->fresh()->load('leaveType:id,name,slug'));
+        return response()->json($eveningStudyStatus->fresh());
     }
 
     public function destroy(Request $request, EveningStudyStatus $eveningStudyStatus)
@@ -78,9 +78,24 @@ class EveningStudyStatusController extends Controller
         if ($eveningStudyStatus->is_default) {
             return response()->json(['message' => '默认状态不能删除，请先指定其他默认状态'], 422);
         }
+        if ((int) SystemSetting::get('boarding_suspension_status_id', 0) === $eveningStudyStatus->id) {
+            return response()->json(['message' => '该状态用于暂停住宿，请先指定其他暂停住宿状态'], 422);
+        }
+        if (AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('requested_evening_status_id', $eveningStudyStatus->id)
+            ->where('approval_status', 'pending')
+            ->exists()) {
+            return response()->json(['message' => '该状态仍有待审批申请，处理完成后才能删除'], 422);
+        }
+        if (AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('evening_study_status_id', $eveningStudyStatus->id)
+            ->whereHas('eveningStudySession', fn ($query) => $query->where('status', '!=', 'completed'))
+            ->exists()) {
+            return response()->json(['message' => '该状态正在进行中的夜自习点名中使用，完成点名后才能删除'], 422);
+        }
 
-        $eveningStudyStatus->update(['is_active' => false]);
-        return response()->json(['message' => '状态已停用']);
+        $eveningStudyStatus->delete();
+        return response()->json(['message' => '状态已删除']);
     }
 
     public function setSuspensionStatus(Request $request)
@@ -105,19 +120,15 @@ class EveningStudyStatusController extends Controller
             'base_status' => 'required|in:present,absent,excused',
             'is_default' => 'required|boolean',
             'student_requestable' => 'required|boolean',
-            'leave_type_id' => ['nullable', Rule::exists('leave_types', 'id')->where('school_id', $schoolId)],
             'is_active' => 'required|boolean',
             'sort_order' => 'required|integer|min:0|max:999',
         ]);
 
-        if ($data['student_requestable'] && !$data['leave_type_id']) {
-            abort(422, '学生可申请状态必须关联请假类型');
-        }
         if ($data['is_default'] && (!$data['is_active'] || $data['base_status'] !== 'present')) {
             abort(422, '默认状态必须启用并归类为正常');
         }
 
-        return $data;
+        return [...$data, 'leave_type_id' => null];
     }
 
     private function authorizeSettings(Request $request): void

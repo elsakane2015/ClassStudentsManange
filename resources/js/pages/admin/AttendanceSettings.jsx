@@ -219,7 +219,11 @@ export default function AttendanceSettings() {
                                     </div>
                                     <span className="text-xs text-gray-400 w-5 text-center">{index + 1}</span>
                                     <input type="text" value={period.name} onChange={(e) => updatePeriodName(period.id, e.target.value)} className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="节次名称" />
-                                    <select value={period.scene || 'regular'} onChange={(e) => updatePeriod(period.id, { scene: e.target.value, audience_scope: e.target.value === 'evening_study' ? 'boarding' : (period.audience_scope || 'all') })} className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
+                                    <select value={period.scene || 'regular'} onChange={(e) => updatePeriod(period.id, {
+                                        scene: e.target.value,
+                                        audience_scope: e.target.value === 'evening_study' ? 'boarding' : (period.audience_scope || 'all'),
+                                        counts_in_day_stats: e.target.value === 'evening_study' ? false : (period.counts_in_day_stats ?? true),
+                                    })} className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
                                         <option value="regular">普通考勤</option>
                                         <option value="evening_study">夜自习</option>
                                     </select>

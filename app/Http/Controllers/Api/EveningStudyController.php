@@ -7,6 +7,7 @@ use App\Models\AttendanceRecord;
 use App\Models\BoardingSuspension;
 use App\Models\EveningStudySession;
 use App\Models\EveningStudyStatus;
+use App\Models\LeaveType;
 use App\Models\SchoolClass;
 use App\Models\Student;
 use App\Models\SystemSetting;
@@ -193,6 +194,7 @@ class EveningStudyController extends Controller
             'student_id' => 'required|exists:students,id',
             'date' => 'required|date',
             'period_id' => 'required|integer',
+            'leave_type_id' => 'required|exists:leave_types,id',
             'status_id' => 'required|exists:evening_study_statuses,id',
             'destination' => 'required|string|max:500',
             'reason' => 'nullable|string|max:1000',
@@ -202,9 +204,17 @@ class EveningStudyController extends Controller
         abort_unless($student->is_boarding, 422, '夜自习请假仅适用于住宿生');
         $this->authorizeTeacherMark($request, $student->schoolClass);
         abort_if($student->activeBoardingSuspension($data['date']), 422, '该学生住宿许可已暂停');
+        abort_unless(LeaveType::whereKey($data['leave_type_id'])
+            ->where('school_id', $student->school_id)
+            ->where('is_active', true)
+            ->where('student_requestable', true)
+            ->exists(), 422, '请选择可申请的请假类型');
 
         $status = EveningStudyStatus::whereKey($data['status_id'])
-            ->where('school_id', $student->school_id)->where('is_active', true)->firstOrFail();
+            ->where('school_id', $student->school_id)
+            ->where('is_active', true)
+            ->where('student_requestable', true)
+            ->firstOrFail();
         abort_if($status->is_default, 422, '请选择请假或外出状态');
 
         $record = DB::transaction(function () use ($data, $period, $student, $status, $request) {
@@ -224,6 +234,7 @@ class EveningStudyController extends Controller
                 'counts_in_day_stats' => $period['counts_in_day_stats'],
                 'period_name_snapshot' => $period['name'],
                 'status' => $status->base_status,
+                'leave_type_id' => $data['leave_type_id'],
                 'evening_study_status_id' => $status->id,
                 'status_name_snapshot' => $status->name,
                 'destination' => $data['destination'],

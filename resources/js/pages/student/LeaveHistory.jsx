@@ -130,7 +130,7 @@ export default function LeaveHistory() {
                                         </div>
                                         {leave.scene === 'evening_study' && (
                                             <p className="mt-1 text-sm text-cyan-700">
-                                                夜自习状态：{leave.requested_evening_status?.name || '-'}
+                                                夜自习状态：{leave.requested_evening_status?.name || leave.requested_status_name_snapshot || '-'}
                                                 {leave.destination ? ` · 去向：${leave.destination}` : ''}
                                             </p>
                                         )}

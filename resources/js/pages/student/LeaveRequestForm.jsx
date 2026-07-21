@@ -205,6 +205,15 @@ export default function LeaveRequestForm() {
         setError(null);
 
         try {
+            const selectedPeriods = formData.details?.period_ids || [];
+            const submittingEveningStudy = selectedPeriods.some(id => periods.find(period => period.id === id)?.scene === 'evening_study');
+            if (submittingEveningStudy && !formData.evening_study_status_id) {
+                throw new Error('请选择夜自习状态');
+            }
+            if (submittingEveningStudy && !formData.destination.trim()) {
+                throw new Error('请填写夜自习期间的具体去向');
+            }
+
             // 构建提交数据
             const submitData = {
                 ...formData,
@@ -234,7 +243,7 @@ export default function LeaveRequestForm() {
             if (err.response?.status === 409) {
                 setError("检测到冲突！该日期您已有请假或考勤记录。");
             } else {
-                setError(err.response?.data?.error || err.response?.data?.message || '提交失败，请重试。');
+                setError(err.response?.data?.error || err.response?.data?.message || err.message || '提交失败，请重试。');
             }
         } finally {
             submittingRef.current = false;
@@ -245,28 +254,7 @@ export default function LeaveRequestForm() {
     const selectedLeaveType = leaveTypes.find(type => type.slug === formData.type);
     const regularPeriods = periods.filter(period => (period.scene || 'regular') === 'regular' && (period.is_active ?? true));
     const eveningPeriods = periods.filter(period => period.scene === 'evening_study' && period.audience_scope === 'boarding' && (period.is_active ?? true));
-    const availableEveningStatuses = eveningStatuses.filter(status => status.leave_type?.slug === formData.type);
-    const selectedEveningPeriodId = formData.details?.period_ids?.length === 1
-        && eveningPeriods.some(period => period.id === formData.details.period_ids[0])
-        ? formData.details.period_ids[0]
-        : '';
-    const isEveningStudy = Boolean(selectedEveningPeriodId);
-
-    const selectEveningPeriod = (periodId) => {
-        if (!periodId) {
-            setFormData(prev => ({ ...prev, details: {}, evening_study_status_id: '', destination: '', time_slot_id: null }));
-            return;
-        }
-        const period = eveningPeriods.find(item => item.id === Number(periodId));
-        setSelectedTimeSlotId(null);
-        setFormData(prev => ({
-            ...prev,
-            time_slot_id: null,
-            evening_study_status_id: '',
-            details: { period_ids: [period.id], period_names: [period.name], display_label: period.name, option_periods: 1 },
-        }));
-    };
-
+    const availableEveningStatuses = eveningStatuses;
     const getInputConfig = () => {
         if (!selectedLeaveType?.input_config) return {};
         try {
@@ -281,6 +269,43 @@ export default function LeaveRequestForm() {
 
     const inputConfig = getInputConfig();
     const inputType = selectedLeaveType?.input_type || 'none';
+
+    const renderEveningStudyDetails = () => (
+        <div className="space-y-4 rounded-md border border-cyan-200 bg-cyan-50 p-4">
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">夜自习状态</label>
+                {availableEveningStatuses.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                        {availableEveningStatuses.map(status => (
+                            <button
+                                key={status.id}
+                                type="button"
+                                onClick={() => setFormData(prev => ({ ...prev, evening_study_status_id: String(status.id) }))}
+                                className={`rounded-md border px-3 py-2 text-sm transition-colors ${String(formData.evening_study_status_id) === String(status.id)
+                                    ? 'border-cyan-700 bg-cyan-700 text-white'
+                                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                                    }`}
+                            >
+                                {status.name}
+                            </button>
+                        ))}
+                    </div>
+                ) : (
+                    <p className="text-sm text-red-600">尚未配置学生可申请的夜自习状态，请联系管理员</p>
+                )}
+            </div>
+            <label className="block text-sm font-medium text-gray-700">
+                具体去向
+                <input
+                    required
+                    value={formData.destination}
+                    onChange={event => setFormData(prev => ({ ...prev, destination: event.target.value }))}
+                    className="mt-1 block w-full rounded-md border border-gray-300 bg-white p-2 text-sm"
+                    placeholder="宿舍、家中或活动地点"
+                />
+            </label>
+        </div>
+    );
 
     const renderTypeSpecificInputs = () => {
         if (!selectedLeaveType || inputType === 'none') return null;
@@ -380,10 +405,13 @@ export default function LeaveRequestForm() {
 
                 // 多天请假也可以选择时段，所有天都使用相同的时段
 
-                // 严格按照请假类型配置的 options 显示时段
+                // 普通时段按照请假类型配置显示，住宿生额外显示匹配的夜自习时段。
                 // inputConfig.options 格式: [{key: "time_slot_1", label: "早操"}, ...]
-                // 如果没有配置 options，则不显示时段选择器
-                if (!inputConfig.options || inputConfig.options.length === 0) {
+                const canRequestEveningStudy = Boolean(
+                    user?.student?.is_boarding
+                    && eveningPeriods.length > 0
+                );
+                if ((!inputConfig.options || inputConfig.options.length === 0) && !canRequestEveningStudy) {
                     return (
                         <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
                             该请假类型未配置可选时段，请联系管理员
@@ -391,15 +419,24 @@ export default function LeaveRequestForm() {
                     );
                 }
 
-                const allowedSlotKeys = inputConfig.options.map(opt =>
+                const allowedSlotKeys = (inputConfig.options || []).map(opt =>
                     typeof opt === 'object' ? opt.key : opt
                 );
                 // 支持两种格式的 key: "time_slot_1" 或直接时段 ID
-                const filteredTimeSlots = timeSlots.filter(slot => {
+                const regularTimeSlots = timeSlots.filter(slot => {
                     const slotKey = `time_slot_${slot.id}`;
                     const onlyRegularPeriods = (slot.period_ids || []).every(id => regularPeriods.some(period => period.id === id));
                     return onlyRegularPeriods && (allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id)));
                 });
+                const eveningTimeSlots = canRequestEveningStudy
+                    ? timeSlots.filter(slot => {
+                        const slotPeriodIds = slot.period_ids || [];
+                        return slotPeriodIds.length === 1
+                            && eveningPeriods.some(period => period.id === slotPeriodIds[0]);
+                    })
+                    : [];
+                const filteredTimeSlots = [...regularTimeSlots, ...eveningTimeSlots]
+                    .filter((slot, index, slots) => slots.findIndex(item => item.id === slot.id) === index);
 
                 if (filteredTimeSlots.length === 0) {
                     return (
@@ -410,21 +447,31 @@ export default function LeaveRequestForm() {
                 }
 
                 const handleTimeSlotSelect = (slot) => {
+                    const eveningSlot = (slot.period_ids || []).some(id => eveningPeriods.some(period => period.id === id));
                     setSelectedTimeSlotId(slot.id);
+                    setShowPeriodDetail(false);
                     setFormData(prev => ({
                         ...prev,
                         time_slot_id: slot.id,
+                        evening_study_status_id: '',
+                        destination: eveningSlot ? prev.destination : '',
                         details: {
-                            ...prev.details,
                             time_slot_id: slot.id,
                             time_slot_name: slot.name,
                             period_ids: slot.period_ids || [],
-                            option_periods: (slot.period_ids || []).length
+                            period_names: (slot.period_ids || []).map(id => periods.find(period => period.id === id)?.name).filter(Boolean),
+                            display_label: slot.name,
+                            option: `time_slot_${slot.id}`,
+                            option_label: slot.name,
+                            option_periods: (slot.period_ids || []).length,
                         }
                     }));
                 };
 
                 const selectedSlot = timeSlots.find(s => s.id === selectedTimeSlotId);
+                const selectedSlotIsEvening = selectedSlot
+                    ? (selectedSlot.period_ids || []).some(id => eveningPeriods.some(period => period.id === id))
+                    : false;
 
                 return (
                     <div className="space-y-3">
@@ -448,7 +495,11 @@ export default function LeaveRequestForm() {
                             ))}
                         </div>
 
-                        {selectedSlot && (
+                        {selectedSlotIsEvening && (
+                            renderEveningStudyDetails()
+                        )}
+
+                        {selectedSlot && !selectedSlotIsEvening && (
                             <div className="mt-2">
                                 <button
                                     type="button"
@@ -590,6 +641,64 @@ export default function LeaveRequestForm() {
         }
     };
 
+    const renderAdditionalEveningStudyTimeSlots = () => {
+        if (inputType === 'duration_select' || !user?.student?.is_boarding || eveningPeriods.length === 0) {
+            return null;
+        }
+        const eveningTimeSlots = timeSlots.filter(slot => {
+            const slotPeriodIds = slot.period_ids || [];
+            return slotPeriodIds.length === 1 && eveningPeriods.some(period => period.id === slotPeriodIds[0]);
+        });
+        if (eveningTimeSlots.length === 0) return null;
+
+        const selectedSlot = eveningTimeSlots.find(slot => slot.id === selectedTimeSlotId);
+        const selectEveningSlot = (slot) => {
+            setSelectedTimeSlotId(slot.id);
+            setShowPeriodDetail(false);
+            setFormData(prev => ({
+                ...prev,
+                time_slot_id: slot.id,
+                evening_study_status_id: '',
+                details: {
+                    ...prev.details,
+                    time_slot_id: slot.id,
+                    time_slot_name: slot.name,
+                    period_ids: slot.period_ids || [],
+                    period_names: (slot.period_ids || []).map(id => periods.find(period => period.id === id)?.name).filter(Boolean),
+                    display_label: slot.name,
+                    option: `time_slot_${slot.id}`,
+                    option_label: slot.name,
+                    option_periods: (slot.period_ids || []).length,
+                },
+            }));
+        };
+
+        return (
+            <div className="space-y-3">
+                <label className="block text-sm font-medium text-gray-700">选择时段</label>
+                <div className="flex flex-wrap gap-2">
+                    {eveningTimeSlots.map(slot => (
+                        <button
+                            key={slot.id}
+                            type="button"
+                            onClick={() => selectEveningSlot(slot)}
+                            className={`rounded-lg border px-4 py-2 text-sm transition-colors ${selectedSlot?.id === slot.id
+                                ? 'border-indigo-600 bg-indigo-600 text-white'
+                                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                                }`}
+                        >
+                            {slot.name}
+                            <span className={`ml-1 text-xs ${selectedSlot?.id === slot.id ? 'text-indigo-200' : 'text-gray-400'}`}>
+                                ({(slot.period_ids || []).length}节)
+                            </span>
+                        </button>
+                    ))}
+                </div>
+                {selectedSlot && renderEveningStudyDetails()}
+            </div>
+        );
+    };
+
     return (
         <Layout>
             <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md">
@@ -647,21 +756,8 @@ export default function LeaveRequestForm() {
                         </div>
                     </div>
 
-                    {user?.student?.is_boarding && eveningPeriods.length > 0 && availableEveningStatuses.length > 0 && (
-                        <div className="border-t border-gray-200 pt-5">
-                            <label className="block text-sm font-medium text-gray-700">夜自习请假</label>
-                            <select value={selectedEveningPeriodId} onChange={event => selectEveningPeriod(event.target.value)} className="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm">
-                                <option value="">不申请夜自习请假</option>
-                                {eveningPeriods.map(period => <option key={period.id} value={period.id}>{period.name}</option>)}
-                            </select>
-                            {isEveningStudy && <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                                <label className="block text-sm font-medium text-gray-700">夜自习状态<select required value={formData.evening_study_status_id} onChange={event => setFormData(prev => ({ ...prev, evening_study_status_id: event.target.value }))} className="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm"><option value="">请选择</option>{availableEveningStatuses.map(status => <option key={status.id} value={status.id}>{status.name}</option>)}</select></label>
-                                <label className="block text-sm font-medium text-gray-700">具体去向<input required value={formData.destination} onChange={event => setFormData(prev => ({ ...prev, destination: event.target.value }))} className="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm" placeholder="宿舍、家中或活动地点" /></label>
-                            </div>}
-                        </div>
-                    )}
-
-                    {!isEveningStudy && renderTypeSpecificInputs()}
+                    {renderTypeSpecificInputs()}
+                    {renderAdditionalEveningStudyTimeSlots()}
 
                     {/* 申请理由 - 文本输入类型不显示（去向说明已替代） */}
                     {inputType !== 'text' && (
