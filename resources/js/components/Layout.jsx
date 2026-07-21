@@ -96,6 +96,7 @@ export default function Layout({ children }) {
             { name: '学生管理', href: '/teacher/students' },
             ...(canManageRollCall ? [{ name: '点名', href: '/roll-call' }] : []),
             ...(showWechatMenu ? [{ name: '微信推送', href: '/teacher/wechat' }] : []),
+            ...(user?.role === 'teacher' ? [{ name: '邮件通知', href: '/teacher/email-notifications' }] : []),
             ...(['system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user?.role) ? [{ name: '人员管理', href: '/admin/staff' }] : []),
             ...(['system_admin', 'school_admin', 'admin'].includes(user?.role) ? [{ name: '系统设置', href: '/admin/settings' }] : []),
             ...(['system_admin'].includes(user?.role) ? [{ name: '权限管理', href: '/admin/permissions' }] : [])

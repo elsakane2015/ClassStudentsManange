@@ -35,11 +35,16 @@ class StudentsImport implements ToCollection, WithHeadingRow
             $password = $row['password'] ?? null;
             $studentNo = $row['student_no'] ?? null;
             $phone = $row['parent_contact'] ?? null;
+            $parentEmail = $row['parent_email'] ?? null;
             $gender = $row['gender'] ?? null;
             $birthdate = $row['birthdate'] ?? null;
 
             if (!$name || !$studentNo || !$email || !$password) {
                  continue; 
+            }
+
+            if ($parentEmail && !filter_var($parentEmail, FILTER_VALIDATE_EMAIL)) {
+                throw new \Exception('导入失败：第 '.($index + 2).' 行家长邮箱格式不正确。');
             }
 
             // Determine Class ID
@@ -117,6 +122,7 @@ class StudentsImport implements ToCollection, WithHeadingRow
                     'gender' => $gender,
                     'birthdate' => $birthdate,
                     'parent_contact' => $phone,
+                    'parent_email' => $parentEmail,
                 ]
             );
         }

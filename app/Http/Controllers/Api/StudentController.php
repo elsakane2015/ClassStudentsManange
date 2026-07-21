@@ -67,6 +67,7 @@ class StudentController extends Controller
                 'student_no' => $student->student_no,
                 'gender' => $student->gender ?? 'male',  // Default to male if null
                 'parent_contact' => $student->parent_contact,
+                'parent_email' => $student->parent_email,
                 'class_id' => $student->class_id,
                 'class_name' => $student->schoolClass ? $student->schoolClass->name : '-',
                 'department_name' => $student->schoolClass?->department?->name ?? '-',
@@ -160,6 +161,7 @@ class StudentController extends Controller
             'student_no' => 'required|string', // Unique validation tricky with school scope, handled manually or complex rule
             'gender' => 'required|in:male,female',
             'parent_contact' => 'nullable|string',
+            'parent_email' => 'nullable|email:rfc|max:255',
             'class_id' => 'required|exists:classes,id',
             'email' => 'required|email|unique:users,email', // New user account
             'password' => 'required|min:6'
@@ -189,6 +191,7 @@ class StudentController extends Controller
             'student_no' => $request->student_no,
             'gender' => $request->gender,
             'parent_contact' => $request->parent_contact,
+            'parent_email' => $request->parent_email,
         ]);
 
         return response()->json($student, 201);
@@ -214,6 +217,7 @@ class StudentController extends Controller
             'student_no' => 'sometimes|string',
             'gender' => 'nullable|in:male,female',  // Allow null
             'parent_contact' => 'nullable|string',
+            'parent_email' => 'nullable|email:rfc|max:255',
             'email' => 'sometimes|email|unique:users,email,' . $student->user->id,
             'password' => 'nullable|string|min:6',
         ]);
@@ -240,7 +244,7 @@ class StudentController extends Controller
     }
     
     // Update Student info
-    $studentUpdates = $request->only(['student_no', 'gender', 'parent_contact']);
+    $studentUpdates = $request->only(['student_no', 'gender', 'parent_contact', 'parent_email']);
     \Log::info('[StudentController.update] Student updates:', $studentUpdates);
     $student->update($studentUpdates);
 

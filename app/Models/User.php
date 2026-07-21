@@ -167,4 +167,9 @@ class User extends Authenticatable
     {
         return $this->hasOne(WechatBinding::class);
     }
+
+    public function emailNotificationPreference()
+    {
+        return $this->hasOne(EmailNotificationPreference::class);
+    }
 }

@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Models\AttendanceRecord;
+use App\Observers\AttendanceRecordObserver;
+use App\Services\ParentEmailNotificationService;
+use App\Services\ResendEmailService;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -11,7 +15,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton(ResendEmailService::class);
+        $this->app->singleton(ParentEmailNotificationService::class);
     }
 
     /**
@@ -19,6 +24,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        AttendanceRecord::observe(AttendanceRecordObserver::class);
+
         // 获取应用配置的时区 (默认为 config/app.php 中的 'Asia/Shanghai')
         // 这样既解决了 Docker 时区问题，又保留了通过环境变量 APP_TIMEZONE 修改时区的能力
         $timezone = config('app.timezone', 'Asia/Shanghai');

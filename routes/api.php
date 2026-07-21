@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\AttendanceExportController;
 use App\Http\Controllers\Api\WechatController;
+use App\Http\Controllers\Api\ResendController;
 use App\Http\Controllers\InstallController;
 
 // Installation routes (no auth required)
@@ -100,6 +101,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/wechat/manager-status', [WechatController::class, 'getManagerBindStatus']); // Manager: get bind status
     Route::delete('/wechat/manager-unbind', [WechatController::class, 'managerUnbind']); // Manager: unbind self
     Route::get('/wechat/qrcode', [WechatController::class, 'getBindQrcode']); // Get bind QR code
+
+    // Resend parent email notifications
+    Route::get('/resend/settings', [ResendController::class, 'getSettings']);
+    Route::post('/resend/settings', [ResendController::class, 'saveSettings']);
+    Route::post('/resend/test', [ResendController::class, 'sendTest']);
+    Route::get('/resend/teacher-settings', [ResendController::class, 'getTeacherSettings']);
+    Route::post('/resend/teacher-settings', [ResendController::class, 'saveTeacherSettings']);
+
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/calendar', [AttendanceController::class, 'calendar']);
     Route::get('/student/stats', [AttendanceController::class, 'studentStats']); // Student's own stats

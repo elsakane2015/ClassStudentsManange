@@ -28,7 +28,7 @@ export default function StudentList() {
     const [showForm, setShowForm] = useState(false);
     const [editingStudent, setEditingStudent] = useState(null);
     const [formData, setFormData] = useState({
-        name: '', student_no: '', gender: 'male', parent_contact: '',
+        name: '', student_no: '', gender: 'male', parent_contact: '', parent_email: '',
         class_id: '', email: '', password: ''
     });
 
@@ -147,6 +147,7 @@ export default function StudentList() {
             student_no: student.student_no,
             gender: student.gender,
             parent_contact: student.parent_contact,
+            parent_email: student.parent_email || '',
             class_id: student.class_id || '',
             email: student.email || '',
             password: ''
@@ -156,7 +157,7 @@ export default function StudentList() {
 
     const openCreate = () => {
         setEditingStudent(null);
-        setFormData({ name: '', student_no: '', gender: 'male', parent_contact: '', class_id: classes.length === 1 ? classes[0].id : '', email: '', password: 'password123' });
+        setFormData({ name: '', student_no: '', gender: 'male', parent_contact: '', parent_email: '', class_id: classes.length === 1 ? classes[0].id : '', email: '', password: 'password123' });
         setShowForm(true);
     };
 
@@ -336,6 +337,7 @@ export default function StudentList() {
                                             <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">班级</th>
                                             <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">账号(Email)</th>
                                             <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长联系方式</th>
+                                            <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长邮箱</th>
                                             <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6"><span className="sr-only">操作</span></th>
                                         </tr>
                                     </thead>
@@ -357,7 +359,8 @@ export default function StudentList() {
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.enrollment_year || '-'}</td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.class_name}</td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.email || '-'}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.parent_contact}</td>
+                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.parent_contact || '-'}</td>
+                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.parent_email || '-'}</td>
                                                 <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6 space-x-2">
                                                     <button onClick={() => handleEdit(student)} className="text-indigo-600 hover:text-indigo-900">编辑</button>
                                                     <button
@@ -433,6 +436,10 @@ export default function StudentList() {
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">家长联系方式</label>
                                     <input type="text" value={formData.parent_contact} onChange={e => setFormData({ ...formData, parent_contact: e.target.value })} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">家长邮箱</label>
+                                    <input type="email" value={formData.parent_email} onChange={e => setFormData({ ...formData, parent_email: e.target.value })} placeholder="parent@example.com" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">账号(Email)</label>

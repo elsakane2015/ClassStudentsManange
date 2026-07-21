@@ -7,6 +7,7 @@ import { PlusIcon, TrashIcon, PencilIcon, CheckCircleIcon } from '@heroicons/rea
 import WechatSettings from './WechatSettings';
 import LeaveImageSettings from './LeaveImageSettings';
 import AttendanceSettings from './AttendanceSettings';
+import ResendSettings from './ResendSettings';
 
 // Calendar Component
 import { differenceInCalendarWeeks } from 'date-fns'; // Ensure this is imported
@@ -906,6 +907,7 @@ export default function SettingsPage() {
                                 <NavButton id="timeSlots" label="时段管理" />
                                 <NavButton id="attendance" label="考勤规则" />
                                 <NavButton id="wechat" label="微信推送" />
+                                <NavButton id="resend" label="Resend 发送" />
                             </nav>
                         </div>
 
@@ -1383,6 +1385,11 @@ export default function SettingsPage() {
                             {/* WECHAT PUSH */}
                             {activeTab === 'wechat' && (
                                 <WechatSettings />
+                            )}
+
+                            {/* RESEND EMAIL */}
+                            {activeTab === 'resend' && (
+                                <ResendSettings />
                             )}
                         </div>
                     </div>

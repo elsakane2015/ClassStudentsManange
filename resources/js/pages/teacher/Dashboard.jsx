@@ -584,7 +584,7 @@ export default function TeacherDashboard() {
                     {/* 概览 - Collapsible (matching calendar style) */}
                     <div className="bg-white rounded-lg shadow mb-8">
                         <div
-                            className="flex justify-between items-center p-4 cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100"
+                            className="flex flex-col gap-3 p-4 cursor-pointer border-b border-gray-100 transition-colors hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between"
                             onClick={() => setStatsExpanded(!statsExpanded)}
                         >
                             <div className="flex items-center space-x-2">
@@ -598,7 +598,7 @@ export default function TeacherDashboard() {
                                 </svg>
                                 <h3 className="text-lg font-semibold text-gray-800">概览</h3>
                             </div>
-                            <div className="flex items-center space-x-3" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center" onClick={(e) => e.stopPropagation()}>
                                 {/* Scope Selector - Button Group Style */}
                                 {(() => {
                                     // Check if viewing a historical (non-current) semester
@@ -606,12 +606,12 @@ export default function TeacherDashboard() {
                                     const isHistorical = selectedSem && !selectedSem.is_current;
 
                                     return (
-                                        <div className="inline-flex rounded-md shadow-sm" role="group">
+                                        <div className="grid w-full grid-cols-4 rounded-md shadow-sm sm:inline-flex sm:w-auto" role="group">
                                             <button
                                                 type="button"
                                                 onClick={() => !isHistorical && setScope('today')}
                                                 disabled={isHistorical}
-                                                className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${scope === 'today'
+                                                className={`whitespace-nowrap px-2 py-2 text-sm font-medium rounded-l-lg border sm:px-4 ${scope === 'today'
                                                     ? 'bg-indigo-600 text-white border-indigo-600 z-10'
                                                     : isHistorical
                                                         ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
@@ -624,7 +624,7 @@ export default function TeacherDashboard() {
                                                 type="button"
                                                 onClick={() => !isHistorical && setScope('week')}
                                                 disabled={isHistorical}
-                                                className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'week'
+                                                className={`whitespace-nowrap px-2 py-2 text-sm font-medium border-t border-b sm:px-4 ${scope === 'week'
                                                     ? 'bg-indigo-600 text-white border-indigo-600 z-10'
                                                     : isHistorical
                                                         ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
@@ -637,7 +637,7 @@ export default function TeacherDashboard() {
                                                 type="button"
                                                 onClick={() => !isHistorical && setScope('month')}
                                                 disabled={isHistorical}
-                                                className={`px-4 py-2 text-sm font-medium border-t border-b ${scope === 'month'
+                                                className={`whitespace-nowrap px-2 py-2 text-sm font-medium border-t border-b sm:px-4 ${scope === 'month'
                                                     ? 'bg-indigo-600 text-white border-indigo-600 z-10'
                                                     : isHistorical
                                                         ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
@@ -649,7 +649,7 @@ export default function TeacherDashboard() {
                                             <button
                                                 type="button"
                                                 onClick={() => setScope('semester')}
-                                                className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${scope === 'semester'
+                                                className={`whitespace-nowrap px-2 py-2 text-sm font-medium rounded-r-lg border sm:px-4 ${scope === 'semester'
                                                     ? 'bg-indigo-600 text-white border-indigo-600 z-10'
                                                     : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                                                     }`}
@@ -673,7 +673,7 @@ export default function TeacherDashboard() {
                                                 setScope('semester');
                                             }
                                         }}
-                                        className="rounded-md border-gray-300 shadow-sm text-sm py-2 pl-3 pr-8 border bg-white focus:border-indigo-500 focus:ring-indigo-500"
+                                        className="w-full rounded-md border border-gray-300 bg-white py-2 pl-3 pr-8 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:ml-3 sm:w-auto"
                                     >
                                         {semesters.map(s => (
                                             <option key={s.id} value={s.id}>

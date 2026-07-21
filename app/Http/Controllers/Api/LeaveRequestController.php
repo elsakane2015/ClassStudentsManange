@@ -450,6 +450,13 @@ class LeaveRequestController extends Controller
                 // Log but don't fail the request
                 \Log::warning('WeChat push failed', ['error' => $e->getMessage()]);
             }
+
+            try {
+                app(\App\Services\ParentEmailNotificationService::class)
+                    ->sendLeaveRequestNotification($firstRecord);
+            } catch (\Throwable $e) {
+                \Log::warning('Parent email notification failed', ['error' => $e->getMessage()]);
+            }
         }
         
         return response()->json([
