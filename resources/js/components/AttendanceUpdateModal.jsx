@@ -163,7 +163,6 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const [pendingAction, setPendingAction] = useState(null); // { status, leaveType, ... }
     const [inputModalOpen, setInputModalOpen] = useState(false);
     const [inputData, setInputData] = useState({});
-    const [showPeriodDetail, setShowPeriodDetail] = useState(false);
     const [showPrintOptions, setShowPrintOptions] = useState(false);
     const [printColumns, setPrintColumns] = useState(2);
     const [viewColumns, setViewColumns] = useState(1);
@@ -327,7 +326,6 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             nextInputData.text_label = pendingInputConfig.label || '去向说明';
         }
 
-        setShowPeriodDetail(false);
         setInputData(nextInputData);
     };
 
@@ -447,7 +445,6 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             console.log('[handleActionClick] Opening input modal, status:', status, 'leaveType:', lt);
             setPendingAction({ status, leaveType: lt });
             setInputData({});
-            setShowPeriodDetail(false);
             setInputModalOpen(true);
         }
     };
@@ -704,6 +701,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
 
         if (usesUnifiedTimeSlotPicker(pendingAction.leaveType) && !inputData.time_slot_id) {
             alert('请选择时段');
+            return;
+        }
+
+        if (usesUnifiedTimeSlotPicker(pendingAction.leaveType) && !(inputData.period_ids || []).length) {
+            alert('至少选择一个节次');
             return;
         }
 
@@ -1382,71 +1384,52 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                     )}
 
                                                     {inputData.time_slot_id && (
-                                                        <div className="mt-2">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setShowPeriodDetail(!showPeriodDetail)}
-                                                                className="text-xs text-indigo-600 hover:text-indigo-800"
-                                                            >
-                                                                {showPeriodDetail ? '▲ 收起自定义节次' : '▼ 自定义节次（可选）'}
-                                                            </button>
-                                                            {showPeriodDetail && (
-                                                                <div className="mt-2 p-3 bg-gray-50 rounded border border-gray-200">
-                                                                    <div className="text-xs text-gray-500 mb-2">
-                                                                        点击可单独选择/取消节次：
-                                                                    </div>
-                                                                    <div className="flex flex-wrap gap-2">
-                                                                        {eligiblePeriods.map(period => {
-                                                                            const isSelected = inputData.period_ids?.includes(period.id);
-                                                                            const selectedSlot = timeSlots.find(s => s.id === inputData.time_slot_id);
-                                                                            const isInSlot = getEffectiveSlotPeriodIds(selectedSlot).includes(Number(period.id));
-                                                                            return (
-                                                                                <label
-                                                                                    key={period.id}
-                                                                                    className={`px-3 py-1.5 rounded border text-sm cursor-pointer transition-colors ${isSelected
-                                                                                        ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
-                                                                                        : isInSlot
-                                                                                            ? 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-gray-200'
-                                                                                            : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
-                                                                                        }`}
-                                                                                >
-                                                                                    <input
-                                                                                        type="checkbox"
-                                                                                        className="sr-only"
-                                                                                        checked={isSelected}
-                                                                                        onChange={() => {
-                                                                                            const currentIds = inputData.period_ids || [];
-                                                                                            let newIds;
-                                                                                            if (isSelected) {
-                                                                                                newIds = currentIds.filter(id => id !== period.id);
-                                                                                            } else {
-                                                                                                newIds = [...currentIds, period.id];
-                                                                                            }
-                                                                                            const includesEveningStudy = hasEveningPeriod(newIds);
-                                                                                            setInputData({
-                                                                                                ...inputData,
-                                                                                                period_ids: newIds,
-                                                                                                option_periods: newIds.length,
-                                                                                                is_evening_study: includesEveningStudy,
-                                                                                                evening_status_id: includesEveningStudy
-                                                                                                    ? inputData.evening_status_id || eveningStatuses[0]?.id || ''
-                                                                                                    : undefined,
-                                                                                                destination: includesEveningStudy
-                                                                                                    ? inputData.destination || inputData.text || ''
-                                                                                                    : undefined,
-                                                                                            });
-                                                                                        }}
-                                                                                    />
-                                                                                    {period.name}
-                                                                                </label>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                    <div className="mt-2 text-xs text-gray-500">
-                                                                        已选：{(inputData.period_ids || []).length}节
-                                                                    </div>
-                                                                </div>
-                                                            )}
+                                                        <div className="mt-2 p-3 bg-gray-50 rounded border border-gray-200">
+                                                            <div className="text-sm font-medium text-gray-700 mb-2">调整节次</div>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {eligiblePeriods.map(period => {
+                                                                    const periodId = Number(period.id);
+                                                                    const currentIds = (inputData.period_ids || []).map(Number);
+                                                                    const isSelected = currentIds.includes(periodId);
+                                                                    return (
+                                                                        <label
+                                                                            key={period.id}
+                                                                            className={`px-3 py-1.5 rounded border text-sm cursor-pointer transition-colors ${isSelected
+                                                                                ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
+                                                                                : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'
+                                                                                }`}
+                                                                        >
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                className="sr-only"
+                                                                                checked={isSelected}
+                                                                                onChange={() => {
+                                                                                    const newIds = isSelected
+                                                                                        ? currentIds.filter(id => id !== periodId)
+                                                                                        : [...currentIds, periodId];
+                                                                                    const includesEveningStudy = hasEveningPeriod(newIds);
+                                                                                    setInputData({
+                                                                                        ...inputData,
+                                                                                        period_ids: newIds,
+                                                                                        option_periods: newIds.length,
+                                                                                        is_evening_study: includesEveningStudy,
+                                                                                        evening_status_id: includesEveningStudy
+                                                                                            ? inputData.evening_status_id || eveningStatuses[0]?.id || ''
+                                                                                            : undefined,
+                                                                                        destination: includesEveningStudy
+                                                                                            ? inputData.destination || inputData.text || ''
+                                                                                            : undefined,
+                                                                                    });
+                                                                                }}
+                                                                            />
+                                                                            {period.name}
+                                                                        </label>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            <div className="mt-2 text-xs text-gray-500">
+                                                                已选：{(inputData.period_ids || []).length}节
+                                                            </div>
                                                         </div>
                                                     )}
 
