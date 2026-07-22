@@ -179,6 +179,84 @@ class EveningStudyAttendanceTest extends TestCase
         $this->assertSame($status->id, $record->evening_study_status_id);
         $this->assertSame('宿舍', $record->destination);
         $this->assertSame(0, AttendanceRecord::count());
+
+        $findStudent = function ($response) use ($student) {
+            return collect($response->json())
+                ->flatMap(fn ($department) => $department['classes'] ?? [])
+                ->flatMap(fn ($class) => $class['students'] ?? [])
+                ->firstWhere('id', $student->id);
+        };
+
+        Sanctum::actingAs($this->user('admin.overview@example.com', 'system_admin'));
+        $dayOverview = $this->getJson('/api/attendance/overview?date=2026-07-21')->assertOk();
+        $dayStudent = $findStudent($dayOverview);
+        $this->assertNotNull($dayStudent, json_encode($dayOverview->json(), JSON_UNESCAPED_UNICODE));
+        $this->assertCount(0, $dayStudent['attendance']);
+
+        $fullOverview = $this->getJson('/api/attendance/overview?date=2026-07-21&include_evening=1')->assertOk();
+        $fullStudent = $findStudent($fullOverview);
+        $this->assertNotNull($fullStudent, json_encode($fullOverview->json(), JSON_UNESCAPED_UNICODE));
+        $overviewRecord = collect($fullStudent['attendance'])->sole();
+        $this->assertSame('evening_study', $overviewRecord['scene']);
+        $this->assertSame('在宿舍', $overviewRecord['evening_study_status']['name']);
+        $this->assertSame('夜自习', $overviewRecord['period_name_snapshot']);
+
+        $calendar = $this->getJson('/api/attendance/calendar-summary?month=2026-07')->assertOk();
+        $calendarRecord = collect($calendar->json('2026-07-21'))->sole();
+        $this->assertSame('病假', $calendarRecord['type']);
+        $this->assertSame('夜自习·在宿舍', $calendarRecord['option']);
+
+        $this->deleteJson('/api/attendance/records?' . http_build_query([
+            'record_id' => $record->id,
+            'student_id' => $student->id,
+            'date' => '2026-07-21',
+            'period_id' => 10,
+            'source_type' => 'teacher_evening_leave',
+        ]))->assertOk();
+        $this->assertDatabaseMissing('attendance_records', ['id' => $record->id]);
+    }
+
+    public function test_teacher_can_mark_night_attendance_with_non_student_requestable_type(): void
+    {
+        $data = $this->schoolData('teacher-night-status');
+        $teacher = $this->user('teacher.night.status@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $student = $this->student($data, 'teacher-night-status', true);
+        $lateType = LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '迟到',
+            'slug' => 'late',
+            'is_active' => true,
+            'student_requestable' => false,
+            'input_type' => 'time',
+        ]);
+        $status = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在教室',
+            'color' => 'green',
+            'base_status' => 'present',
+            'student_requestable' => true,
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($teacher);
+        $this->postJson('/api/evening-study/teacher-leave', [
+            'student_id' => $student->id,
+            'date' => '2026-07-21',
+            'period_id' => 10,
+            'leave_type_id' => $lateType->id,
+            'status_id' => $status->id,
+            'destination' => '教室',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('attendance_records', [
+            'student_id' => $student->id,
+            'scene' => 'evening_study',
+            'leave_type_id' => $lateType->id,
+            'evening_study_status_id' => $status->id,
+            'status' => 'present',
+        ]);
     }
 
     public function test_admin_can_make_a_status_student_selectable_without_a_leave_type(): void

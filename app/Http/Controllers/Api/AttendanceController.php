@@ -601,7 +601,9 @@ class AttendanceController extends Controller
     public function overview(Request $request)
     {
         // 1. Reconnect
-        try { \DB::reconnect(); } catch (\Exception $e) {}
+        if (!app()->environment('testing') && \DB::getDriverName() !== 'sqlite') {
+            try { \DB::reconnect(); } catch (\Exception $e) {}
+        }
 
         $user = $request->user();
         $date = $request->input('date', now()->format('Y-m-d'));
@@ -644,9 +646,13 @@ class AttendanceController extends Controller
         $students = \App\Models\Student::whereIn('class_id', $classIds)->with('user')->get();
         // Manually Attach Attendance (支持时段化)
         $studentIds = $students->pluck('id');
-        $attendances = \App\Models\AttendanceRecord::whereIn('student_id', $studentIds)
+        $attendanceQuery = \App\Models\AttendanceRecord::query();
+        if ($request->boolean('include_evening')) {
+            $attendanceQuery->withoutGlobalScope('day_attendance');
+        }
+        $attendances = $attendanceQuery->whereIn('student_id', $studentIds)
                           ->where('date', $date)
-                          ->with(['leaveType'])
+                          ->with(['leaveType', 'eveningStudyStatus:id,name'])
                           ->orderByRaw('period_id IS NULL DESC') // NULL在前
                           ->orderBy('period_id')
                           ->get();
@@ -897,10 +903,14 @@ class AttendanceController extends Controller
         }
         
         // Fetch attendance records for the month
-        $records = AttendanceRecord::whereIn('class_id', $classIds)
+        $records = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
-            ->whereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave'])
-            ->with(['student.user', 'leaveType'])
+            ->where(function ($query) {
+                $query->where('scene', 'evening_study')
+                    ->orWhereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave']);
+            })
+            ->with(['student.user', 'leaveType', 'eveningStudyStatus:id,name'])
             ->orderBy('created_at', 'desc')
             ->get();
         
@@ -932,7 +942,9 @@ class AttendanceController extends Controller
             
             // Get type label
             $typeLabel = '未知';
-            if ($record->status === 'late') {
+            if ($record->scene === 'evening_study' && $record->leaveType) {
+                $typeLabel = $record->leaveType->name;
+            } elseif ($record->status === 'late') {
                 $typeLabel = '迟到';
             } elseif ($record->status === 'early_leave') {
                 $typeLabel = '早退';
@@ -950,7 +962,11 @@ class AttendanceController extends Controller
             $timeSlotId = $details['time_slot_id'] ?? null;
             
             // 优先使用自定义的显示标签（用户自定义选择节次时生成）
-            if (isset($details['display_label'])) {
+            if ($record->scene === 'evening_study') {
+                $periodName = $record->period_name_snapshot ?: '夜自习';
+                $statusName = $record->eveningStudyStatus?->name ?: ($record->status_name_snapshot ?: '已标记');
+                $optionLabel = $periodName . '·' . $statusName;
+            } elseif (isset($details['display_label'])) {
                 $optionLabel = $details['display_label'];
                 // 附加节次数量
                 if (isset($details['option_periods'])) {
@@ -1014,7 +1030,7 @@ class AttendanceController extends Controller
             // 对于有 period_id 但没有 time_slot_id 的记录，使用特殊键来收集所有节次
             if ($record->period_id && !$timeSlotId && !isset($details['option_label'])) {
                 // 单独节次记录，需要合并
-                $mergeKey = $record->student_id . '_individual_periods_' . $record->leave_type_id . '_' . $record->status . '_' . $record->approval_status;
+                $mergeKey = $record->student_id . '_individual_periods_' . $record->scene . '_' . $record->leave_type_id . '_' . $record->status . '_' . $record->approval_status;
                 
                 if (!isset($result[$dateKey][$mergeKey])) {
                     $result[$dateKey][$mergeKey] = [
@@ -1037,7 +1053,7 @@ class AttendanceController extends Controller
                 }
             } else {
                 // 普通记录或已有 option_label 的记录
-                $mergeKey = $record->student_id . '_' . ($timeSlotId ?? $details['option_label'] ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
+                $mergeKey = $record->student_id . '_' . $record->scene . '_' . ($timeSlotId ?? $details['option_label'] ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
                 
                 $result[$dateKey][$mergeKey] = [
                     'id' => $record->id,
@@ -2194,6 +2210,7 @@ class AttendanceController extends Controller
     public function deleteRecord(Request $request)
     {
         $request->validate([
+            'record_id' => 'nullable|integer|exists:attendance_records,id',
             'student_id' => 'required|exists:students,id',
             'date' => 'required|date',
             'period_id' => 'nullable|integer',
@@ -2205,21 +2222,28 @@ class AttendanceController extends Controller
 
         // 如果提供了 leave_batch_id（self_applied 批次请假），直接整批删除
         if ($request->leave_batch_id && $request->source_type === 'self_applied') {
-            $count = AttendanceRecord::where('leave_batch_id', $request->leave_batch_id)
+            $count = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('leave_batch_id', $request->leave_batch_id)
                 ->where('student_id', $request->student_id)
                 ->delete();
             return response()->json(['message' => '请假记录已整批撤销', 'deleted_count' => $count]);
         }
 
         // 构建查询
-        $query = AttendanceRecord::where('student_id', $request->student_id)
-            ->where('date', $request->date);
+        $query = AttendanceRecord::withoutGlobalScope('day_attendance');
+        if ($request->record_id) {
+            $query->whereKey($request->record_id)
+                ->where('student_id', $request->student_id);
+        } else {
+            $query->where('student_id', $request->student_id)
+                ->where('date', $request->date);
+        }
 
         // 如果是点名来源的记录，按 source_type 和 source_id 匹配
-        if ($request->source_type === 'roll_call' && $request->source_id) {
+        if (!$request->record_id && $request->source_type === 'roll_call' && $request->source_id) {
             $query->where('source_type', 'roll_call')
                   ->where('source_id', $request->source_id);
-        } else {
+        } elseif (!$request->record_id) {
             // 普通记录按 period_id 匹配
             $query->where('period_id', $request->period_id);
         }
@@ -2237,7 +2261,8 @@ class AttendanceController extends Controller
 
         // self_applied 记录即使没传 leave_batch_id，也尝试整批删除
         if ($record->source_type === 'self_applied' && $record->leave_batch_id) {
-            $count = AttendanceRecord::where('leave_batch_id', $record->leave_batch_id)
+            $count = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('leave_batch_id', $record->leave_batch_id)
                 ->where('student_id', $record->student_id)
                 ->delete();
             return response()->json(['message' => '请假记录已整批撤销', 'deleted_count' => $count]);
@@ -2253,7 +2278,8 @@ class AttendanceController extends Controller
                 ]);
                 
                 // Delete ALL attendance records generated from this leave request
-                AttendanceRecord::where('source_type', 'leave_request')
+                AttendanceRecord::withoutGlobalScope('day_attendance')
+                    ->where('source_type', 'leave_request')
                     ->where('source_id', $record->source_id)
                     ->delete();
                 
@@ -2274,7 +2300,8 @@ class AttendanceController extends Controller
             $rollCallRecordId = $details['roll_call_record_id'] ?? null;
             
             // 删除该学生该点名的所有考勤记录（可能有多条，因为 period_count > 1）
-            $deletedCount = AttendanceRecord::where('source_type', 'roll_call')
+            $deletedCount = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('source_type', 'roll_call')
                 ->where('source_id', $rollCallId)
                 ->where('student_id', $studentId)
                 ->delete();

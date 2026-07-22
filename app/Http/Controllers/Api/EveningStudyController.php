@@ -207,8 +207,7 @@ class EveningStudyController extends Controller
         abort_unless(LeaveType::whereKey($data['leave_type_id'])
             ->where('school_id', $student->school_id)
             ->where('is_active', true)
-            ->where('student_requestable', true)
-            ->exists(), 422, '请选择可申请的请假类型');
+            ->exists(), 422, '请选择可用的考勤类型');
 
         $status = EveningStudyStatus::whereKey($data['status_id'])
             ->where('school_id', $student->school_id)

@@ -110,6 +110,20 @@ const formatPeriodNames = (periodIds, periods, timeSlots = []) => {
     return `(${result.join('、')})`;
 };
 
+const isDisplayableAttendanceRecord = record => (
+    record.status !== 'present' || record.scene === 'evening_study'
+);
+
+const getAttendanceRecordDisplayLabel = (record, details = {}) => {
+    if (record.scene === 'evening_study') {
+        const periodName = record.period_name_snapshot || record.period?.name || '夜自习';
+        const statusName = record.evening_study_status?.name || record.status_name_snapshot || '已标记';
+        return `${periodName}·${statusName}`;
+    }
+
+    return record.display_label || details.display_label || '';
+};
+
 export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const formattedDate = date ? format(date, 'yyyy-MM-dd') : '';
     const [students, setStudents] = useState([]);
@@ -172,7 +186,9 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const fetchAttendance = async () => {
         setLoading(true);
         try {
-            const res = await axios.get('/attendance/overview', { params: { date: formattedDate } });
+            const res = await axios.get('/attendance/overview', {
+                params: { date: formattedDate, include_evening: 1 }
+            });
             // Flatten logic
             let allStudents = [];
             // Handle different API responses (overview gives departments -> classes -> students)
@@ -210,7 +226,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const visibleStudents = students.filter(s => {
         if (studentFilter === 'all') return true;
         const records = s.attendance || [];
-        return records.some(r => r.status !== 'present');
+        return records.some(isDisplayableAttendanceRecord);
     });
 
     const toggleAll = () => {
@@ -237,6 +253,61 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     );
     const regularPeriods = periods.filter(period => (period.scene || 'regular') === 'regular');
     const isEveningSlot = slot => (slot.period_ids || []).some(periodId => eveningPeriodIds.has(Number(periodId)));
+    const eveningTimeSlots = timeSlots.filter(isEveningSlot);
+
+    const selectEveningTimeSlot = (slot) => {
+        const periodIds = (slot.period_ids || []).map(Number).filter(periodId => eveningPeriodIds.has(periodId));
+        setInputData({
+            time_slot_id: slot.id,
+            time_slot_name: slot.name,
+            option: `time_slot_${slot.id}`,
+            option_label: slot.name,
+            option_periods: periodIds.length,
+            period_ids: periodIds,
+            is_evening_study: true,
+            evening_status_id: eveningStatuses[0]?.id || '',
+            destination: '',
+            reason: '',
+        });
+    };
+
+    const renderEveningStudyInputs = () => (
+        <div className="space-y-3 rounded-md border border-cyan-200 bg-cyan-50 p-3">
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">夜自习状态</label>
+                {eveningStatuses.length > 0 ? (
+                    <select
+                        value={inputData.evening_status_id || ''}
+                        onChange={event => setInputData({ ...inputData, evening_status_id: Number(event.target.value) })}
+                        className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    >
+                        {eveningStatuses.map(status => <option key={status.id} value={status.id}>{status.name}</option>)}
+                    </select>
+                ) : (
+                    <p className="text-sm text-red-600">请先在系统设置中配置可用的夜自习状态</p>
+                )}
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">具体去向</label>
+                <input
+                    type="text"
+                    value={inputData.destination || ''}
+                    onChange={event => setInputData({ ...inputData, destination: event.target.value })}
+                    placeholder="宿舍、家中或其他地点"
+                    className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                />
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+                <textarea
+                    rows={2}
+                    value={inputData.reason || ''}
+                    onChange={event => setInputData({ ...inputData, reason: event.target.value })}
+                    className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                />
+            </div>
+        </div>
+    );
 
     const executeEveningStudyUpdate = async (details) => {
         const nightPeriodIds = (details.period_ids || [])
@@ -498,6 +569,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         try {
             await axios.delete(`/attendance/records`, {
                 params: {
+                    record_id: record.id,
                     student_id: studentId,
                     date: formattedDate,
                     period_id: record.period_id,
@@ -527,11 +599,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         };
 
         const deduplicateRecords = (records) => {
-            const nonPresent = records.filter(r => r.status !== 'present');
+            const nonPresent = records.filter(isDisplayableAttendanceRecord);
             const seen = new Set();
             return nonPresent.filter(r => {
                 const details = safeParseDetails(r.details);
-                const displayLabel = r.display_label || details.display_label || '';
+                const displayLabel = getAttendanceRecordDisplayLabel(r, details);
                 let key;
                 if (r.source_type === 'leave_request' && r.source_id) {
                     key = `leave-${r.source_id}`;
@@ -559,7 +631,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
 
             return uniqueRecords.map(r => {
                 const details = safeParseDetails(r.details);
-                const displayLabel = r.display_label || details.display_label;
+                const displayLabel = getAttendanceRecordDisplayLabel(r, details);
                 const lt = r.leave_type || leaveTypes.find(l => l.id === r.leave_type_id);
                 const ltName = lt?.name || '';
 
@@ -938,11 +1010,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${viewColumns}, minmax(0, 1fr))`, gap: '4px' }}>
                                         {visibleStudents.map(student => {
                                             const records = student.attendance || [];
-                                            const nonPresentRecords = records.filter(r => r.status !== 'present');
+                                            const nonPresentRecords = records.filter(isDisplayableAttendanceRecord);
                                             const seenKeys = new Set();
                                             const uniqueRecords = nonPresentRecords.filter(r => {
                                                 const details = typeof r.details === 'string' ? JSON.parse(r.details || '{}') : (r.details || {});
-                                                const displayLabel = r.display_label || details.display_label || '';
+                                                const displayLabel = getAttendanceRecordDisplayLabel(r, details);
                                                 let key;
                                                 if (r.source_type === 'leave_request' && r.source_id) key = `leave-${r.source_id}`;
                                                 else if (displayLabel) key = `label-${r.leave_type_id}-${displayLabel}`;
@@ -964,7 +1036,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                         <div className="flex flex-wrap gap-1">
                                                             {uniqueRecords.map((record, idx) => {
                                                                 const details = typeof record.details === 'string' ? JSON.parse(record.details || '{}') : (record.details || {});
-                                                                const displayLabel = record.display_label || details.display_label;
+                                                                const displayLabel = getAttendanceRecordDisplayLabel(record, details);
                                                                 return (
                                                                     <StatusBadge
                                                                         key={record.id || idx}
@@ -1027,11 +1099,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{student.user?.name}</td>
                                                         <td className="px-6 py-4">
                                                             {(() => {
-                                                                const nonPresentRecords = records.filter(r => r.status !== 'present');
+                                                                const nonPresentRecords = records.filter(isDisplayableAttendanceRecord);
                                                                 const seenKeys = new Set();
                                                                 const uniqueRecords = nonPresentRecords.filter(r => {
                                                                     const details = typeof r.details === 'string' ? JSON.parse(r.details || '{}') : (r.details || {});
-                                                                    const displayLabel = r.display_label || details.display_label || '';
+                                                                    const displayLabel = getAttendanceRecordDisplayLabel(r, details);
                                                                     let key;
                                                                     if (r.source_type === 'leave_request' && r.source_id) key = `leave-${r.source_id}`;
                                                                     else if (displayLabel) key = `label-${r.leave_type_id}-${displayLabel}`;
@@ -1046,7 +1118,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                     <div className="flex flex-wrap items-center gap-1">
                                                                         {uniqueRecords.map((record, idx) => {
                                                                             const details = typeof record.details === 'string' ? JSON.parse(record.details || '{}') : (record.details || {});
-                                                                            const displayLabel = record.display_label || details.display_label;
+                                                                            const displayLabel = getAttendanceRecordDisplayLabel(record, details);
                                                                             return (
                                                                                 <React.Fragment key={record.id || idx}>
                                                                                     <StatusBadge
@@ -1206,6 +1278,36 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                 </div>
                                             );
                                         })()}
+
+                                        {['time', 'period_select'].includes(pendingAction?.leaveType?.input_type)
+                                            && selectedStudentsAreBoarding
+                                            && eveningTimeSlots.length > 0 && (
+                                                <div className="space-y-3 border-t border-gray-200 pt-4">
+                                                    <label className="block text-sm font-medium text-gray-700">夜自习时段</label>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {eveningTimeSlots.map(slot => {
+                                                            const selected = inputData.is_evening_study && inputData.time_slot_id === slot.id;
+                                                            return (
+                                                                <button
+                                                                    key={slot.id}
+                                                                    type="button"
+                                                                    onClick={() => selected ? setInputData({}) : selectEveningTimeSlot(slot)}
+                                                                    className={`rounded-md border px-3 py-2 text-sm ${selected
+                                                                        ? 'border-indigo-600 bg-indigo-600 text-white'
+                                                                        : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                                                                        }`}
+                                                                >
+                                                                    {slot.name}
+                                                                    <span className={`ml-1 text-xs ${selected ? 'text-indigo-200' : 'text-gray-400'}`}>
+                                                                        ({(slot.period_ids || []).length}节)
+                                                                    </span>
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    {inputData.is_evening_study && renderEveningStudyInputs()}
+                                                </div>
+                                            )}
 
                                         {pendingAction?.leaveType?.input_type === 'duration_select' && (() => {
                                             // 解析input_config获取配置的时段
