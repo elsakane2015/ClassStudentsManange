@@ -302,7 +302,7 @@ class EveningStudyAttendanceTest extends TestCase
             ->where('leave_batch_id', $created->json('leave_batch_id'))
             ->pluck('id');
 
-        $updated = $this->putJson('/api/leave-requests/' . $created->json('id'), [
+        $updated = $this->putJson('/api/leave-requests/'.$created->json('id'), [
             'type' => $leaveType->slug,
             'start_date' => '2026-07-22',
             'end_date' => '2026-07-22',
@@ -368,7 +368,7 @@ class EveningStudyAttendanceTest extends TestCase
             ->get()->keyBy('period_id');
 
         Sanctum::actingAs($teacher);
-        $this->postJson('/api/leave-requests/' . $created->json('id') . '/approve', [
+        $this->postJson('/api/leave-requests/'.$created->json('id').'/approve', [
             'record_ids' => [$records[1]->id],
         ])->assertOk()
             ->assertJsonPath('approved_count', 1)
@@ -383,7 +383,7 @@ class EveningStudyAttendanceTest extends TestCase
             ->assertJsonPath('data.0.regular_period_label', '第2节')
             ->assertJsonPath('data.0.evening_study_label', '夜自习·在家');
 
-        $this->postJson('/api/leave-requests/' . $records[10]->id . '/reject', [
+        $this->postJson('/api/leave-requests/'.$records[10]->id.'/reject', [
             'record_ids' => [$records[10]->id],
             'reason' => '夜自习部分不批准',
         ])->assertOk()
@@ -441,7 +441,7 @@ class EveningStudyAttendanceTest extends TestCase
 
         Sanctum::actingAs($teacher);
         $regularRecord = $records->firstWhere('scene', 'regular');
-        $this->deleteJson('/api/attendance/records?' . http_build_query([
+        $this->deleteJson('/api/attendance/records?'.http_build_query([
             'record_id' => $regularRecord->id,
             'student_id' => $student->id,
             'date' => '2026-07-22',
@@ -530,7 +530,7 @@ class EveningStudyAttendanceTest extends TestCase
         $this->assertSame('病假', $calendarRecord['type']);
         $this->assertSame('夜自习·在宿舍', $calendarRecord['option']);
 
-        $this->deleteJson('/api/attendance/records?' . http_build_query([
+        $this->deleteJson('/api/attendance/records?'.http_build_query([
             'record_id' => $record->id,
             'student_id' => $student->id,
             'date' => '2026-07-21',
@@ -636,6 +636,202 @@ class EveningStudyAttendanceTest extends TestCase
         $this->assertSame('在图书馆', $record->fresh()->requested_status_name_snapshot);
     }
 
+    public function test_completing_session_saves_statuses_and_duty_teacher_can_reopen_it(): void
+    {
+        $data = $this->schoolData('complete-and-reopen');
+        $dutyTeacher = $this->user('duty.complete@example.com', 'duty_teacher');
+        $dutyTeacher->dutyDepartments()->attach($data['department']->id);
+        $this->student($data, 'complete-one', true);
+        $this->student($data, 'complete-two', true);
+        $library = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在图书馆',
+            'color' => 'cyan',
+            'base_status' => 'excused',
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($dutyTeacher);
+        $started = $this->postJson('/api/evening-study/sessions', [
+            'date' => '2026-07-24',
+            'period_id' => 10,
+            'class_id' => $data['class']->id,
+        ])->assertOk();
+        $records = collect($started->json('records'));
+
+        $completed = $this->postJson('/api/evening-study/sessions/'.$started->json('session.id').'/complete', [
+            'records' => [
+                [
+                    'id' => $records[0]['id'],
+                    'status_id' => $data['normal']->id,
+                    'destination' => null,
+                ],
+                [
+                    'id' => $records[1]['id'],
+                    'status_id' => $library->id,
+                    'destination' => '校图书馆',
+                ],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('session.status', 'completed')
+            ->assertJsonPath('session.normal_count', 1)
+            ->assertJsonPath('session.exception_count', 1);
+
+        $breakdown = collect($completed->json('session.status_counts'))->keyBy('name');
+        $this->assertSame(1, $breakdown['正常']['count']);
+        $this->assertSame(1, $breakdown['在图书馆']['count']);
+        $this->assertDatabaseHas('attendance_records', [
+            'id' => $records[1]['id'],
+            'evening_study_status_id' => $library->id,
+            'destination' => '校图书馆',
+        ]);
+
+        $this->postJson('/api/evening-study/sessions/'.$started->json('session.id').'/reopen')
+            ->assertOk()
+            ->assertJsonPath('session.status', 'in_progress');
+
+        $history = $this->getJson('/api/evening-study/history')->assertOk();
+        $history->assertJsonPath('data.0.recorded_at', fn ($value) => is_string($value) && $value !== '');
+        $historyBreakdown = collect($history->json('data.0.status_counts'))->keyBy('name');
+        $this->assertSame(1, $historyBreakdown['正常']['count']);
+        $this->assertSame(1, $historyBreakdown['在图书馆']['count']);
+    }
+
+    public function test_summary_is_scoped_to_department_and_school_admin_sees_whole_school(): void
+    {
+        $data = $this->schoolData('summary-scope');
+        $dutyTeacher = $this->user('duty.summary@example.com', 'duty_teacher');
+        $dutyTeacher->dutyDepartments()->attach($data['department']->id);
+        $this->student($data, 'summary-one', true);
+        $this->student($data, 'summary-two', true);
+
+        $secondDepartment = Department::create([
+            'school_id' => $data['school']->id,
+            'name' => '第二系部',
+        ]);
+        $secondClass = SchoolClass::create([
+            'school_id' => $data['school']->id,
+            'department_id' => $secondDepartment->id,
+            'grade_id' => $data['grade']->id,
+            'name' => '第二班级',
+        ]);
+        $secondData = [...$data, 'department' => $secondDepartment, 'class' => $secondClass];
+        $this->student($secondData, 'summary-three', true);
+
+        Sanctum::actingAs($dutyTeacher);
+        $started = $this->postJson('/api/evening-study/sessions', [
+            'date' => '2026-07-24',
+            'period_id' => 10,
+            'class_id' => $data['class']->id,
+        ])->assertOk();
+        $this->postJson('/api/evening-study/sessions/'.$started->json('session.id').'/complete')
+            ->assertOk();
+
+        $departmentSummary = $this->getJson('/api/evening-study/summary?date=2026-07-24&period_id=10')
+            ->assertOk()
+            ->assertJsonPath('scope_type', 'department')
+            ->assertJsonPath('overall.class_count', 1)
+            ->assertJsonPath('overall.expected_count', 2)
+            ->assertJsonPath('overall.present_count', 2)
+            ->assertJsonCount(1, 'departments');
+        $departmentBreakdown = collect($departmentSummary->json('overall.status_counts'))->keyBy('name');
+        $this->assertSame(2, $departmentBreakdown['正常']['count']);
+        $this->assertSame(0, $departmentBreakdown['暂停住宿']['count']);
+
+        Sanctum::actingAs($this->user('school.summary@example.com', 'school_admin'));
+        $schoolSummary = $this->getJson('/api/evening-study/summary?date=2026-07-24&period_id=10')
+            ->assertOk()
+            ->assertJsonPath('scope_type', 'school')
+            ->assertJsonPath('overall.class_count', 2)
+            ->assertJsonPath('overall.expected_count', 3)
+            ->assertJsonPath('overall.recorded_count', 2)
+            ->assertJsonPath('overall.present_count', 2)
+            ->assertJsonCount(2, 'departments');
+    }
+
+    public function test_deleting_session_removes_generated_records_and_restores_approved_leave(): void
+    {
+        $data = $this->schoolData('delete-session');
+        $teacher = $this->user('teacher.delete.session@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $dutyTeacher = $this->user('duty.delete.session@example.com', 'duty_teacher');
+        $dutyTeacher->dutyDepartments()->attach($data['department']->id);
+        $leaveStudent = $this->student($data, 'delete-leave', true);
+        $this->student($data, 'delete-generated', true);
+        $leaveType = LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '病假',
+            'slug' => 'sick_leave',
+            'is_active' => true,
+            'student_requestable' => true,
+            'input_type' => 'duration_select',
+        ]);
+        $homeStatus = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在家',
+            'color' => 'indigo',
+            'base_status' => 'excused',
+            'student_requestable' => true,
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($leaveStudent->user);
+        $leave = $this->postJson('/api/leave-requests', [
+            'type' => $leaveType->slug,
+            'start_date' => '2026-07-25',
+            'end_date' => '2026-07-25',
+            'sessions' => [10],
+            'reason' => '回家休养',
+            'evening_study_status_id' => $homeStatus->id,
+            'destination' => '家中',
+        ])->assertCreated();
+        Sanctum::actingAs($teacher);
+        $this->postJson('/api/leave-requests/'.$leave->json('id').'/approve')->assertOk();
+
+        Sanctum::actingAs($dutyTeacher);
+        $started = $this->postJson('/api/evening-study/sessions', [
+            'date' => '2026-07-25',
+            'period_id' => 10,
+            'class_id' => $data['class']->id,
+        ])->assertOk();
+        $records = collect($started->json('records'));
+        $leaveRecord = $records->firstWhere('student_id', $leaveStudent->id);
+        $generatedRecord = $records->firstWhere('student_id', '!=', $leaveStudent->id);
+
+        $this->postJson('/api/evening-study/sessions/'.$started->json('session.id').'/complete', [
+            'records' => $records->map(fn ($record) => [
+                'id' => $record['id'],
+                'status_id' => $data['normal']->id,
+            ])->values()->all(),
+        ])->assertOk();
+        $this->assertSame('present', AttendanceRecord::withoutGlobalScope('day_attendance')->find($leaveRecord['id'])->status);
+
+        $this->deleteJson('/api/evening-study/sessions/'.$started->json('session.id'))
+            ->assertOk()
+            ->assertJsonPath('deleted_record_count', 1)
+            ->assertJsonPath('retained_leave_count', 1);
+
+        $this->assertDatabaseMissing('evening_study_sessions', ['id' => $started->json('session.id')]);
+        $this->assertDatabaseMissing('attendance_records', ['id' => $generatedRecord['id']]);
+        $this->assertDatabaseHas('attendance_records', [
+            'id' => $leaveRecord['id'],
+            'evening_study_session_id' => null,
+            'approval_status' => 'approved',
+            'status' => 'excused',
+            'evening_study_status_id' => $homeStatus->id,
+            'source_type' => 'self_applied',
+        ]);
+
+        $this->postJson('/api/evening-study/sessions', [
+            'date' => '2026-07-25',
+            'period_id' => 10,
+            'class_id' => $data['class']->id,
+        ])->assertOk()
+            ->assertJsonCount(2, 'records');
+    }
+
     private function schoolData(string $suffix): array
     {
         $school = School::create(['name' => "测试学校-$suffix"]);
@@ -704,6 +900,7 @@ class EveningStudyAttendanceTest extends TestCase
     private function student(array $data, string $suffix, bool $boarding): Student
     {
         $user = $this->user("student.$suffix@example.com", 'student', "学生-$suffix");
+
         return Student::create([
             'user_id' => $user->id,
             'school_id' => $data['school']->id,

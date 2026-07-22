@@ -79,12 +79,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Evening study attendance and temporary boarding suspension
     Route::get('/evening-study/periods', [EveningStudyController::class, 'periods']);
     Route::get('/evening-study/classes', [EveningStudyController::class, 'classes']);
+    Route::get('/evening-study/summary', [EveningStudyController::class, 'summary']);
     Route::post('/evening-study/sessions', [EveningStudyController::class, 'start']);
     Route::get('/evening-study/sessions/{eveningStudySession}', [EveningStudyController::class, 'show']);
     Route::put('/evening-study/sessions/{eveningStudySession}/records', [EveningStudyController::class, 'updateRecords']);
     Route::post('/evening-study/teacher-leave', [EveningStudyController::class, 'markLeave']);
     Route::post('/evening-study/sessions/{eveningStudySession}/complete', [EveningStudyController::class, 'complete']);
     Route::post('/evening-study/sessions/{eveningStudySession}/reopen', [EveningStudyController::class, 'reopen']);
+    Route::delete('/evening-study/sessions/{eveningStudySession}', [EveningStudyController::class, 'destroy']);
     Route::get('/evening-study/history', [EveningStudyController::class, 'history']);
     Route::get('/evening-study-statuses', [EveningStudyStatusController::class, 'index']);
     Route::post('/evening-study-statuses', [EveningStudyStatusController::class, 'store']);
