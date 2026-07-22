@@ -194,6 +194,21 @@ class EveningStudyAttendanceTest extends TestCase
         $this->assertSame('父母家', $eveningRecord->destination);
 
         Sanctum::actingAs($teacher);
+        $overview = $this->getJson('/api/attendance/overview?date=2026-07-21&include_evening=1')->assertOk();
+        $overviewStudent = collect($overview->json())
+            ->flatMap(fn ($department) => $department['classes'] ?? [])
+            ->flatMap(fn ($class) => $class['students'] ?? [])
+            ->firstWhere('id', $student->id);
+        $overviewEveningRecord = collect($overviewStudent['attendance'] ?? [])->firstWhere('scene', 'evening_study');
+        $this->assertSame('在家', $overviewEveningRecord['requested_evening_status']['name']);
+        $this->assertSame('正常', $overviewEveningRecord['evening_study_status']['name']);
+
+        $teacherCalendar = $this->getJson('/api/attendance/calendar-summary?month=2026-07')->assertOk();
+        $teacherEveningEvent = collect($teacherCalendar->json('2026-07-21'))
+            ->first(fn ($event) => str_starts_with($event['option'] ?? '', '夜自习'));
+        $this->assertNotNull($teacherEveningEvent);
+        $this->assertSame('夜自习·在家', $teacherEveningEvent['option']);
+
         $this->postJson("/api/leave-requests/{$response->json('id')}/approve")
             ->assertOk()
             ->assertJsonPath('approved_count', 3);
@@ -207,8 +222,22 @@ class EveningStudyAttendanceTest extends TestCase
         $index->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.scene', 'mixed')
             ->assertJsonPath('data.0.has_evening_study', true)
+            ->assertJsonPath('data.0.regular_period_label', '第1-2节')
+            ->assertJsonPath('data.0.regular_period_count', 2)
+            ->assertJsonPath('data.0.evening_study_label', '夜自习·在家')
             ->assertJsonPath('data.0.destination', '父母家')
-            ->assertJsonPath('data.0.requested_evening_status.name', '在家');
+            ->assertJsonPath('data.0.requested_evening_status.name', '在家')
+            ->assertJsonPath('data.0.display_evening_status.name', '在家');
+
+        Sanctum::actingAs($student->user);
+        $calendar = $this->getJson('/api/calendar?start=2026-07-21&end=2026-07-21')->assertOk();
+        $calendar->assertJsonCount(1, 'attendance')
+            ->assertJsonPath('attendance.0.detail_label', '第1-2节；夜自习·在家')
+            ->assertJsonPath('attendance.0.regular_detail_label', '第1-2节')
+            ->assertJsonPath('attendance.0.evening_study_label', '夜自习·在家')
+            ->assertJsonPath('attendance.0.display_evening_status.name', '在家')
+            ->assertJsonPath('attendance.0.evening_destination', '父母家')
+            ->assertJsonPath('attendance.0.has_evening_study', true);
     }
 
     public function test_day_student_cannot_submit_a_boarding_only_period_in_a_mixed_request(): void
@@ -235,6 +264,141 @@ class EveningStudyAttendanceTest extends TestCase
             ->assertJsonPath('error', '所选节次仅对住宿生开放');
 
         $this->assertSame(0, AttendanceRecord::withoutGlobalScope('day_attendance')->count());
+    }
+
+    public function test_student_can_edit_an_entire_pending_mixed_request(): void
+    {
+        $data = $this->schoolData('edit-mixed-leave');
+        $student = $this->student($data, 'edit-mixed-leave', true);
+        $leaveType = LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '病假',
+            'slug' => 'sick_leave',
+            'is_active' => true,
+            'student_requestable' => true,
+            'input_type' => 'duration_select',
+        ]);
+        $requestedStatus = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在宿舍',
+            'color' => 'blue',
+            'base_status' => 'excused',
+            'student_requestable' => true,
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($student->user);
+        $created = $this->postJson('/api/leave-requests', [
+            'type' => $leaveType->slug,
+            'start_date' => '2026-07-21',
+            'end_date' => '2026-07-21',
+            'sessions' => [1, 2, 10],
+            'reason' => '原申请',
+            'evening_study_status_id' => $requestedStatus->id,
+            'destination' => '原去向',
+        ])->assertCreated();
+        $oldRecordIds = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('leave_batch_id', $created->json('leave_batch_id'))
+            ->pluck('id');
+
+        $updated = $this->putJson('/api/leave-requests/' . $created->json('id'), [
+            'type' => $leaveType->slug,
+            'start_date' => '2026-07-22',
+            'end_date' => '2026-07-22',
+            'sessions' => [2, 10],
+            'reason' => '修改后的申请',
+            'evening_study_status_id' => $requestedStatus->id,
+            'destination' => '宿舍301',
+        ])->assertCreated()
+            ->assertJsonPath('record_count', 2)
+            ->assertJsonPath('scene', 'mixed');
+
+        $this->assertSame(2, AttendanceRecord::withoutGlobalScope('day_attendance')->count());
+        $this->assertSame(0, AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $oldRecordIds)->count());
+        $this->assertDatabaseHas('attendance_records', [
+            'id' => $updated->json('id'),
+            'date' => '2026-07-22',
+            'reason' => '修改后的申请',
+            'approval_status' => 'pending',
+        ]);
+        $this->assertDatabaseHas('attendance_records', [
+            'period_id' => 10,
+            'destination' => '宿舍301',
+            'requested_evening_status_id' => $requestedStatus->id,
+        ]);
+    }
+
+    public function test_teacher_can_process_only_selected_parts_without_deleting_the_rest(): void
+    {
+        $data = $this->schoolData('partial-approval');
+        $teacher = $this->user('teacher.partial@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $student = $this->student($data, 'partial-approval', true);
+        $leaveType = LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '病假',
+            'slug' => 'sick_leave',
+            'is_active' => true,
+            'student_requestable' => true,
+            'input_type' => 'duration_select',
+        ]);
+        $requestedStatus = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在家',
+            'color' => 'blue',
+            'base_status' => 'excused',
+            'student_requestable' => true,
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($student->user);
+        $created = $this->postJson('/api/leave-requests', [
+            'type' => $leaveType->slug,
+            'start_date' => '2026-07-21',
+            'end_date' => '2026-07-21',
+            'sessions' => [1, 2, 10],
+            'reason' => '部分审批测试',
+            'evening_study_status_id' => $requestedStatus->id,
+            'destination' => '父母家',
+        ])->assertCreated();
+        $records = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('leave_batch_id', $created->json('leave_batch_id'))
+            ->get()->keyBy('period_id');
+
+        Sanctum::actingAs($teacher);
+        $this->postJson('/api/leave-requests/' . $created->json('id') . '/approve', [
+            'record_ids' => [$records[1]->id],
+        ])->assertOk()
+            ->assertJsonPath('approved_count', 1)
+            ->assertJsonPath('remaining_pending_count', 2);
+
+        $this->assertSame('approved', $records[1]->fresh()->approval_status);
+        $this->assertSame('pending', $records[2]->fresh()->approval_status);
+        $this->assertSame('pending', $records[10]->fresh()->approval_status);
+
+        $pending = $this->getJson('/api/leave-requests?status=pending')->assertOk();
+        $pending->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.regular_period_label', '第2节')
+            ->assertJsonPath('data.0.evening_study_label', '夜自习·在家');
+
+        $this->postJson('/api/leave-requests/' . $records[10]->id . '/reject', [
+            'record_ids' => [$records[10]->id],
+            'reason' => '夜自习部分不批准',
+        ])->assertOk()
+            ->assertJsonPath('rejected_count', 1)
+            ->assertJsonPath('remaining_pending_count', 1);
+
+        $this->assertSame('rejected', $records[10]->fresh()->approval_status);
+        $this->assertSame('pending', $records[2]->fresh()->approval_status);
+        $this->assertSame(3, AttendanceRecord::withoutGlobalScope('day_attendance')->count());
+
+        $all = $this->getJson('/api/leave-requests')->assertOk();
+        $this->assertEqualsCanonicalizing(
+            ['approved', 'pending', 'rejected'],
+            collect($all->json('data'))->pluck('status')->all()
+        );
     }
 
     public function test_teacher_marks_night_leave_with_separate_leave_type_and_status(): void

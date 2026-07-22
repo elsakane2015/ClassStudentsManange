@@ -117,7 +117,11 @@ const isDisplayableAttendanceRecord = record => (
 const getAttendanceRecordDisplayLabel = (record, details = {}) => {
     if (record.scene === 'evening_study') {
         const periodName = record.period_name_snapshot || record.period?.name || '夜自习';
-        const statusName = record.evening_study_status?.name || record.status_name_snapshot || '已标记';
+        const requestedStatusName = record.requested_evening_status?.name || record.requested_status_name_snapshot;
+        const actualStatusName = record.evening_study_status?.name || record.status_name_snapshot;
+        const statusName = record.is_self_applied
+            ? requestedStatusName || actualStatusName || '已标记'
+            : actualStatusName || requestedStatusName || '已标记';
         return `${periodName}·${statusName}`;
     }
 

@@ -93,12 +93,13 @@ class LeaveRequestController extends Controller
         // 如果没有 batch_id（旧数据），则按 student_id + date + leave_type_id + approval_status 分组
         $groupedRequests = $records->groupBy(function($record) {
             if ($record->leave_batch_id) {
-                return 'batch_' . $record->leave_batch_id;
+                return 'batch_' . $record->leave_batch_id . '_' . ($record->approval_status ?? 'approved');
             }
             // 兼容旧数据：按单日分组
             return $record->student_id . '_' . $record->date->format('Y-m-d') . '_' . $record->leave_type_id . '_' . $record->approval_status;
         })->map(function($group) use ($periodMap) {
             $first = $group->first();
+            $primaryRecord = $group->firstWhere('scene', 'regular') ?? $first;
             $scenes = $group->pluck('scene')->filter()->unique()->values();
             $eveningRecord = $group->firstWhere('scene', 'evening_study');
             $selectedPeriodIds = $group->pluck('period_id')
@@ -114,6 +115,35 @@ class LeaveRequestController extends Controller
                 ->all();
             $batchDisplayLabel = !empty($selectedPeriodNames)
                 ? $this->generatePeriodDisplayLabel($selectedPeriodNames)
+                : null;
+            $regularPeriodIds = $group->where('scene', '!=', 'evening_study')
+                ->pluck('period_id')
+                ->filter(fn ($periodId) => $periodId !== null)
+                ->map(fn ($periodId) => (int) $periodId)
+                ->unique()
+                ->sort()
+                ->values();
+            $regularPeriodNames = $regularPeriodIds
+                ->map(fn ($periodId) => $periodMap->has($periodId) ? $periodMap->get($periodId)['name'] : null)
+                ->filter()
+                ->values()
+                ->all();
+            $regularPeriodLabel = !empty($regularPeriodNames)
+                ? $this->generatePeriodDisplayLabel($regularPeriodNames)
+                : null;
+            $displayEveningStatus = $eveningRecord?->is_self_applied
+                ? ($eveningRecord?->requestedEveningStatus ?? $eveningRecord?->eveningStudyStatus)
+                : ($eveningRecord?->eveningStudyStatus ?? $eveningRecord?->requestedEveningStatus);
+            $displayEveningStatusName = $displayEveningStatus?->name
+                ?? $eveningRecord?->requested_status_name_snapshot
+                ?? $eveningRecord?->status_name_snapshot;
+            $eveningPeriodName = $eveningRecord?->period_name_snapshot
+                ?? ($eveningRecord?->period_id && $periodMap->has($eveningRecord->period_id)
+                    ? $periodMap->get($eveningRecord->period_id)['name']
+                    : null)
+                ?? '夜自习';
+            $eveningStudyLabel = $eveningRecord
+                ? $eveningPeriodName . ($displayEveningStatusName ? '·' . $displayEveningStatusName : '')
                 : null;
             $dates = $group->pluck('date')->sort();
             $startDate = $dates->first();
@@ -132,35 +162,43 @@ class LeaveRequestController extends Controller
             }
             
             return [
-                'id' => $first->id, // Use first record's id as request id
-                'leave_batch_id' => $first->leave_batch_id,
-                'student_id' => $first->student_id,
-                'student' => $first->student,
-                'class' => $first->class,
-                'class_id' => $first->class_id,
-                'type' => $first->leaveType?->slug ?? 'leave',
-                'leave_type' => $first->leaveType,
+                'id' => $primaryRecord->id,
+                'leave_batch_id' => $primaryRecord->leave_batch_id,
+                'student_id' => $primaryRecord->student_id,
+                'student' => $primaryRecord->student,
+                'class' => $primaryRecord->class,
+                'class_id' => $primaryRecord->class_id,
+                'type' => $primaryRecord->leaveType?->slug ?? 'leave',
+                'leave_type' => $primaryRecord->leaveType,
                 'start_date' => $startDate->format('Y-m-d'),
                 'end_date' => $endDate->format('Y-m-d'),
                 'date_range_text' => $dateRangeText,
                 'total_days' => $totalDays,
-                'half_day' => $first->details['option'] ?? null,
-                'half_day_label' => $batchDisplayLabel ?: $this->getOptionLabel($first),
-                'details' => $first->details,
-                'reason' => $first->reason,
+                'half_day' => $primaryRecord->details['option'] ?? null,
+                'half_day_label' => $regularPeriodLabel ?: ($batchDisplayLabel ?: $this->getOptionLabel($primaryRecord)),
+                'details' => $primaryRecord->details,
+                'reason' => $primaryRecord->reason,
                 'scene' => $scenes->count() > 1 ? 'mixed' : ($scenes->first() ?? 'regular'),
                 'has_evening_study' => $eveningRecord !== null,
+                'period_ids' => $selectedPeriodIds->all(),
+                'period_label' => $batchDisplayLabel,
+                'regular_period_ids' => $regularPeriodIds->all(),
+                'regular_period_label' => $regularPeriodLabel,
+                'regular_period_count' => $regularPeriodIds->count(),
+                'evening_study_label' => $eveningStudyLabel,
                 'destination' => $eveningRecord?->destination,
                 'requested_evening_status' => $eveningRecord?->requestedEveningStatus,
                 'requested_status_name_snapshot' => $eveningRecord?->requested_status_name_snapshot,
                 'evening_study_status' => $eveningRecord?->eveningStudyStatus,
                 'status_name_snapshot' => $eveningRecord?->status_name_snapshot,
-                'images' => $first->images,
-                'status' => $first->approval_status ?? 'approved',
-                'approval_status' => $first->approval_status,
-                'approved_at' => $first->approved_at,
-                'approver_name' => $first->approver?->name,
-                'created_at' => $first->created_at,
+                'display_evening_status' => $displayEveningStatus,
+                'display_evening_status_name' => $displayEveningStatusName,
+                'images' => $primaryRecord->images,
+                'status' => $primaryRecord->approval_status ?? 'approved',
+                'approval_status' => $primaryRecord->approval_status,
+                'approved_at' => $primaryRecord->approved_at,
+                'approver_name' => $primaryRecord->approver?->name,
+                'created_at' => $primaryRecord->created_at,
                 'record_ids' => $group->pluck('id')->toArray(),
                 'records' => $group->map(function($r) use ($periodMap) {
                     // 优先用 period_id 查节次名，避免同一时段所有 record 显示相同标签（如"下午"×4）
@@ -176,7 +214,10 @@ class LeaveRequestController extends Controller
                         'period_id' => $r->period_id,
                         'label'     => $label,
                         'scene'     => $r->scene,
+                        'approval_status' => $r->approval_status,
                         'destination' => $r->destination,
+                        'requested_evening_status' => $r->requestedEveningStatus,
+                        'evening_study_status' => $r->eveningStudyStatus,
                     ];
                 })->sortBy(['date', 'period_id'])->values(),
             ];
@@ -238,7 +279,18 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Leave type not found'], 422);
         }
 
-        $limitError = $this->checkLeaveTypeRequestLimit($student->id, $leaveType, $request->start_date, $request->end_date);
+        $replaceRecordIds = collect($request->attributes->get('replace_record_ids', []))
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+        $limitError = $this->checkLeaveTypeRequestLimit(
+            $student->id,
+            $leaveType,
+            $request->start_date,
+            $request->end_date,
+            $replaceRecordIds->all()
+        );
         if ($limitError) {
             return response()->json(['error' => $limitError], 422);
         }
@@ -461,6 +513,20 @@ class LeaveRequestController extends Controller
         DB::beginTransaction();
         try {
             // Lock the student's records in this date range to prevent concurrent inserts (TOCTOU fix)
+            $replacementRecords = collect();
+            if ($replaceRecordIds->isNotEmpty()) {
+                $replacementRecords = AttendanceRecord::withoutGlobalScope('day_attendance')
+                    ->whereIn('id', $replaceRecordIds)
+                    ->where('student_id', $student->id)
+                    ->lockForUpdate()
+                    ->get();
+                if ($replacementRecords->count() !== $replaceRecordIds->count()
+                    || $replacementRecords->contains(fn ($item) => $item->approval_status !== 'pending')) {
+                    DB::rollBack();
+                    return response()->json(['error' => '申请状态已变化，请刷新后重试'], 409);
+                }
+            }
+
             $lockedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $student->id)
                 ->whereBetween('date', [$request->start_date, $request->end_date])
                 ->where(function ($q) {
@@ -472,6 +538,7 @@ class LeaveRequestController extends Controller
                     $q->whereNull('approval_status')
                       ->orWhereIn('approval_status', ['pending', 'approved']);
                 })
+                ->when($replaceRecordIds->isNotEmpty(), fn ($query) => $query->whereNotIn('id', $replaceRecordIds))
                 ->lockForUpdate()
                 ->get();
 
@@ -482,6 +549,12 @@ class LeaveRequestController extends Controller
                     'error' => 'Conflict detected with existing requests.',
                     'conflicts' => $conflicts
                 ], 409);
+            }
+
+            if ($replacementRecords->isNotEmpty()) {
+                AttendanceRecord::withoutGlobalScope('day_attendance')
+                    ->whereIn('id', $replacementRecords->pluck('id'))
+                    ->delete();
             }
 
             while ($start->lte($end)) {
@@ -608,6 +681,35 @@ class LeaveRequestController extends Controller
     }
 
     /**
+     * Replace a student's pending request with newly submitted values.
+     */
+    public function update(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!$user->student) {
+            return response()->json(['error' => 'User is not a student'], 403);
+        }
+
+        $record = AttendanceRecord::withoutGlobalScope('day_attendance')->findOrFail($id);
+        if ($record->student_id !== $user->student->id) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $records = $record->leave_batch_id
+            ? AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('leave_batch_id', $record->leave_batch_id)->get()
+            : collect([$record]);
+
+        if ($records->contains(fn ($item) => $item->approval_status !== 'pending')) {
+            return response()->json(['error' => '只有全部处于待审批状态的申请才能编辑'], 422);
+        }
+
+        $request->attributes->set('replace_record_ids', $records->pluck('id')->all());
+
+        return $this->store($request);
+    }
+
+    /**
      * Approve a leave request (update attendance_records)
      */
     public function approve(Request $request, $id)
@@ -632,10 +734,18 @@ class LeaveRequestController extends Controller
             return response()->json(['error' => 'Not your class'], 403);
         }
 
-        $newLeaveTypeId    = $request->input('leave_type_id');
-        $excludedRecordIds = $request->input('excluded_record_ids', []);
+        $request->validate([
+            'record_ids' => 'nullable|array|min:1',
+            'record_ids.*' => 'integer',
+            'excluded_record_ids' => 'nullable|array',
+            'excluded_record_ids.*' => 'integer',
+            'leave_type_id' => 'nullable|integer|exists:leave_types,id',
+        ]);
+        $newLeaveTypeId = $request->input('leave_type_id');
+        $selectedRecordIds = collect($request->input('record_ids', []))->map(fn ($value) => (int) $value)->unique();
+        $excludedRecordIds = collect($request->input('excluded_record_ids', []))->map(fn ($value) => (int) $value)->unique();
 
-        $approvedCount = DB::transaction(function () use ($record, $user, $newLeaveTypeId, $excludedRecordIds) {
+        $result = DB::transaction(function () use ($record, $user, $newLeaveTypeId, $selectedRecordIds, $excludedRecordIds) {
             if ($record->leave_batch_id) {
                 $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('leave_batch_id', $record->leave_batch_id)
                     ->where('approval_status', 'pending')
@@ -651,19 +761,25 @@ class LeaveRequestController extends Controller
                     ->get();
             }
 
-            // 删除教师不批准的节次记录
-            if (!empty($excludedRecordIds)) {
-                AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $excludedRecordIds)->delete();
-                $relatedRecords = $relatedRecords->filter(
-                    fn($r) => !in_array($r->id, $excludedRecordIds)
-                );
+            if ($selectedRecordIds->isNotEmpty()) {
+                $invalidIds = $selectedRecordIds->diff($relatedRecords->pluck('id')->map(fn ($value) => (int) $value));
+                if ($invalidIds->isNotEmpty()) {
+                    abort(422, '包含不属于该待审批申请的记录');
+                }
+                $relatedRecords = $relatedRecords->whereIn('id', $selectedRecordIds);
+            } elseif ($excludedRecordIds->isNotEmpty()) {
+                // 兼容旧前端：未勾选记录继续待审批，不再删除。
+                $relatedRecords = $relatedRecords->reject(fn ($item) => $excludedRecordIds->contains((int) $item->id));
             }
 
-            // 若有节次被排除，重算剩余 records 的 display_label 和 option_periods
+            abort_if($relatedRecords->isEmpty(), 422, '请至少选择一条待审批记录');
+
+            // 部分批准普通考勤时，按实际批准的节次重算显示信息。
             $newDisplayLabel  = null;
             $newOptionPeriods = null;
-            if (!empty($excludedRecordIds) && $relatedRecords->isNotEmpty()) {
+            if (($selectedRecordIds->isNotEmpty() || $excludedRecordIds->isNotEmpty()) && $relatedRecords->isNotEmpty()) {
                 $approvedPeriodIds = $relatedRecords
+                    ->where('scene', '!=', 'evening_study')
                     ->pluck('period_id')
                     ->filter(fn($pid) => $pid !== null)
                     ->sort()
@@ -722,10 +838,24 @@ class LeaveRequestController extends Controller
                 }
             }
 
-            return $relatedRecords->count();
+            $remainingPendingCount = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->when($record->leave_batch_id,
+                    fn ($query) => $query->where('leave_batch_id', $record->leave_batch_id),
+                    fn ($query) => $query->where('student_id', $record->student_id)
+                        ->whereDate('date', $record->date)
+                        ->where('leave_type_id', $record->leave_type_id)
+                        ->where('is_self_applied', true))
+                ->where('approval_status', 'pending')
+                ->count();
+
+            return ['processed' => $relatedRecords->count(), 'remaining' => $remainingPendingCount];
         });
 
-        return response()->json(['message' => 'Approved', 'approved_count' => $approvedCount]);
+        return response()->json([
+            'message' => 'Approved',
+            'approved_count' => $result['processed'],
+            'remaining_pending_count' => $result['remaining'],
+        ]);
     }
 
     /**
@@ -743,11 +873,23 @@ class LeaveRequestController extends Controller
 
         $record = AttendanceRecord::withoutGlobalScope('day_attendance')->findOrFail($id);
 
+        if ($user->role === 'teacher') {
+            $ownsClass = $user->teacherClasses()->where('id', $record->class_id)->exists();
+            if (!$ownsClass) return response()->json(['error' => 'Not your class'], 403);
+        }
+
         if ($isClassAdmin && $record->class_id !== $user->student->class_id) {
             return response()->json(['error' => 'Not your class'], 403);
         }
         
-        $rejectedCount = DB::transaction(function () use ($record, $user, $request) {
+        $request->validate([
+            'record_ids' => 'nullable|array|min:1',
+            'record_ids.*' => 'integer',
+            'reason' => 'nullable|string|max:1000',
+        ]);
+        $selectedRecordIds = collect($request->input('record_ids', []))->map(fn ($value) => (int) $value)->unique();
+
+        $result = DB::transaction(function () use ($record, $user, $request, $selectedRecordIds) {
             if ($record->leave_batch_id) {
                 $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('leave_batch_id', $record->leave_batch_id)
                     ->where('approval_status', 'pending')
@@ -762,6 +904,16 @@ class LeaveRequestController extends Controller
                     ->lockForUpdate()
                     ->get();
             }
+
+            if ($selectedRecordIds->isNotEmpty()) {
+                $invalidIds = $selectedRecordIds->diff($relatedRecords->pluck('id')->map(fn ($value) => (int) $value));
+                if ($invalidIds->isNotEmpty()) {
+                    abort(422, '包含不属于该待审批申请的记录');
+                }
+                $relatedRecords = $relatedRecords->whereIn('id', $selectedRecordIds);
+            }
+
+            abort_if($relatedRecords->isEmpty(), 422, '请至少选择一条待审批记录');
 
             foreach ($relatedRecords as $r) {
                 $details = is_array($r->details) ? $r->details : (json_decode($r->details ?? '{}', true) ?? []);
@@ -799,10 +951,24 @@ class LeaveRequestController extends Controller
                 }
             }
 
-            return $relatedRecords->count();
+            $remainingPendingCount = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->when($record->leave_batch_id,
+                    fn ($query) => $query->where('leave_batch_id', $record->leave_batch_id),
+                    fn ($query) => $query->where('student_id', $record->student_id)
+                        ->whereDate('date', $record->date)
+                        ->where('leave_type_id', $record->leave_type_id)
+                        ->where('is_self_applied', true))
+                ->where('approval_status', 'pending')
+                ->count();
+
+            return ['processed' => $relatedRecords->count(), 'remaining' => $remainingPendingCount];
         });
 
-        return response()->json(['message' => 'Rejected', 'rejected_count' => $rejectedCount]);
+        return response()->json([
+            'message' => 'Rejected',
+            'rejected_count' => $result['processed'],
+            'remaining_pending_count' => $result['remaining'],
+        ]);
     }
 
     /**
@@ -972,7 +1138,13 @@ class LeaveRequestController extends Controller
         ]);
     }
 
-    private function checkLeaveTypeRequestLimit(int $studentId, $leaveType, string $startDate, string $endDate): ?string
+    private function checkLeaveTypeRequestLimit(
+        int $studentId,
+        $leaveType,
+        string $startDate,
+        string $endDate,
+        array $excludeRecordIds = []
+    ): ?string
     {
         $limitDays = (int) ($leaveType->limit_days ?? 0);
         $limitTimes = (int) ($leaveType->limit_times ?? 0);
@@ -993,6 +1165,7 @@ class LeaveRequestController extends Controller
                 $q->whereNull('approval_status')
                   ->orWhereIn('approval_status', ['pending', 'approved']);
             })
+            ->when(!empty($excludeRecordIds), fn ($query) => $query->whereNotIn('id', $excludeRecordIds))
             ->get(['id', 'leave_batch_id']);
 
         $usedTimes = $records

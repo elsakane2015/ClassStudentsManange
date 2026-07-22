@@ -1,20 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import useAuthStore from '../../store/authStore';
 import LeaveImageUploader from '../../components/LeaveImageUploader';
 
 export default function LeaveRequestForm() {
     const { user } = useAuthStore();
     const navigate = useNavigate();
+    const location = useLocation();
     const [searchParams] = useSearchParams();
+    const editingLeave = location.state?.editMode ? location.state.leaveData : null;
+    const editingDetails = (() => {
+        if (!editingLeave?.details) return {};
+        if (typeof editingLeave.details !== 'string') return editingLeave.details;
+        try { return JSON.parse(editingLeave.details); } catch { return {}; }
+    })();
 
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [periods, setPeriods] = useState([]);
     const [eveningStatuses, setEveningStatuses] = useState([]);
     const [timeSlots, setTimeSlots] = useState([]);
-    const [selectedTimeSlotId, setSelectedTimeSlotId] = useState(null);
+    const [selectedTimeSlotId, setSelectedTimeSlotId] = useState(
+        editingDetails.time_slot_id || editingLeave?.time_slot_id || null
+    );
     const [showPeriodDetail, setShowPeriodDetail] = useState(false);
     const [imageSettings, setImageSettings] = useState({
         enabled: false,
@@ -22,18 +31,25 @@ export default function LeaveRequestForm() {
         max_size_mb: 5,
         allowed_formats: 'jpg,jpeg,png,gif,webp'
     });
-    const [formData, setFormData] = useState({
-        type: '',
-        start_date: searchParams.get('start') || '',
-        end_date: searchParams.get('end') || '',
-        half_day: '',
-        time_slot_id: null,
-        reason: '',
-        details: {},
-        images: [],
-        evening_study_status_id: '',
-        destination: '',
-    });
+    const [formData, setFormData] = useState(() => ({
+        type: editingLeave?.type || '',
+        start_date: editingLeave?.start_date || searchParams.get('start') || '',
+        end_date: editingLeave?.end_date || searchParams.get('end') || '',
+        half_day: editingLeave?.half_day || '',
+        time_slot_id: editingDetails.time_slot_id || editingLeave?.time_slot_id || null,
+        reason: editingLeave?.reason || '',
+        details: {
+            ...editingDetails,
+            ...(editingLeave?.period_ids?.length ? { period_ids: editingLeave.period_ids.map(Number) } : {}),
+        },
+        images: editingLeave?.images || [],
+        evening_study_status_id: String(
+            editingLeave?.requested_evening_status?.id
+            || editingLeave?.display_evening_status?.id
+            || ''
+        ),
+        destination: editingLeave?.destination || '',
+    }));
     const [error, setError] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const submittingRef = useRef(false);
@@ -249,9 +265,15 @@ export default function LeaveRequestForm() {
             console.log('[LeaveRequest Submit] time_slot_id:', submitData.time_slot_id);
             console.log('[LeaveRequest Submit] details:', submitData.details);
 
-            await axios.post('/leave-requests', submitData);
-            alert('请假申请提交成功！');
-            navigate('/student/dashboard');
+            if (editingLeave) {
+                await axios.put(`/leave-requests/${editingLeave.id}`, submitData);
+                alert('请假申请修改成功！');
+                navigate('/student/history');
+            } else {
+                await axios.post('/leave-requests', submitData);
+                alert('请假申请提交成功！');
+                navigate('/student/dashboard');
+            }
         } catch (err) {
             console.error(err);
             if (err.response?.status === 409) {
@@ -654,7 +676,7 @@ export default function LeaveRequestForm() {
     return (
         <Layout>
             <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md">
-                <h2 className="text-2xl font-bold mb-6">新建请假申请</h2>
+                <h2 className="text-2xl font-bold mb-6">{editingLeave ? '编辑请假申请' : '新建请假申请'}</h2>
 
                 {error && (
                     <div className="mb-4 bg-red-50 text-red-700 p-4 rounded">
@@ -740,7 +762,7 @@ export default function LeaveRequestForm() {
                     <div className="flex justify-end">
                         <button
                             type="button"
-                            onClick={() => navigate('/student/dashboard')}
+                            onClick={() => navigate(editingLeave ? '/student/history' : '/student/dashboard')}
                             className="mr-3 bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
                         >
                             取消
@@ -750,7 +772,7 @@ export default function LeaveRequestForm() {
                             disabled={submitting}
                             className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
                         >
-                            {submitting ? '提交中...' : '提交申请'}
+                            {submitting ? '保存中...' : (editingLeave ? '保存修改' : '提交申请')}
                         </button>
                     </div>
                 </form>

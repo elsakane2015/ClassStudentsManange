@@ -328,6 +328,18 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
                                         <span className="font-medium">{eventDetail.detail}</span>
                                     </div>
                                 )}
+                                {eventDetail.eveningStudyStatus && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">夜自习状态</span>
+                                        <span className="font-medium text-cyan-700">{eventDetail.eveningStudyStatus}</span>
+                                    </div>
+                                )}
+                                {eventDetail.eveningDestination && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">具体去向</span>
+                                        <span className="font-medium">{eventDetail.eveningDestination}</span>
+                                    </div>
+                                )}
                                 {eventDetail.note && (
                                     <div className="border-t pt-2 mt-2">
                                         <span className="text-gray-500 block mb-1">备注</span>
@@ -408,6 +420,9 @@ export default function StudentCalendar({ events = [], onDateClick, onDateSelect
                                     </div>
                                     {event.detail && (
                                         <p className="text-sm text-gray-600 mt-1 ml-5">{event.detail}</p>
+                                    )}
+                                    {event.eveningStudyLabel && (
+                                        <p className="text-sm text-cyan-700 mt-1 ml-5">{event.eveningStudyLabel}</p>
                                     )}
                                 </div>
                             ))}

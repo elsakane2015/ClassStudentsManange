@@ -407,7 +407,10 @@ export default function StudentDashboard() {
                         color: color,
                         allDay: true,
                         type: record.leave_type?.name || record.status,
-                        detail: detailLabel || null, // 添加详情标签用于弹窗显示
+                        detail: record.regular_detail_label || detailLabel || null,
+                        eveningStudyLabel: record.evening_study_label || null,
+                        eveningStudyStatus: record.display_evening_status_name || record.display_evening_status?.name || null,
+                        eveningDestination: record.evening_destination || null,
                         note: record.reason || record.note || '',
                         approvalStatus: record.approval_status,
                         isSelfApplied: record.is_self_applied,

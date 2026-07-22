@@ -657,7 +657,7 @@ class AttendanceController extends Controller
         }
         $attendances = $attendanceQuery->whereIn('student_id', $studentIds)
                           ->where('date', $date)
-                          ->with(['leaveType', 'eveningStudyStatus:id,name'])
+                          ->with(['leaveType', 'requestedEveningStatus:id,name', 'eveningStudyStatus:id,name'])
                           ->orderByRaw('period_id IS NULL DESC') // NULL在前
                           ->orderBy('period_id')
                           ->get();
@@ -915,7 +915,12 @@ class AttendanceController extends Controller
                 $query->where('scene', 'evening_study')
                     ->orWhereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave']);
             })
-            ->with(['student.user', 'leaveType', 'eveningStudyStatus:id,name'])
+            ->with([
+                'student.user',
+                'leaveType',
+                'requestedEveningStatus:id,name',
+                'eveningStudyStatus:id,name',
+            ])
             ->orderBy('created_at', 'desc')
             ->get();
         
@@ -969,7 +974,14 @@ class AttendanceController extends Controller
             // 优先使用自定义的显示标签（用户自定义选择节次时生成）
             if ($record->scene === 'evening_study') {
                 $periodName = $record->period_name_snapshot ?: '夜自习';
-                $statusName = $record->eveningStudyStatus?->name ?: ($record->status_name_snapshot ?: '已标记');
+                $displayStatus = $record->is_self_applied
+                    ? ($record->requestedEveningStatus ?? $record->eveningStudyStatus)
+                    : ($record->eveningStudyStatus ?? $record->requestedEveningStatus);
+                $statusName = $displayStatus?->name
+                    ?? ($record->is_self_applied
+                        ? ($record->requested_status_name_snapshot ?: $record->status_name_snapshot)
+                        : ($record->status_name_snapshot ?: $record->requested_status_name_snapshot))
+                    ?? '已标记';
                 $optionLabel = $periodName . '·' . $statusName;
             } elseif (isset($details['display_label'])) {
                 $optionLabel = $details['display_label'];
@@ -1142,19 +1154,35 @@ class AttendanceController extends Controller
                 return response()->json(['error' => 'Missing start/end dates'], 400);
             }
             
-            // UNIFIED DATA SOURCE: All attendance data comes from attendance_records
-            // Including self-applied leaves (with approval_status)
-            $attendance = AttendanceRecord::where('student_id', $user->student->id)
+            $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+            $periodMap = collect($attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [])
+                ->keyBy(fn ($period) => (int) ($period['id'] ?? 0));
+
+            // 学生日历需要同时读取日常考勤和不计入日常统计的夜自习记录。
+            $attendance = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('student_id', $user->student->id)
                 ->whereBetween('date', [$start, $end])
-                ->with('leaveType')
+                ->with(['leaveType', 'requestedEveningStatus:id,name', 'eveningStudyStatus:id,name'])
+                ->orderBy('date')
+                ->orderBy('period_id')
                 ->get()
                 ->map(function($record) {
                     // Add detail_label for display
                     $detailLabel = '';
                     $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
                     
+                    if ($record->scene === 'evening_study') {
+                        $displayStatus = $record->is_self_applied
+                            ? ($record->requestedEveningStatus ?? $record->eveningStudyStatus)
+                            : ($record->eveningStudyStatus ?? $record->requestedEveningStatus);
+                        $statusName = $displayStatus?->name
+                            ?? $record->requested_status_name_snapshot
+                            ?? $record->status_name_snapshot
+                            ?? '已标记';
+                        $detailLabel = ($record->period_name_snapshot ?: '夜自习') . '·' . $statusName;
+                    }
                     // Special handling for roll_call source
-                    if ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
+                    elseif ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
                         // Use original_status from details if available (for accurate label)
                         $originalStatus = $details['original_status'] ?? $record->status;
                         // 从 leave_type 表读取名称，而不是硬编码
@@ -1209,7 +1237,7 @@ class AttendanceController extends Controller
                     return $record;
                 });
             
-            // 合并同一天同一次申请的多条记录（一次请假按多个节次创建多条，日历只显示一次）
+            // 合并同一天同一次申请，但保留普通节次和夜自习的各自详情。
             $grouped = [];
             foreach ($attendance as $record) {
                 $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
@@ -1227,12 +1255,50 @@ class AttendanceController extends Controller
                     $key = 'id_' . $record->id;
                 }
 
-                if (!isset($grouped[$key])) {
-                    $grouped[$key] = $record;
-                }
+                $grouped[$key][] = $record;
             }
-            
-            $mergedAttendance = collect(array_values($grouped));
+
+            $mergedAttendance = collect($grouped)->map(function ($group) use ($periodMap) {
+                $records = collect($group);
+                $primaryRecord = $records->firstWhere('scene', 'regular') ?? $records->first();
+                $regularRecords = $records->where('scene', '!=', 'evening_study');
+                $eveningRecord = $records->firstWhere('scene', 'evening_study');
+
+                $regularPeriodIds = $regularRecords->flatMap(function ($record) {
+                    if ($record->period_id !== null) {
+                        return [(int) $record->period_id];
+                    }
+                    $details = is_array($record->details)
+                        ? $record->details
+                        : (json_decode($record->details ?? '{}', true) ?? []);
+                    return array_map('intval', $details['period_ids'] ?? []);
+                })->unique()->sort()->values();
+                $regularPeriodNames = $regularPeriodIds
+                    ->map(fn ($periodId) => $periodMap->has($periodId) ? ($periodMap->get($periodId)['name'] ?? null) : null)
+                    ->filter()
+                    ->values()
+                    ->all();
+                $regularDetailLabel = !empty($regularPeriodNames)
+                    ? $this->formatAttendancePeriodNames($regularPeriodNames)
+                    : ($regularRecords->first()?->detail_label ?? '');
+                $eveningStudyLabel = $eveningRecord?->detail_label;
+                $displayEveningStatus = $eveningRecord?->is_self_applied
+                    ? ($eveningRecord?->requestedEveningStatus ?? $eveningRecord?->eveningStudyStatus)
+                    : ($eveningRecord?->eveningStudyStatus ?? $eveningRecord?->requestedEveningStatus);
+                $combinedLabels = array_values(array_filter([$regularDetailLabel, $eveningStudyLabel]));
+
+                $primaryRecord->detail_label = implode('；', $combinedLabels);
+                $primaryRecord->regular_detail_label = $regularDetailLabel ?: null;
+                $primaryRecord->regular_period_ids = $regularPeriodIds->all();
+                $primaryRecord->evening_study_label = $eveningStudyLabel;
+                $primaryRecord->display_evening_status = $displayEveningStatus;
+                $primaryRecord->display_evening_status_name = $displayEveningStatus?->name;
+                $primaryRecord->has_evening_study = $eveningRecord !== null;
+                $primaryRecord->evening_destination = $eveningRecord?->destination;
+                $primaryRecord->record_ids = $records->pluck('id')->all();
+
+                return $primaryRecord;
+            })->values();
                 
             // Return only attendance (leaves are now empty since all data is in attendance_records)
             return response()->json([
@@ -1242,6 +1308,41 @@ class AttendanceController extends Controller
         } catch (\Exception $e) {
             return response()->json(['error' => 'Server Error: ' . $e->getMessage(), 'trace' => $e->getTraceAsString()], 500);
         }
+    }
+
+    private function formatAttendancePeriodNames(array $periodNames): string
+    {
+        $numbered = [];
+        $special = [];
+
+        foreach ($periodNames as $name) {
+            if (preg_match('/^第(\d+)节$/', $name, $matches)) {
+                $numbered[] = (int) $matches[1];
+            } else {
+                $special[] = $name;
+            }
+        }
+
+        $parts = [];
+        if (!empty($numbered)) {
+            sort($numbered);
+            $ranges = [];
+            $start = $numbered[0];
+            $end = $start;
+            for ($index = 1; $index < count($numbered); $index++) {
+                if ($numbered[$index] === $end + 1) {
+                    $end = $numbered[$index];
+                    continue;
+                }
+                $ranges[] = $start === $end ? (string) $start : "{$start}-{$end}";
+                $start = $numbered[$index];
+                $end = $start;
+            }
+            $ranges[] = $start === $end ? (string) $start : "{$start}-{$end}";
+            $parts[] = '第' . implode(',', $ranges) . '节';
+        }
+
+        return implode('、', array_merge($parts, $special));
     }
 
     /**

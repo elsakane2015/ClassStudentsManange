@@ -28,7 +28,7 @@ export default function LeaveHistory() {
 
     const handleEdit = (leave) => {
         // Navigate to leave request page with edit data
-        navigate('/student/leave-request', {
+        navigate('/student/request', {
             state: {
                 editMode: true,
                 leaveData: leave
@@ -104,34 +104,26 @@ export default function LeaveHistory() {
                                                 {leave.total_days > 1 && ` (共${leave.total_days}天)`}
                                             </span>
                                         </div>
-                                        <div className="text-sm text-gray-500">
-                                            {(() => {
-                                                // 解析 details
-                                                let details = null;
-                                                try {
-                                                    details = typeof leave.details === 'string'
-                                                        ? JSON.parse(leave.details)
-                                                        : leave.details;
-                                                } catch (e) { }
-
-                                                // 优先使用 display_label（自定义选择）
-                                                if (details?.display_label) {
-                                                    const label = details.display_label;
-                                                    const count = details.option_periods;
-                                                    return count ? `${label} (${count}节)` : label;
-                                                }
-                                                // 否则使用 time_slot_name
-                                                if (details?.time_slot_name) {
-                                                    return `仅${details.time_slot_name}`;
-                                                }
-                                                // 最后使用 half_day_label
-                                                return leave.half_day_label ? `仅${leave.half_day_label}` : (leave.half_day ? `仅${leave.half_day}` : '全天');
-                                            })()}
-                                        </div>
-                                        {leave.scene === 'evening_study' && (
+                                        {leave.regular_period_label && (
+                                            <p className="text-sm text-gray-500">
+                                                普通考勤：{leave.regular_period_label}
+                                                {leave.regular_period_count ? ` (${leave.regular_period_count}节)` : ''}
+                                            </p>
+                                        )}
+                                        {leave.has_evening_study && (
                                             <p className="mt-1 text-sm text-cyan-700">
-                                                夜自习状态：{leave.requested_evening_status?.name || leave.requested_status_name_snapshot || '-'}
+                                                夜自习：{leave.display_evening_status_name
+                                                    || leave.display_evening_status?.name
+                                                    || leave.requested_evening_status?.name
+                                                    || leave.requested_status_name_snapshot
+                                                    || leave.evening_study_status?.name
+                                                    || '-'}
                                                 {leave.destination ? ` · 去向：${leave.destination}` : ''}
+                                            </p>
+                                        )}
+                                        {!leave.regular_period_label && !leave.has_evening_study && (
+                                            <p className="text-sm text-gray-500">
+                                                {leave.half_day_label ? `仅${leave.half_day_label}` : (leave.half_day ? `仅${leave.half_day}` : '全天')}
                                             </p>
                                         )}
                                         {/* 显示申请理由或文本说明 */}

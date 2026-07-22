@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
 import { format, addDays, parseISO } from 'date-fns';
@@ -16,21 +16,39 @@ function semesterDateRange(semester) {
     return { date_from: format(start, 'yyyy-MM-dd'), date_to: format(end, 'yyyy-MM-dd') };
 }
 
-function slotLabel(request) {
-    if (request.scene === 'evening_study') {
-        return `夜自习 · ${request.requested_evening_status?.name || request.requested_status_name_snapshot || '状态待确认'}`;
-    }
-    let d = null;
-    try { d = typeof request.details === 'string' ? JSON.parse(request.details) : request.details; } catch (e) {}
-    if (d?.display_label) return d.option_periods ? `${d.display_label} (${d.option_periods}节)` : d.display_label;
-    if (d?.time_slot_name) return d.time_slot_name;
-    return request.half_day_label || (request.half_day ? request.half_day : '全天');
-}
-
 function reasonText(request) {
     let d = null;
     try { d = typeof request.details === 'string' ? JSON.parse(request.details) : request.details; } catch (e) {}
     return d?.text || request.reason || null;
+}
+
+function RequestScopeDetails({ request, compact = false }) {
+    const eveningStatus = request.display_evening_status_name
+        || request.display_evening_status?.name
+        || request.requested_evening_status?.name
+        || request.requested_status_name_snapshot
+        || request.evening_study_status?.name
+        || '状态待确认';
+    const textClass = compact ? 'text-xs' : 'text-sm';
+
+    return (
+        <div className={`${textClass} space-y-1`}>
+            {request.regular_period_label && (
+                <p className="text-gray-600">
+                    普通考勤：{request.regular_period_label}
+                    {request.regular_period_count ? ` (${request.regular_period_count}节)` : ''}
+                </p>
+            )}
+            {request.has_evening_study && (
+                <p className="text-cyan-700">
+                    夜自习：{eveningStatus}{request.destination ? ` · 去向：${request.destination}` : ''}
+                </p>
+            )}
+            {!request.regular_period_label && !request.has_evening_study && (
+                <p className="text-gray-600">{request.half_day_label || request.half_day || '全天'}</p>
+            )}
+        </div>
+    );
 }
 
 // ── StatusBadge ───────────────────────────────────────────
@@ -68,11 +86,12 @@ function Pagination({ currentPage, totalPages, onChange }) {
     );
 }
 
-// ── 修改并批准面板 ────────────────────────────────────────
-function ModifyApprovePanel({ request, leaveTypes, onCancel, onConfirm }) {
+// ── 审批范围面板 ──────────────────────────────────────────
+function ApprovalScopePanel({ request, leaveTypes, onApprove, onReject }) {
     const [selectedLeaveTypeId, setSelectedLeaveTypeId] = useState(request.leave_type?.id ?? '');
-    // excluded = set of record IDs the teacher does NOT approve
-    const [excluded, setExcluded] = useState(new Set());
+    const [selected, setSelected] = useState(() => new Set((request.records || []).map(record => record.id)));
+    const [rejectionReason, setRejectionReason] = useState('');
+    const [submitting, setSubmitting] = useState(false);
 
     // group records by date
     const recordsByDate = useMemo(() => {
@@ -86,10 +105,10 @@ function ModifyApprovePanel({ request, leaveTypes, onCancel, onConfirm }) {
     }, [request.records]);
 
     const totalRecords = (request.records || []).length;
-    const approvedCount = totalRecords - excluded.size;
+    const selectedCount = selected.size;
 
     const toggle = (id) => {
-        setExcluded(prev => {
+        setSelected(prev => {
             const next = new Set(prev);
             next.has(id) ? next.delete(id) : next.add(id);
             return next;
@@ -98,28 +117,49 @@ function ModifyApprovePanel({ request, leaveTypes, onCancel, onConfirm }) {
 
     const toggleDay = (date) => {
         const ids = (recordsByDate[date] || []).map(r => r.id);
-        const allExcluded = ids.every(id => excluded.has(id));
-        setExcluded(prev => {
+        const allSelected = ids.every(id => selected.has(id));
+        setSelected(prev => {
             const next = new Set(prev);
-            if (allExcluded) ids.forEach(id => next.delete(id));
+            if (allSelected) ids.forEach(id => next.delete(id));
             else ids.forEach(id => next.add(id));
             return next;
         });
     };
 
     const recordLabel = (rec) => {
+        if (rec.scene === 'evening_study') {
+            const status = rec.requested_evening_status?.name || rec.evening_study_status?.name || '状态待确认';
+            return `${rec.label || '夜自习'} · ${status}`;
+        }
         if (rec.label) return rec.label;
         if (rec.period_id == null) return '全天';
         return `节次 ${rec.period_id}`;
     };
 
+    const submit = async (action) => {
+        if (selectedCount === 0 || submitting) return;
+        setSubmitting(true);
+        try {
+            if (action === 'approve') {
+                await onApprove(request.id, selectedLeaveTypeId || null, Array.from(selected));
+            } else {
+                await onReject(request.id, Array.from(selected), rejectionReason.trim());
+            }
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     return (
-        <div className="mt-3 border border-indigo-200 rounded-lg bg-indigo-50 p-3 text-sm">
-            <p className="font-medium text-gray-700 mb-2">修改后批准</p>
+        <div className="mt-4 border-t border-gray-200 pt-3 text-sm">
+            <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="font-medium text-gray-700">选择审批范围</p>
+                <span className="text-xs text-gray-500">已选 {selectedCount}/{totalRecords} 项</span>
+            </div>
 
             {/* 假类选择 */}
             <div className="flex items-center gap-2 mb-3">
-                <label className="text-xs text-gray-500 whitespace-nowrap">假类:</label>
+                <label className="text-xs text-gray-500 whitespace-nowrap">批准为</label>
                 <select
                     value={selectedLeaveTypeId}
                     onChange={e => setSelectedLeaveTypeId(Number(e.target.value))}
@@ -134,35 +174,34 @@ function ModifyApprovePanel({ request, leaveTypes, onCancel, onConfirm }) {
             {/* 节次/日期列表 */}
             {Object.keys(recordsByDate).length > 0 && (
                 <div className="mb-3 space-y-2">
-                    <p className="text-xs text-gray-500">勾选要批准的节次（取消勾选 = 不批准该节）:</p>
+                    <p className="text-xs text-gray-500">未选部分会继续保留为待审批，可稍后单独处理。</p>
                     {Object.entries(recordsByDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, recs]) => {
                         const dayIds = recs.map(r => r.id);
-                        const allExcl = dayIds.every(id => excluded.has(id));
-                        const someExcl = dayIds.some(id => excluded.has(id)) && !allExcl;
+                        const allSelected = dayIds.every(id => selected.has(id));
+                        const someSelected = dayIds.some(id => selected.has(id)) && !allSelected;
                         return (
                             <div key={date} className="bg-white rounded border border-gray-200 p-2">
                                 {/* 日期行 */}
                                 <label className="flex items-center gap-2 cursor-pointer mb-1">
                                     <input
                                         type="checkbox"
-                                        checked={!allExcl}
-                                        ref={el => el && (el.indeterminate = someExcl)}
+                                        checked={allSelected}
+                                        ref={el => el && (el.indeterminate = someSelected)}
                                         onChange={() => toggleDay(date)}
                                         className="h-4 w-4 rounded text-indigo-600"
                                     />
                                     <span className="font-medium text-gray-700 text-xs">{date}</span>
-                                    {allExcl && <span className="text-xs text-red-400">（全天不批准）</span>}
                                 </label>
                                 {/* 节次行（多节时展开） */}
                                 {recs.length > 1 || recs[0]?.period_id != null ? (
                                     <div className="ml-6 flex flex-wrap gap-1">
                                         {recs.map(rec => (
-                                            <label key={rec.id} className={`flex items-center gap-1 px-2 py-0.5 rounded border cursor-pointer text-xs transition-colors ${excluded.has(rec.id) ? 'bg-red-50 border-red-200 text-red-500 line-through' : 'bg-indigo-50 border-indigo-200 text-indigo-700'}`}>
+                                            <label key={rec.id} className={`flex items-center gap-1 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${selected.has(rec.id) ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
                                                 <input
                                                     type="checkbox"
-                                                    checked={!excluded.has(rec.id)}
+                                                    checked={selected.has(rec.id)}
                                                     onChange={() => toggle(rec.id)}
-                                                    className="sr-only"
+                                                    className="h-3.5 w-3.5 rounded text-indigo-600"
                                                 />
                                                 {recordLabel(rec)}
                                             </label>
@@ -175,28 +214,27 @@ function ModifyApprovePanel({ request, leaveTypes, onCancel, onConfirm }) {
                 </div>
             )}
 
-            {approvedCount === 0 && (
-                <p className="text-xs text-red-500 mb-2">请至少保留一条记录再批准</p>
-            )}
+            <input
+                value={rejectionReason}
+                onChange={event => setRejectionReason(event.target.value)}
+                className="mb-3 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs"
+                placeholder="驳回原因（驳回选中项时填写）"
+            />
 
-            {/* 操作按钮 */}
             <div className="flex justify-end gap-2">
                 <button
-                    onClick={onCancel}
-                    className="px-3 py-1 text-xs border border-gray-300 rounded bg-white hover:bg-gray-50"
+                    disabled={selectedCount === 0 || submitting}
+                    onClick={() => submit('reject')}
+                    className="inline-flex items-center px-3 py-1.5 text-xs rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-40"
                 >
-                    取消
+                    <XMarkIcon className="h-4 w-4 mr-1" />驳回选中
                 </button>
                 <button
-                    disabled={approvedCount === 0}
-                    onClick={() => onConfirm(
-                        request.id,
-                        selectedLeaveTypeId || null,
-                        Array.from(excluded)
-                    )}
-                    className="px-3 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-40"
+                    disabled={selectedCount === 0 || submitting}
+                    onClick={() => submit('approve')}
+                    className="inline-flex items-center px-3 py-1.5 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-40"
                 >
-                    确认批准（{approvedCount}/{totalRecords}节）
+                    <CheckIcon className="h-4 w-4 mr-1" />批准选中
                 </button>
             </div>
         </div>
@@ -226,7 +264,6 @@ export default function ApprovalHistory() {
     const [requests, setRequests]   = useState([]);
     const [loading, setLoading]     = useState(true);
     const [filter, setFilter]       = useState(searchParams.get('status') || 'all');
-    const [scene, setScene]         = useState('all');
     const [semesters, setSemesters] = useState([]);
     const [selectedSemesterId, setSelectedSemesterId] = useState(null);
     const [leaveTypes, setLeaveTypes] = useState([]);
@@ -235,8 +272,6 @@ export default function ApprovalHistory() {
     const [currentPage, setCurrentPage] = useState(1);
     const [expandedImages, setExpandedImages] = useState({});
     const [lightboxImage, setLightboxImage]   = useState(null);
-    // 修改并批准面板展开状态
-    const [modifyingId, setModifyingId] = useState(null);
 
     // ── 初始化 ───────────────────────────────────────────
     useEffect(() => {
@@ -255,16 +290,14 @@ export default function ApprovalHistory() {
     useEffect(() => {
         if (selectedSemesterId === null) return;
         fetchRequests();
-    }, [filter, scene, selectedSemesterId]);
+    }, [filter, selectedSemesterId]);
 
     const fetchRequests = async () => {
         setLoading(true);
         setCurrentPage(1);
-        setModifyingId(null);
         try {
             const params = {};
             if (filter !== 'all') params.status = filter;
-            if (scene !== 'all') params.scene = scene;
             const semester = semesters.find(s => s.id === selectedSemesterId);
             if (semester) {
                 const { date_from, date_to } = semesterDateRange(semester);
@@ -296,35 +329,28 @@ export default function ApprovalHistory() {
         }
     };
 
-    const handleReject = async (id) => {
+    const handleReject = async (id, recordIds, reason) => {
         try {
-            await axios.post(`/leave-requests/${id}/reject`, { reason: 'Teacher rejected' });
+            await axios.post(`/leave-requests/${id}/reject`, {
+                record_ids: recordIds,
+                reason: reason || '教师驳回',
+            });
             fetchRequests();
-        } catch {
-            alert('操作失败');
+        } catch (error) {
+            alert('操作失败: ' + (error.response?.data?.message || error.response?.data?.error || error.message));
+            throw error;
         }
     };
 
-    // 直接批准（不修改）
-    const handleApprove = async (id) => {
+    const handleApprove = async (id, leaveTypeId, recordIds) => {
         try {
-            await axios.post(`/leave-requests/${id}/approve`);
-            fetchRequests();
-        } catch {
-            alert('操作失败');
-        }
-    };
-
-    // 修改后批准
-    const handleApproveWithModification = async (id, leaveTypeId, excludedRecordIds) => {
-        try {
-            const payload = {};
+            const payload = { record_ids: recordIds };
             if (leaveTypeId) payload.leave_type_id = leaveTypeId;
-            if (excludedRecordIds.length > 0) payload.excluded_record_ids = excludedRecordIds;
             await axios.post(`/leave-requests/${id}/approve`, payload);
             fetchRequests();
-        } catch {
-            alert('操作失败');
+        } catch (error) {
+            alert('操作失败: ' + (error.response?.data?.message || error.response?.data?.error || error.message));
+            throw error;
         }
     };
 
@@ -350,46 +376,13 @@ export default function ApprovalHistory() {
             );
         }
 
-        const isModifying = modifyingId === request.id;
         return (
-            <div className="mt-3">
-                {/* 驳回 + 分裂批准按钮 */}
-                <div className="flex justify-end items-center gap-2">
-                    <button onClick={() => handleReject(request.id)}
-                        className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-full shadow-sm text-white bg-red-600 hover:bg-red-700">
-                        <XMarkIcon className="h-4 w-4 mr-1" />驳回
-                    </button>
-
-                    {/* 分裂批准按钮 */}
-                    <div className="inline-flex rounded-full shadow-sm">
-                        {/* 直接批准 */}
-                        <button
-                            onClick={() => { setModifyingId(null); handleApprove(request.id); }}
-                            className="inline-flex items-center pl-3 pr-2 py-1.5 text-xs font-medium rounded-l-full text-white bg-green-600 hover:bg-green-700"
-                        >
-                            <CheckIcon className="h-4 w-4 mr-1" />批准
-                        </button>
-                        {/* 展开修改面板 */}
-                        <button
-                            onClick={() => setModifyingId(isModifying ? null : request.id)}
-                            title="修改后批准"
-                            className={`inline-flex items-center px-1.5 py-1.5 text-xs font-medium rounded-r-full border-l border-green-500 text-white ${isModifying ? 'bg-green-800' : 'bg-green-600 hover:bg-green-700'}`}
-                        >
-                            <ChevronDownIcon className={`h-3.5 w-3.5 transition-transform ${isModifying ? 'rotate-180' : ''}`} />
-                        </button>
-                    </div>
-                </div>
-
-                {/* 修改面板 */}
-                {isModifying && (
-                    <ModifyApprovePanel
-                        request={request}
-                        leaveTypes={leaveTypes}
-                        onCancel={() => setModifyingId(null)}
-                        onConfirm={handleApproveWithModification}
-                    />
-                )}
-            </div>
+            <ApprovalScopePanel
+                request={request}
+                leaveTypes={leaveTypes}
+                onApprove={handleApprove}
+                onReject={handleReject}
+            />
         );
     };
 
@@ -405,9 +398,8 @@ export default function ApprovalHistory() {
                     </p>
                     <p className="text-sm text-gray-500 mt-1">
                         {request.leave_type?.name || request.type || '请假'}
-                        <span className="mx-2">•</span>
-                        {slotLabel(request)}
                     </p>
+                    <RequestScopeDetails request={request} />
                 </div>
                 <div className="ml-2 flex-shrink-0 flex flex-col items-end gap-1">
                     <StatusBadge status={request.status} />
@@ -427,7 +419,6 @@ export default function ApprovalHistory() {
                     )}
                 </p>
                 {(() => { const r = reasonText(request); return r ? <p className="mt-1 italic">"{r}"</p> : null; })()}
-                {request.scene === 'evening_study' && request.destination && <p className="mt-1 text-cyan-700">具体去向：{request.destination}</p>}
             </div>
 
             <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
@@ -486,9 +477,8 @@ export default function ApprovalHistory() {
                 </div>
                 <p className="text-xs text-gray-600">
                     {request.leave_type?.name || '请假'}
-                    <span className="mx-1 text-gray-400">·</span>
-                    {slotLabel(request)}
                 </p>
+                <RequestScopeDetails request={request} compact />
                 <p className="text-xs text-gray-700">
                     <span className="font-medium">{format(new Date(request.start_date), 'yyyy-MM-dd')}</span>
                     {request.start_date !== request.end_date && (
@@ -496,7 +486,6 @@ export default function ApprovalHistory() {
                     )}
                 </p>
                 {r && <p className="text-xs text-gray-500 italic truncate">"{r}"</p>}
-                {request.scene === 'evening_study' && request.destination && <p className="text-xs text-cyan-700 truncate">去向：{request.destination}</p>}
                 <div className="text-[10px] text-gray-400 space-y-0.5">
                     {request.created_at && <p>提交: {format(new Date(request.created_at), 'MM-dd HH:mm')}</p>}
                     {request.approved_at && (request.status === 'approved' || request.status === 'rejected') && (
@@ -546,11 +535,6 @@ export default function ApprovalHistory() {
                             </button>
                         ))}
                     </div>
-                    <select value={scene} onChange={e => setScene(e.target.value)} className="text-sm border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                        <option value="all">全部场景</option>
-                        <option value="regular">普通考勤</option>
-                        <option value="evening_study">夜自习</option>
-                    </select>
                     {/* 学期 */}
                     {semesters.length > 0 && (
                         <select value={selectedSemesterId ?? ''}
