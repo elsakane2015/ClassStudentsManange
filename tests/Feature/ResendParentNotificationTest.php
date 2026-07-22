@@ -495,7 +495,18 @@ class ResendParentNotificationTest extends TestCase
             ->assertJsonPath('source', 'system_settings');
 
         Sanctum::actingAs($teacher);
-        $teacherSettings = $this->getJson('/api/resend/teacher-settings')->assertOk();
+        $teacherSettings = $this->getJson('/api/resend/teacher-settings')
+            ->assertOk()
+            ->assertJsonStructure([
+                'enabled_events',
+                'events',
+                'personal_email_providers',
+                'email_logs',
+            ]);
+        $this->assertIsArray($teacherSettings->json('enabled_events'));
+        $this->assertIsArray($teacherSettings->json('events'));
+        $this->assertIsArray($teacherSettings->json('personal_email_providers'));
+        $this->assertIsArray($teacherSettings->json('email_logs'));
         $microsoftOption = collect($teacherSettings->json('personal_email_providers'))
             ->firstWhere('key', 'microsoft');
         $this->assertTrue($microsoftOption['available']);

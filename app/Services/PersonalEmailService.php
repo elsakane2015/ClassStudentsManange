@@ -174,7 +174,7 @@ class PersonalEmailService
 
     public function microsoftAuthorizationUrl(User $teacher): string
     {
-        abort_unless($this->microsoftConfigured(), 422, '系统管理员尚未配置 Microsoft 邮箱应用');
+        abort_unless($this->microsoftConfigured(), 422, '系统管理员尚未配置 Microsoft OAuth 应用');
         $microsoftConfig = $this->microsoftMail->configuration();
 
         $nonce = (string) Str::uuid();

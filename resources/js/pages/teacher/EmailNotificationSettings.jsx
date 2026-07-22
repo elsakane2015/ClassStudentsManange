@@ -4,26 +4,39 @@ import { ArrowTopRightOnSquareIcon, CheckCircleIcon, DevicePhoneMobileIcon, Enve
 import { Link } from 'react-router-dom';
 import Layout from '../../components/Layout';
 
+const defaultSettings = {
+    enabled: true,
+    email_enabled: true,
+    email_provider: 'system_resend',
+    email_fallback_to_resend: false,
+    sms_enabled: false,
+    enabled_events: [],
+    events: [],
+    resend_ready: false,
+    email_ready: false,
+    personal_email_ready: false,
+    personal_email_account: null,
+    personal_email_providers: [],
+    email_logs: [],
+    sms_ready: false,
+    student_count: 0,
+    missing_parent_email_count: 0,
+    missing_parent_phone_count: 0,
+};
+
+function normalizeSettings(data = {}) {
+    return {
+        ...defaultSettings,
+        ...data,
+        enabled_events: Array.isArray(data.enabled_events) ? data.enabled_events : [],
+        events: Array.isArray(data.events) ? data.events : [],
+        personal_email_providers: Array.isArray(data.personal_email_providers) ? data.personal_email_providers : [],
+        email_logs: Array.isArray(data.email_logs) ? data.email_logs : [],
+    };
+}
+
 export default function EmailNotificationSettings() {
-    const [settings, setSettings] = useState({
-        enabled: true,
-        email_enabled: true,
-        email_provider: 'system_resend',
-        email_fallback_to_resend: false,
-        sms_enabled: false,
-        enabled_events: [],
-        events: [],
-        resend_ready: false,
-        email_ready: false,
-        personal_email_ready: false,
-        personal_email_account: null,
-        personal_email_providers: [],
-        email_logs: [],
-        sms_ready: false,
-        student_count: 0,
-        missing_parent_email_count: 0,
-        missing_parent_phone_count: 0,
-    });
+    const [settings, setSettings] = useState(defaultSettings);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [accountBusy, setAccountBusy] = useState(false);
@@ -34,7 +47,7 @@ export default function EmailNotificationSettings() {
     useEffect(() => {
         axios.get('/resend/teacher-settings')
             .then(response => {
-                setSettings(response.data);
+                setSettings(normalizeSettings(response.data));
                 const account = response.data.personal_email_account;
                 if (account?.provider) {
                     setPersonalProvider(account.provider);
@@ -90,10 +103,10 @@ export default function EmailNotificationSettings() {
     const updateAccountState = (account) => {
         setSettings(prev => ({
             ...prev,
-            personal_email_account: account,
-            personal_email_ready: account.ready,
+            personal_email_account: account || null,
+            personal_email_ready: Boolean(account?.ready),
             email_ready: prev.email_provider === 'personal_email'
-                ? account.ready || (prev.email_fallback_to_resend && prev.resend_ready)
+                ? Boolean(account?.ready) || (prev.email_fallback_to_resend && prev.resend_ready)
                 : prev.resend_ready,
         }));
         if (account?.provider) {
@@ -180,7 +193,7 @@ export default function EmailNotificationSettings() {
         try {
             const response = await axios.post(`/teacher-email/logs/${logId}/retry`);
             const refreshed = await axios.get('/resend/teacher-settings');
-            setSettings(refreshed.data);
+            setSettings(normalizeSettings(refreshed.data));
             setNotice({ type: 'success', text: response.data.message });
         } catch (error) {
             setNotice({ type: 'error', text: error.response?.data?.error || '重新发送失败' });
@@ -297,18 +310,24 @@ export default function EmailNotificationSettings() {
                             <div className="mt-5 space-y-5">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">邮箱服务商</label>
-                                    <select
-                                        value={personalProvider}
-                                        onChange={event => {
-                                            setPersonalProvider(event.target.value);
-                                            setAccountForm({ email: '', from_name: '', authorization_code: '' });
-                                        }}
-                                        className="mt-1 block w-full rounded-md border-gray-300 sm:max-w-md"
-                                    >
-                                        {settings.personal_email_providers.map(provider => (
-                                            <option key={provider.key} value={provider.key} disabled={provider.available === false}>{provider.label}{provider.available === false ? '（系统未配置）' : ''}</option>
-                                        ))}
-                                    </select>
+                                    {settings.personal_email_providers.length > 0 ? (
+                                        <select
+                                            value={personalProvider}
+                                            onChange={event => {
+                                                setPersonalProvider(event.target.value);
+                                                setAccountForm({ email: '', from_name: '', authorization_code: '' });
+                                            }}
+                                            className="mt-1 block w-full rounded-md border-gray-300 sm:max-w-md"
+                                        >
+                                            {settings.personal_email_providers.map(provider => (
+                                                <option key={provider.key} value={provider.key} disabled={provider.available === false}>{provider.label}{provider.available === false ? '（系统未配置）' : ''}</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <div className="mt-1 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                            暂时无法读取个人邮箱服务商，请刷新页面后重试。
+                                        </div>
+                                    )}
                                 </div>
 
                                 {personalProvider === 'microsoft' ? (

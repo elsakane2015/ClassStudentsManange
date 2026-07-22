@@ -43,7 +43,7 @@ class MicrosoftMailSettingsController extends Controller
         if ($validated['microsoft_mail_enabled']
             && (blank($validated['microsoft_mail_client_id']) || ! $hasSecret)) {
             return response()->json([
-                'error' => '启用 Microsoft 邮箱前必须填写 Client ID 和 Client Secret',
+                'error' => '启用 Microsoft OAuth 应用前必须填写 Client ID 和 Client Secret',
             ], 422);
         }
 
@@ -69,7 +69,7 @@ class MicrosoftMailSettingsController extends Controller
         $this->microsoftMail->resetConfiguration();
 
         return response()->json([
-            'message' => 'Microsoft 邮箱配置已保存',
+            'message' => 'Microsoft OAuth 应用配置已保存',
             'is_ready' => $this->microsoftMail->isReady(),
         ]);
     }

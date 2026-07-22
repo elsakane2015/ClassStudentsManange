@@ -30,9 +30,9 @@ export default function MicrosoftMailSettings() {
         setLoading(true);
         try {
             const response = await axios.get('/microsoft-mail/settings');
-            setSettings(response.data);
+            setSettings(prev => ({ ...prev, ...response.data }));
         } catch (error) {
-            setNotice({ type: 'error', text: error.response?.data?.error || '读取 Microsoft 邮箱配置失败' });
+            setNotice({ type: 'error', text: error.response?.data?.error || '读取 Microsoft OAuth 应用配置失败' });
         } finally {
             setLoading(false);
         }
@@ -70,9 +70,9 @@ export default function MicrosoftMailSettings() {
                 <div>
                     <div className="flex items-center gap-2">
                         <EnvelopeIcon className="h-6 w-6 text-blue-600" />
-                        <h4 className="text-lg font-semibold text-gray-900">Microsoft 个人邮箱</h4>
+                        <h4 className="text-lg font-semibold text-gray-900">Microsoft OAuth 应用</h4>
                     </div>
-                    <p className="mt-1 text-sm text-gray-500">允许班主任通过 Microsoft OAuth 连接 Outlook 或 Hotmail，并使用 Microsoft Graph 发信。</p>
+                    <p className="mt-1 text-sm text-gray-500">配置学校系统统一使用的 Microsoft 登录应用，不在此处配置发件邮箱。</p>
                 </div>
                 <div className="flex items-center gap-3">
                     {settings.is_ready ? (
@@ -87,7 +87,7 @@ export default function MicrosoftMailSettings() {
                     <button
                         type="button"
                         role="switch"
-                        aria-label="Microsoft 邮箱开关"
+                        aria-label="Microsoft OAuth 应用开关"
                         aria-checked={settings.microsoft_mail_enabled}
                         onClick={() => setSettings(prev => ({ ...prev, microsoft_mail_enabled: !prev.microsoft_mail_enabled }))}
                         className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors ${settings.microsoft_mail_enabled ? 'bg-blue-600' : 'bg-gray-200'}`}
@@ -104,6 +104,28 @@ export default function MicrosoftMailSettings() {
             )}
 
             <section className="space-y-5">
+                <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                    <p className="font-medium">班主任仍使用自己的 Microsoft 邮箱发信</p>
+                    <p className="mt-1 text-blue-800">管理员仅在这里配置 OAuth 应用身份。启用后，每位班主任需在“家长通知”中分别登录并授权自己的 Outlook、Hotmail 或 Microsoft 365 邮箱。</p>
+                </div>
+
+                <details className="rounded-md border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+                    <summary className="cursor-pointer font-medium text-gray-900">Microsoft Entra 配置步骤</summary>
+                    <ol className="mt-3 list-decimal space-y-2 pl-5 leading-6">
+                        <li>
+                            打开
+                            <a href="https://entra.microsoft.com/" target="_blank" rel="noreferrer" className="mx-1 text-blue-600 hover:text-blue-800">Microsoft Entra 管理中心</a>
+                            ，进入“应用程序 &gt; 应用注册 &gt; 新注册”。
+                        </li>
+                        <li>支持的账户类型选择“任何组织目录中的账户和个人 Microsoft 账户”，以同时支持 Microsoft 365、Outlook 和 Hotmail。</li>
+                        <li>注册后，在“概述”复制 Application (client) ID，填写到下方同名字段。</li>
+                        <li>进入“证书和密码 &gt; 客户端密码 &gt; 新客户端密码”，复制新密码的“值”填写到下方；不要填写“机密 ID”。</li>
+                        <li>进入“身份验证 &gt; 添加平台 &gt; Web”，将下方 Web Redirect URI 完整复制到重定向 URI，协议、域名和路径必须完全一致。</li>
+                        <li>进入“API 权限 &gt; 添加权限 &gt; Microsoft Graph &gt; 委托的权限”，添加 User.Read 和 Mail.Send。</li>
+                        <li>填写下方配置，打开右上角开关并保存。随后由班主任在“家长通知 &gt; 个人邮箱”中连接自己的 Microsoft 邮箱。</li>
+                    </ol>
+                    <a href="https://learn.microsoft.com/en-us/graph/auth-register-app-v2" target="_blank" rel="noreferrer" className="mt-3 inline-block text-blue-600 hover:text-blue-800">查看 Microsoft 官方应用注册说明</a>
+                </details>
                 <div className="grid grid-cols-1 gap-4">
                     <label className="block text-sm font-medium text-gray-700">
                         Application (client) ID
@@ -151,7 +173,7 @@ export default function MicrosoftMailSettings() {
                 </div>
 
                 <div className="rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                    Microsoft Entra 应用需要 Delegated 权限 <span className="font-medium">User.Read</span>、<span className="font-medium">Mail.Send</span>，并允许 <span className="font-medium">offline_access</span>。回调类型请选择 Web。
+                    系统连接时会申请 <span className="font-medium">openid、profile、email、offline_access、User.Read、Mail.Send</span>。其中 API 权限请选择 Delegated permissions，回调平台请选择 Web。
                 </div>
 
                 {settings.source === 'environment' && (
@@ -165,7 +187,7 @@ export default function MicrosoftMailSettings() {
                     disabled={saving}
                     className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
                 >
-                    {saving ? '保存中...' : '保存 Microsoft 配置'}
+                    {saving ? '保存中...' : '保存 OAuth 应用配置'}
                 </button>
             </div>
         </form>
