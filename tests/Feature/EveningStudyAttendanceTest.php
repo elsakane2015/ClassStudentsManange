@@ -137,6 +137,106 @@ class EveningStudyAttendanceTest extends TestCase
         $this->assertSame($requestedStatus->id, $personalRecord->requested_evening_status_id);
     }
 
+    public function test_boarding_student_can_request_regular_and_evening_periods_in_one_batch(): void
+    {
+        $data = $this->schoolData('mixed-leave');
+        $teacher = $this->user('teacher.mixed@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $student = $this->student($data, 'mixed-leave', true);
+        $leaveType = LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '病假',
+            'slug' => 'sick_leave',
+            'is_active' => true,
+            'student_requestable' => true,
+            'input_type' => 'duration_select',
+        ]);
+        $requestedStatus = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在家',
+            'color' => 'blue',
+            'base_status' => 'excused',
+            'student_requestable' => true,
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($student->user);
+        $response = $this->postJson('/api/leave-requests', [
+            'type' => $leaveType->slug,
+            'start_date' => '2026-07-21',
+            'end_date' => '2026-07-21',
+            'sessions' => [1, 2, 10],
+            'reason' => '身体不适',
+            'evening_study_status_id' => $requestedStatus->id,
+            'destination' => '父母家',
+        ])->assertCreated()
+            ->assertJsonPath('scene', 'mixed')
+            ->assertJsonPath('has_evening_study', true)
+            ->assertJsonPath('record_count', 3);
+
+        $records = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('leave_batch_id', $response->json('leave_batch_id'))
+            ->orderBy('period_id')
+            ->get();
+
+        $this->assertCount(3, $records);
+        $this->assertSame(2, AttendanceRecord::count());
+
+        $regularRecords = $records->where('scene', 'regular');
+        $eveningRecord = $records->firstWhere('scene', 'evening_study');
+        $this->assertCount(2, $regularRecords);
+        $this->assertSame([1, 2], $regularRecords->first()->details['period_ids']);
+        $this->assertTrue($regularRecords->every(fn ($record) => $record->counts_in_day_stats));
+        $this->assertSame([10], $eveningRecord->details['period_ids']);
+        $this->assertFalse($eveningRecord->counts_in_day_stats);
+        $this->assertSame($requestedStatus->id, $eveningRecord->requested_evening_status_id);
+        $this->assertSame('父母家', $eveningRecord->destination);
+
+        Sanctum::actingAs($teacher);
+        $this->postJson("/api/leave-requests/{$response->json('id')}/approve")
+            ->assertOk()
+            ->assertJsonPath('approved_count', 3);
+
+        $records->each->refresh();
+        $this->assertTrue($records->every(fn ($record) => $record->approval_status === 'approved'));
+        $this->assertTrue($regularRecords->every(fn ($record) => $record->fresh()->status === 'excused'));
+        $this->assertSame('excused', $eveningRecord->fresh()->status);
+
+        $index = $this->getJson('/api/leave-requests')->assertOk();
+        $index->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.scene', 'mixed')
+            ->assertJsonPath('data.0.has_evening_study', true)
+            ->assertJsonPath('data.0.destination', '父母家')
+            ->assertJsonPath('data.0.requested_evening_status.name', '在家');
+    }
+
+    public function test_day_student_cannot_submit_a_boarding_only_period_in_a_mixed_request(): void
+    {
+        $data = $this->schoolData('day-mixed-leave');
+        $student = $this->student($data, 'day-mixed-leave', false);
+        LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '病假',
+            'slug' => 'sick_leave',
+            'is_active' => true,
+            'student_requestable' => true,
+            'input_type' => 'duration_select',
+        ]);
+
+        Sanctum::actingAs($student->user);
+        $this->postJson('/api/leave-requests', [
+            'type' => 'sick_leave',
+            'start_date' => '2026-07-21',
+            'end_date' => '2026-07-21',
+            'sessions' => [1, 10],
+            'reason' => '身体不适',
+        ])->assertUnprocessable()
+            ->assertJsonPath('error', '所选节次仅对住宿生开放');
+
+        $this->assertSame(0, AttendanceRecord::withoutGlobalScope('day_attendance')->count());
+    }
+
     public function test_teacher_marks_night_leave_with_separate_leave_type_and_status(): void
     {
         $data = $this->schoolData('teacher-mark');
@@ -341,16 +441,38 @@ class EveningStudyAttendanceTest extends TestCase
             'sort_order' => 1,
         ]);
         SystemSetting::set('boarding_suspension_status_id', (string) $suspension->id);
-        SystemSetting::set('attendance_periods', json_encode([[
-            'id' => 10,
-            'name' => '夜自习',
-            'type' => 'special',
-            'order' => 0,
-            'audience_scope' => 'boarding',
-            'scene' => 'evening_study',
-            'counts_in_day_stats' => false,
-            'is_active' => true,
-        ]], JSON_UNESCAPED_UNICODE));
+        SystemSetting::set('attendance_periods', json_encode([
+            [
+                'id' => 1,
+                'name' => '第1节',
+                'type' => 'regular',
+                'order' => 0,
+                'audience_scope' => 'all',
+                'scene' => 'regular',
+                'counts_in_day_stats' => true,
+                'is_active' => true,
+            ],
+            [
+                'id' => 2,
+                'name' => '第2节',
+                'type' => 'regular',
+                'order' => 1,
+                'audience_scope' => 'all',
+                'scene' => 'regular',
+                'counts_in_day_stats' => true,
+                'is_active' => true,
+            ],
+            [
+                'id' => 10,
+                'name' => '夜自习',
+                'type' => 'special',
+                'order' => 2,
+                'audience_scope' => 'boarding',
+                'scene' => 'evening_study',
+                'counts_in_day_stats' => false,
+                'is_active' => true,
+            ],
+        ], JSON_UNESCAPED_UNICODE));
 
         return compact('school', 'department', 'grade', 'class', 'normal', 'suspension');
     }

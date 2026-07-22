@@ -99,6 +99,22 @@ class LeaveRequestController extends Controller
             return $record->student_id . '_' . $record->date->format('Y-m-d') . '_' . $record->leave_type_id . '_' . $record->approval_status;
         })->map(function($group) use ($periodMap) {
             $first = $group->first();
+            $scenes = $group->pluck('scene')->filter()->unique()->values();
+            $eveningRecord = $group->firstWhere('scene', 'evening_study');
+            $selectedPeriodIds = $group->pluck('period_id')
+                ->filter(fn ($periodId) => $periodId !== null)
+                ->map(fn ($periodId) => (int) $periodId)
+                ->unique()
+                ->sort()
+                ->values();
+            $selectedPeriodNames = $selectedPeriodIds
+                ->map(fn ($periodId) => $periodMap->has($periodId) ? $periodMap->get($periodId)['name'] : null)
+                ->filter()
+                ->values()
+                ->all();
+            $batchDisplayLabel = !empty($selectedPeriodNames)
+                ? $this->generatePeriodDisplayLabel($selectedPeriodNames)
+                : null;
             $dates = $group->pluck('date')->sort();
             $startDate = $dates->first();
             $endDate = $dates->last();
@@ -129,15 +145,16 @@ class LeaveRequestController extends Controller
                 'date_range_text' => $dateRangeText,
                 'total_days' => $totalDays,
                 'half_day' => $first->details['option'] ?? null,
-                'half_day_label' => $this->getOptionLabel($first),
+                'half_day_label' => $batchDisplayLabel ?: $this->getOptionLabel($first),
                 'details' => $first->details,
                 'reason' => $first->reason,
-                'scene' => $first->scene,
-                'destination' => $first->destination,
-                'requested_evening_status' => $first->requestedEveningStatus,
-                'requested_status_name_snapshot' => $first->requested_status_name_snapshot,
-                'evening_study_status' => $first->eveningStudyStatus,
-                'status_name_snapshot' => $first->status_name_snapshot,
+                'scene' => $scenes->count() > 1 ? 'mixed' : ($scenes->first() ?? 'regular'),
+                'has_evening_study' => $eveningRecord !== null,
+                'destination' => $eveningRecord?->destination,
+                'requested_evening_status' => $eveningRecord?->requestedEveningStatus,
+                'requested_status_name_snapshot' => $eveningRecord?->requested_status_name_snapshot,
+                'evening_study_status' => $eveningRecord?->eveningStudyStatus,
+                'status_name_snapshot' => $eveningRecord?->status_name_snapshot,
                 'images' => $first->images,
                 'status' => $first->approval_status ?? 'approved',
                 'approval_status' => $first->approval_status,
@@ -261,7 +278,18 @@ class LeaveRequestController extends Controller
             $timeSlot = \App\Models\TimeSlot::find($timeSlotId);
             if ($timeSlot) {
                 // 检查用户是否自定义选择了节次（与时段默认不同）
-                $defaultPeriodIds = $timeSlot->period_ids ?? [];
+                $defaultPeriodIds = collect($timeSlot->period_ids ?? [])
+                    ->map(fn ($id) => (int) $id)
+                    ->filter(function ($id) use ($student) {
+                        $period = $this->periodService->find($id);
+                        if (!$period || !$period['is_active']) {
+                            return false;
+                        }
+
+                        return $period['audience_scope'] !== 'boarding' || $student->is_boarding;
+                    })
+                    ->values()
+                    ->all();
                 if (!empty($periodIds)) {
                     // 用户有自定义选择 - 转换为整数并排序后比较
                     $userPeriods = array_map('intval', $periodIds);
@@ -368,20 +396,33 @@ class LeaveRequestController extends Controller
         if ($selectedPeriods->contains(null)) {
             return response()->json(['error' => '包含无效节次，请刷新后重试'], 422);
         }
-        $scenes = $selectedPeriods->pluck('scene')->unique()->values();
-        if ($scenes->count() > 1) {
-            return response()->json(['error' => '普通考勤和夜自习不能在同一次申请中混选'], 422);
+        if ($selectedPeriods->contains(fn ($period) => !$period['is_active'])) {
+            return response()->json(['error' => '包含已停用节次，请刷新后重试'], 422);
         }
-        $isEveningStudy = $scenes->first() === 'evening_study';
+        if (!$student->is_boarding && $selectedPeriods->contains(fn ($period) => $period['audience_scope'] === 'boarding')) {
+            return response()->json(['error' => '所选节次仅对住宿生开放'], 422);
+        }
+
+        $scenes = $selectedPeriods->pluck('scene')->unique()->values();
+        $hasEveningStudy = $scenes->contains('evening_study');
+        $hasRegularAttendance = $selectedPeriods->isEmpty() || $scenes->contains('regular');
+        $eveningPeriodIds = $selectedPeriods
+            ->filter(fn ($period) => $period['scene'] === 'evening_study')
+            ->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+        $regularPeriodIds = $selectedPeriods
+            ->filter(fn ($period) => $period['scene'] === 'regular')
+            ->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
         $requestedEveningStatus = null;
         $defaultEveningStatus = null;
 
-        if ($isEveningStudy) {
+        if ($hasEveningStudy) {
             if (!$student->is_boarding) {
                 return response()->json(['error' => '夜自习请假仅对住宿生开放'], 422);
             }
-            if (count($periodIds) !== 1 || $selectedPeriods->first()['audience_scope'] !== 'boarding') {
-                return response()->json(['error' => '请选择一个仅对住宿生开放的夜自习节次'], 422);
+            if ($selectedPeriods
+                ->filter(fn ($period) => $period['scene'] === 'evening_study')
+                ->contains(fn ($period) => $period['audience_scope'] !== 'boarding')) {
+                return response()->json(['error' => '夜自习节次必须配置为仅住宿生可用'], 422);
             }
             $requestedEveningStatus = EveningStudyStatus::whereKey($request->evening_study_status_id)
                 ->where('school_id', $student->school_id)
@@ -434,7 +475,7 @@ class LeaveRequestController extends Controller
                 ->lockForUpdate()
                 ->get();
 
-            $conflicts = $this->conflictService->checkFromCollection($lockedRecords, $request->sessions);
+            $conflicts = $this->conflictService->checkFromCollection($lockedRecords, $periodIds);
             if ($conflicts->isNotEmpty()) {
                 DB::rollBack();
                 return response()->json([
@@ -454,16 +495,33 @@ class LeaveRequestController extends Controller
                     ]);
                     foreach ($periodIds as $periodId) {
                         $period = $this->periodService->find((int) $periodId);
+                        $isEveningPeriod = $period['scene'] === 'evening_study';
+                        $scenePeriodIds = $isEveningPeriod ? $eveningPeriodIds : $regularPeriodIds;
+                        $recordDetails = $details;
+
+                        if ($scenes->count() > 1) {
+                            $scenePeriodNames = collect($scenePeriodIds)
+                                ->map(fn ($id) => $this->periodService->find((int) $id)['name'] ?? null)
+                                ->filter()
+                                ->values()
+                                ->all();
+                            $recordDetails['period_ids'] = $scenePeriodIds;
+                            $recordDetails['period_names'] = $scenePeriodNames;
+                            $recordDetails['option_periods'] = count($scenePeriodIds);
+                            $recordDetails['display_label'] = $this->generatePeriodDisplayLabel($scenePeriodNames);
+                            $recordDetails['request_period_ids'] = array_values(array_map('intval', $periodIds));
+                        }
+
                         $record = AttendanceRecord::withoutGlobalScope('day_attendance')->create([
                             'student_id' => $student->id,
                             'school_id' => $student->school_id,
                             'class_id' => $student->class_id,
                             'date' => $start->toDateString(),
                             'period_id' => $periodId,
-                            'status' => $isEveningStudy ? $defaultEveningStatus->base_status : 'leave',
+                            'status' => $isEveningPeriod ? $defaultEveningStatus->base_status : 'leave',
                             'leave_type_id' => $leaveType?->id,
                             'leave_batch_id' => $leaveBatchId, // 关联同一次申请
-                            'details' => !empty($details) ? $details : null,
+                            'details' => !empty($recordDetails) ? $recordDetails : null,
                             'images' => !empty($images) ? $images : null,
                             'is_self_applied' => true,
                             'approval_status' => 'pending',
@@ -472,11 +530,11 @@ class LeaveRequestController extends Controller
                             'scene' => $period['scene'],
                             'counts_in_day_stats' => $period['counts_in_day_stats'],
                             'period_name_snapshot' => $period['name'],
-                            'requested_evening_status_id' => $requestedEveningStatus?->id,
-                            'requested_status_name_snapshot' => $requestedEveningStatus?->name,
-                            'evening_study_status_id' => $defaultEveningStatus?->id,
-                            'status_name_snapshot' => $defaultEveningStatus?->name,
-                            'destination' => $request->destination,
+                            'requested_evening_status_id' => $isEveningPeriod ? $requestedEveningStatus?->id : null,
+                            'requested_status_name_snapshot' => $isEveningPeriod ? $requestedEveningStatus?->name : null,
+                            'evening_study_status_id' => $isEveningPeriod ? $defaultEveningStatus?->id : null,
+                            'status_name_snapshot' => $isEveningPeriod ? $defaultEveningStatus?->name : null,
+                            'destination' => $isEveningPeriod ? $request->destination : null,
                         ]);
                         $createdRecords[] = $record;
                     }
@@ -515,7 +573,7 @@ class LeaveRequestController extends Controller
         $firstRecord = $createdRecords[0] ?? null;
 
         // Trigger WeChat push notification
-        if ($firstRecord && !$isEveningStudy) {
+        if ($firstRecord && $hasRegularAttendance) {
             try {
                 $pushService = app(\App\Services\WechatPushService::class);
                 $pushService->sendLeaveRequestNotification($firstRecord);
@@ -543,7 +601,8 @@ class LeaveRequestController extends Controller
             'reason' => $request->reason,
             'status' => 'pending',
             'record_count' => count($createdRecords),
-            'scene' => $isEveningStudy ? 'evening_study' : 'regular',
+            'scene' => $scenes->count() > 1 ? 'mixed' : ($scenes->first() ?? 'regular'),
+            'has_evening_study' => $hasEveningStudy,
             'destination' => $request->destination,
         ], 201);
     }

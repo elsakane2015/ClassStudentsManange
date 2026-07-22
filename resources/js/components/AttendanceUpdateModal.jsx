@@ -275,7 +275,16 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         periods.filter(period => period.scene === 'evening_study').map(period => Number(period.id))
     );
     const regularPeriods = periods.filter(period => (period.scene || 'regular') === 'regular');
-    const isEveningSlot = slot => (slot.period_ids || []).some(periodId => eveningPeriodIds.has(Number(periodId)));
+    const eligiblePeriods = periods.filter(period => (
+        period.scene !== 'evening_study' || selectedStudentsAreBoarding
+    ));
+    const eligiblePeriodIds = new Set(eligiblePeriods.map(period => Number(period.id)));
+    const getEffectiveSlotPeriodIds = slot => (slot?.period_ids || [])
+        .map(Number)
+        .filter(periodId => eligiblePeriodIds.has(periodId));
+    const hasEveningPeriod = periodIds => (periodIds || [])
+        .some(periodId => eveningPeriodIds.has(Number(periodId)));
+    const selectedHasEveningStudy = hasEveningPeriod(inputData.period_ids);
     const pendingLeaveType = pendingAction?.leaveType;
     const pendingInputConfig = parseLeaveTypeInputConfig(pendingLeaveType);
     const pendingUsesUnifiedTimeSlots = usesUnifiedTimeSlotPicker(pendingLeaveType);
@@ -286,17 +295,20 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const unifiedTimeSlots = timeSlots
         .filter(slot => {
             if (slot.is_active === false) return false;
-            if (isEveningSlot(slot)) return selectedStudentsAreBoarding;
+            const effectivePeriodIds = getEffectiveSlotPeriodIds(slot);
+            const hasRegularPeriod = effectivePeriodIds.some(periodId => (
+                regularPeriods.some(period => Number(period.id) === periodId)
+            ));
+            if (effectivePeriodIds.length === 0 || !hasRegularPeriod) return false;
             if (pendingLeaveType?.input_type !== 'duration_select') return true;
 
             const slotKey = `time_slot_${slot.id}`;
             return configuredSlotKeys.includes(slotKey) || configuredSlotKeys.includes(String(slot.id));
-        })
-        .sort((left, right) => Number(isEveningSlot(left)) - Number(isEveningSlot(right)));
+        });
 
     const selectUnifiedTimeSlot = (slot) => {
-        const periodIds = (slot.period_ids || []).map(Number);
-        const eveningSlot = isEveningSlot(slot);
+        const periodIds = getEffectiveSlotPeriodIds(slot);
+        const includesEveningStudy = hasEveningPeriod(periodIds);
         const nextInputData = {
             time_slot_id: slot.id,
             time_slot_name: slot.name,
@@ -304,10 +316,10 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             option_label: slot.name,
             option_periods: periodIds.length || 1,
             period_ids: periodIds,
-            is_evening_study: eveningSlot,
-            evening_status_id: eveningSlot ? inputData.evening_status_id || eveningStatuses[0]?.id || '' : undefined,
-            destination: eveningSlot ? inputData.destination || inputData.text || '' : undefined,
-            reason: eveningSlot ? inputData.reason || '' : undefined,
+            is_evening_study: includesEveningStudy,
+            evening_status_id: includesEveningStudy ? inputData.evening_status_id || eveningStatuses[0]?.id || '' : undefined,
+            destination: includesEveningStudy ? inputData.destination || inputData.text || '' : undefined,
+            reason: includesEveningStudy ? inputData.reason || '' : undefined,
         };
 
         if (pendingNeedsDescription) {
@@ -359,7 +371,14 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         </div>
     );
 
-    const executeEveningStudyUpdate = async (details) => {
+    const finishInputAction = () => {
+        setInputModalOpen(false);
+        setPendingAction(null);
+        setInputData({});
+        fetchAttendance();
+    };
+
+    const executeEveningStudyUpdate = async (details, { finalize = true } = {}) => {
         const nightPeriodIds = (details.period_ids || [])
             .map(Number)
             .filter(periodId => eveningPeriodIds.has(periodId));
@@ -393,13 +412,12 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                 }
             }
 
-            setInputModalOpen(false);
-            setPendingAction(null);
-            setInputData({});
-            fetchAttendance();
+            if (finalize) finishInputAction();
+            return true;
         } catch (error) {
             console.error('Failed to update evening study attendance', error);
             alert('更新失败: ' + (error.response?.data?.message || error.message));
+            return false;
         }
     };
 
@@ -434,7 +452,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         }
     };
 
-    const executeBulkUpdate = async (status, leaveTypeId, details) => {
+    const executeBulkUpdate = async (status, leaveTypeId, details, { finalize = true } = {}) => {
         try {
             const records = Array.from(selectedStudentIds).map(id => ({
                 student_id: id,
@@ -536,14 +554,12 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             }
 
             // Close inputs if any
-            setInputModalOpen(false);
-            setPendingAction(null);
-
-            // Refresh
-            fetchAttendance();
+            if (finalize) finishInputAction();
+            return true;
         } catch (error) {
             console.error("Failed to update", error);
             alert("更新失败: " + (error.response?.data?.message || error.message));
+            return false;
         }
     };
 
@@ -683,7 +699,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         setTimeout(() => w.print(), 400);
     };
 
-    const handleInputConfirm = () => {
+    const handleInputConfirm = async () => {
         if (!pendingAction) return;
 
         if (usesUnifiedTimeSlotPicker(pendingAction.leaveType) && !inputData.time_slot_id) {
@@ -695,11 +711,6 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         const needsDescription = pendingAction.leaveType.input_type === 'text';
         if (needsDescription && !(inputData.text || '').trim()) {
             alert(`请填写${inputConfig.label || '去向说明'}`);
-            return;
-        }
-
-        if ((inputData.period_ids || []).some(periodId => eveningPeriodIds.has(Number(periodId)))) {
-            executeEveningStudyUpdate(inputData);
             return;
         }
 
@@ -721,7 +732,45 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             console.log('[Input Confirm] Period Numbers:', periodNumbers);
         }
 
-        executeBulkUpdate(pendingAction.status, pendingAction.leaveType.id, enhancedInputData);
+        const selectedPeriodIds = (enhancedInputData.period_ids || []).map(Number);
+        const nightPeriodIds = selectedPeriodIds.filter(periodId => eveningPeriodIds.has(periodId));
+        const dayPeriodIds = selectedPeriodIds.filter(periodId => !eveningPeriodIds.has(periodId));
+
+        if (nightPeriodIds.length > 0 && dayPeriodIds.length > 0) {
+            const dayDetails = {
+                ...enhancedInputData,
+                period_ids: dayPeriodIds,
+                option_periods: dayPeriodIds.length,
+                is_evening_study: false,
+                evening_status_id: undefined,
+                destination: undefined,
+                reason: undefined,
+            };
+            const dayUpdated = await executeBulkUpdate(
+                pendingAction.status,
+                pendingAction.leaveType.id,
+                dayDetails,
+                { finalize: false }
+            );
+            if (!dayUpdated) return;
+
+            const eveningUpdated = await executeEveningStudyUpdate({
+                ...enhancedInputData,
+                period_ids: nightPeriodIds,
+            }, { finalize: false });
+            if (eveningUpdated) finishInputAction();
+            return;
+        }
+
+        if (nightPeriodIds.length > 0) {
+            await executeEveningStudyUpdate({
+                ...enhancedInputData,
+                period_ids: nightPeriodIds,
+            });
+            return;
+        }
+
+        await executeBulkUpdate(pendingAction.status, pendingAction.leaveType.id, enhancedInputData);
     };
 
     const StatusBadge = ({ status, details, leaveTypeId, leaveType, onClick, periodId, period, displayLabel, isSelfApplied, approvalStatus }) => {
@@ -1292,7 +1341,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                     <label className="block text-sm font-medium text-gray-700">选择时段</label>
                                                     <div className="flex flex-wrap gap-2">
                                                         {unifiedTimeSlots.map(slot => {
-                                                            const eveningSlot = isEveningSlot(slot);
+                                                            const effectivePeriodCount = getEffectiveSlotPeriodIds(slot).length;
                                                             return (
                                                             <button
                                                                 key={slot.id}
@@ -1304,9 +1353,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                     }`}
                                                             >
                                                                 {slot.name}
-                                                                {eveningSlot && <span className="ml-1 text-xs">住宿生</span>}
                                                                 <span className={`text-xs ml-1 ${inputData.time_slot_id === slot.id ? 'text-indigo-200' : 'text-gray-400'}`}>
-                                                                    ({(slot.period_ids || []).length || 1}节)
+                                                                    ({effectivePeriodCount || 1}节)
                                                                 </span>
                                                             </button>
                                                             );
@@ -1327,17 +1375,13 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                     ...inputData,
                                                                     text: event.target.value,
                                                                     text_label: pendingInputConfig.label || '去向说明',
-                                                                    destination: inputData.is_evening_study ? event.target.value : undefined,
+                                                                    destination: selectedHasEveningStudy ? event.target.value : undefined,
                                                                 })}
                                                             />
                                                         </div>
                                                     )}
 
-                                                    {inputData.is_evening_study && renderEveningStudyInputs({
-                                                        showDestination: !pendingNeedsDescription
-                                                    })}
-
-                                                    {inputData.time_slot_id && !inputData.is_evening_study && (
+                                                    {inputData.time_slot_id && (
                                                         <div className="mt-2">
                                                             <button
                                                                 type="button"
@@ -1352,10 +1396,10 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                         点击可单独选择/取消节次：
                                                                     </div>
                                                                     <div className="flex flex-wrap gap-2">
-                                                                        {regularPeriods.map(period => {
+                                                                        {eligiblePeriods.map(period => {
                                                                             const isSelected = inputData.period_ids?.includes(period.id);
                                                                             const selectedSlot = timeSlots.find(s => s.id === inputData.time_slot_id);
-                                                                            const isInSlot = selectedSlot?.period_ids?.includes(period.id);
+                                                                            const isInSlot = getEffectiveSlotPeriodIds(selectedSlot).includes(Number(period.id));
                                                                             return (
                                                                                 <label
                                                                                     key={period.id}
@@ -1378,10 +1422,18 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                                                             } else {
                                                                                                 newIds = [...currentIds, period.id];
                                                                                             }
+                                                                                            const includesEveningStudy = hasEveningPeriod(newIds);
                                                                                             setInputData({
                                                                                                 ...inputData,
                                                                                                 period_ids: newIds,
-                                                                                                option_periods: newIds.length
+                                                                                                option_periods: newIds.length,
+                                                                                                is_evening_study: includesEveningStudy,
+                                                                                                evening_status_id: includesEveningStudy
+                                                                                                    ? inputData.evening_status_id || eveningStatuses[0]?.id || ''
+                                                                                                    : undefined,
+                                                                                                destination: includesEveningStudy
+                                                                                                    ? inputData.destination || inputData.text || ''
+                                                                                                    : undefined,
                                                                                             });
                                                                                         }}
                                                                                     />
@@ -1397,6 +1449,10 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                             )}
                                                         </div>
                                                     )}
+
+                                                    {selectedHasEveningStudy && renderEveningStudyInputs({
+                                                        showDestination: !pendingNeedsDescription
+                                                    })}
                                                 </div>
                                             );
                                         })()}

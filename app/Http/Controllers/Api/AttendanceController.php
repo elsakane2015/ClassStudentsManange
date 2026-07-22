@@ -92,7 +92,8 @@ class AttendanceController extends Controller
         }
         
         // Pending Requests from unified data source (attendance_records with approval_status='pending')
-        $pendingQuery = AttendanceRecord::where('approval_status', 'pending')
+        $pendingQuery = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('approval_status', 'pending')
             ->where('is_self_applied', true);
         if ($user->role === 'teacher' || $user->role === 'manager') {
              $pendingQuery->whereIn('class_id', $classIds);
@@ -320,6 +321,7 @@ class AttendanceController extends Controller
             $nullPeriodRecords = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->where('date', $today)
+                ->where('counts_in_day_stats', true)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNull('period_id')
                 ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
@@ -371,6 +373,7 @@ class AttendanceController extends Controller
             $periodAbsentStudents = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->where('date', $today)
+                ->where('counts_in_day_stats', true)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNotNull('period_id')
                 ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
@@ -416,6 +419,7 @@ class AttendanceController extends Controller
             $nullPeriodRecords = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
+                ->where('counts_in_day_stats', true)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNull('period_id')
                 ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
@@ -461,6 +465,7 @@ class AttendanceController extends Controller
             $periodAbsences = \DB::table('attendance_records')
                 ->whereIn('class_id', $classIds)
                 ->whereBetween('date', [$startDate, min($endDate, now()->format('Y-m-d'))])
+                ->where('counts_in_day_stats', true)
                 ->whereIn('status', ['absent', 'leave', 'excused'])
                 ->whereNotNull('period_id')
                 ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
@@ -2409,6 +2414,7 @@ class AttendanceController extends Controller
         $nullPeriodRecords = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
+            ->where('counts_in_day_stats', true)
             ->whereIn('status', ['absent', 'leave', 'excused'])
             ->whereNull('period_id')
             ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
@@ -2454,6 +2460,7 @@ class AttendanceController extends Controller
         $periodAbsences = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
+            ->where('counts_in_day_stats', true)
             ->whereIn('status', ['absent', 'leave', 'excused'])
             ->whereNotNull('period_id')
             ->where(function($q) use ($nonAbsenceLeaveTypeIds) {
@@ -2489,6 +2496,7 @@ class AttendanceController extends Controller
         $recordsByStudent = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
+            ->where('counts_in_day_stats', true)
             ->select('student_id', \DB::raw('COUNT(*) as record_count'))
             ->groupBy('student_id')
             ->pluck('record_count', 'student_id');
