@@ -124,6 +124,29 @@ const getAttendanceRecordDisplayLabel = (record, details = {}) => {
     return record.display_label || details.display_label || '';
 };
 
+const unifiedTimeSlotSlugs = new Set(['late', 'absent', 'early_leave']);
+
+const parseLeaveTypeInputConfig = leaveType => {
+    try {
+        return typeof leaveType?.input_config === 'string'
+            ? JSON.parse(leaveType.input_config)
+            : leaveType?.input_config || {};
+    } catch (error) {
+        console.error('Failed to parse input_config:', error);
+        return {};
+    }
+};
+
+const usesUnifiedTimeSlotPicker = leaveType => {
+    if (!leaveType) return false;
+    if (leaveType.input_type === 'duration_select' || unifiedTimeSlotSlugs.has(leaveType.slug)) {
+        return true;
+    }
+
+    const config = parseLeaveTypeInputConfig(leaveType);
+    return leaveType.input_type === 'text' && config.with_periods !== false;
+};
+
 export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     const formattedDate = date ? format(date, 'yyyy-MM-dd') : '';
     const [students, setStudents] = useState([]);
@@ -253,25 +276,50 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
     );
     const regularPeriods = periods.filter(period => (period.scene || 'regular') === 'regular');
     const isEveningSlot = slot => (slot.period_ids || []).some(periodId => eveningPeriodIds.has(Number(periodId)));
-    const eveningTimeSlots = timeSlots.filter(isEveningSlot);
+    const pendingLeaveType = pendingAction?.leaveType;
+    const pendingInputConfig = parseLeaveTypeInputConfig(pendingLeaveType);
+    const pendingUsesUnifiedTimeSlots = usesUnifiedTimeSlotPicker(pendingLeaveType);
+    const pendingNeedsDescription = pendingLeaveType?.input_type === 'text';
+    const configuredSlotKeys = (pendingInputConfig.options || []).map(option =>
+        typeof option === 'object' ? option.key : option
+    );
+    const unifiedTimeSlots = timeSlots
+        .filter(slot => {
+            if (slot.is_active === false) return false;
+            if (isEveningSlot(slot)) return selectedStudentsAreBoarding;
+            if (pendingLeaveType?.input_type !== 'duration_select') return true;
 
-    const selectEveningTimeSlot = (slot) => {
-        const periodIds = (slot.period_ids || []).map(Number).filter(periodId => eveningPeriodIds.has(periodId));
-        setInputData({
+            const slotKey = `time_slot_${slot.id}`;
+            return configuredSlotKeys.includes(slotKey) || configuredSlotKeys.includes(String(slot.id));
+        })
+        .sort((left, right) => Number(isEveningSlot(left)) - Number(isEveningSlot(right)));
+
+    const selectUnifiedTimeSlot = (slot) => {
+        const periodIds = (slot.period_ids || []).map(Number);
+        const eveningSlot = isEveningSlot(slot);
+        const nextInputData = {
             time_slot_id: slot.id,
             time_slot_name: slot.name,
             option: `time_slot_${slot.id}`,
             option_label: slot.name,
-            option_periods: periodIds.length,
+            option_periods: periodIds.length || 1,
             period_ids: periodIds,
-            is_evening_study: true,
-            evening_status_id: eveningStatuses[0]?.id || '',
-            destination: '',
-            reason: '',
-        });
+            is_evening_study: eveningSlot,
+            evening_status_id: eveningSlot ? inputData.evening_status_id || eveningStatuses[0]?.id || '' : undefined,
+            destination: eveningSlot ? inputData.destination || inputData.text || '' : undefined,
+            reason: eveningSlot ? inputData.reason || '' : undefined,
+        };
+
+        if (pendingNeedsDescription) {
+            nextInputData.text = inputData.text || '';
+            nextInputData.text_label = pendingInputConfig.label || '去向说明';
+        }
+
+        setShowPeriodDetail(false);
+        setInputData(nextInputData);
     };
 
-    const renderEveningStudyInputs = () => (
+    const renderEveningStudyInputs = ({ showDestination = true } = {}) => (
         <div className="space-y-3 rounded-md border border-cyan-200 bg-cyan-50 p-3">
             <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">夜自习状态</label>
@@ -287,16 +335,18 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                     <p className="text-sm text-red-600">请先在系统设置中配置可用的夜自习状态</p>
                 )}
             </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">具体去向</label>
-                <input
-                    type="text"
-                    value={inputData.destination || ''}
-                    onChange={event => setInputData({ ...inputData, destination: event.target.value })}
-                    placeholder="宿舍、家中或其他地点"
-                    className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                />
-            </div>
+            {showDestination && (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">具体去向</label>
+                    <input
+                        type="text"
+                        value={inputData.destination || ''}
+                        onChange={event => setInputData({ ...inputData, destination: event.target.value })}
+                        placeholder="宿舍、家中或其他地点"
+                        className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    />
+                </div>
+            )}
             <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
                 <textarea
@@ -313,7 +363,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
         const nightPeriodIds = (details.period_ids || [])
             .map(Number)
             .filter(periodId => eveningPeriodIds.has(periodId));
-        const destination = (details.destination || '').trim();
+        const destination = (details.destination || details.text || '').trim();
 
         if (!selectedStudentsAreBoarding) {
             alert('夜自习仅适用于住宿生，请只选择住宿生后重试');
@@ -378,71 +428,8 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             // Open Input Modal
             console.log('[handleActionClick] Opening input modal, status:', status, 'leaveType:', lt);
             setPendingAction({ status, leaveType: lt });
-
-            // 对于旷课，预填充已有的节次
-            if (status === 'absent' && selectedStudentIds.size > 0) {
-                console.log('[Absent Pre-fill] Starting pre-fill logic');
-                const firstStudentId = Array.from(selectedStudentIds)[0];
-
-                // 从 API 获取该学生的考勤记录
-                try {
-                    const res = await axios.get('/attendance/overview', {
-                        params: { date: formattedDate }
-                    });
-                    const data = Array.isArray(res.data) ? res.data : (res.data.data || []);
-
-                    // 查找该学生
-                    let studentWithRecords = null;
-                    data.forEach(dept => {
-                        const classes = dept.classes || [];
-                        classes.forEach(cls => {
-                            if (Array.isArray(cls.students)) {
-                                const found = cls.students.find(s => s.id === firstStudentId);
-                                if (found) studentWithRecords = found;
-                            }
-                        });
-                    });
-
-                    console.log('[Absent Pre-fill] Student with records:', studentWithRecords);
-
-                    if (studentWithRecords && studentWithRecords.attendance) {
-                        const absentRecords = studentWithRecords.attendance.filter(r => r.status === 'absent');
-                        const existingPeriods = [];
-
-                        absentRecords.forEach(record => {
-                            // Parse details if it's a string
-                            let details = record.details;
-                            if (typeof details === 'string') {
-                                try {
-                                    details = JSON.parse(details);
-                                } catch (e) {
-                                    console.error('Failed to parse details:', e);
-                                    details = null;
-                                }
-                            }
-
-                            if (details && details.periods) {
-                                existingPeriods.push(...details.periods);
-                            }
-                        });
-
-                        const uniquePeriods = [...new Set(existingPeriods)];
-                        console.log('[Absent Pre-fill] Absent records:', absentRecords);
-                        console.log('[Absent Pre-fill] Existing periods:', existingPeriods);
-                        console.log('[Absent Pre-fill] Unique periods:', uniquePeriods);
-
-                        setInputData(uniquePeriods.length > 0 ? { periods: uniquePeriods } : {});
-                    } else {
-                        console.log('[Absent Pre-fill] No attendance records found');
-                        setInputData({});
-                    }
-                } catch (error) {
-                    console.error('[Absent Pre-fill] Failed to fetch records:', error);
-                    setInputData({});
-                }
-            } else {
-                setInputData({}); // Reset input
-            }
+            setInputData({});
+            setShowPeriodDetail(false);
             setInputModalOpen(true);
         }
     };
@@ -498,49 +485,49 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                     });
                 }
             } else {
-                // 旷课：先删除旧的旷课记录，然后创建新的合并记录
-                // 重新获取数据以确保有 attendance 字段
-                try {
-                    const res = await axios.get('/attendance/overview', {
-                        params: { date: formattedDate }
-                    });
-                    const data = Array.isArray(res.data) ? res.data : (res.data.data || []);
-
-                    for (const studentId of selectedStudentIds) {
-                        // 查找该学生
-                        let studentWithRecords = null;
-                        data.forEach(dept => {
-                            const classes = dept.classes || [];
-                            classes.forEach(cls => {
-                                if (Array.isArray(cls.students)) {
-                                    const found = cls.students.find(s => s.id === studentId);
-                                    if (found) studentWithRecords = found;
-                                }
-                            });
+                if (status === 'absent') {
+                    // 旷课按新的时段选择整体替换旧记录。
+                    try {
+                        const res = await axios.get('/attendance/overview', {
+                            params: { date: formattedDate }
                         });
+                        const data = Array.isArray(res.data) ? res.data : (res.data.data || []);
 
-                        if (studentWithRecords && studentWithRecords.attendance) {
-                            const absentRecords = studentWithRecords.attendance.filter(r => r.status === 'absent');
-                            for (const record of absentRecords) {
-                                try {
-                                    await axios.delete('/attendance/records', {
-                                        data: {
-                                            student_id: studentId,
-                                            date: formattedDate,
-                                            period_id: record.period_id
-                                        }
-                                    });
-                                } catch (e) {
-                                    console.error('Failed to delete old absent record:', e);
+                        for (const studentId of selectedStudentIds) {
+                            let studentWithRecords = null;
+                            data.forEach(dept => {
+                                const classes = dept.classes || [];
+                                classes.forEach(cls => {
+                                    if (Array.isArray(cls.students)) {
+                                        const found = cls.students.find(s => s.id === studentId);
+                                        if (found) studentWithRecords = found;
+                                    }
+                                });
+                            });
+
+                            if (studentWithRecords && studentWithRecords.attendance) {
+                                const absentRecords = studentWithRecords.attendance.filter(r => r.status === 'absent');
+                                for (const record of absentRecords) {
+                                    try {
+                                        await axios.delete('/attendance/records', {
+                                            params: {
+                                                record_id: record.id,
+                                                student_id: studentId,
+                                                date: formattedDate,
+                                                period_id: record.period_id
+                                            }
+                                        });
+                                    } catch (error) {
+                                        console.error('Failed to delete old absent record:', error);
+                                    }
                                 }
                             }
                         }
+                    } catch (error) {
+                        console.error('[Absent Delete] Failed to fetch records:', error);
                     }
-                } catch (error) {
-                    console.error('[Absent Delete] Failed to fetch records:', error);
                 }
 
-                // 创建新的合并记录
                 await axios.post('/attendance/bulk', {
                     date: formattedDate,
                     period_id: periodIds[0],
@@ -698,6 +685,18 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
 
     const handleInputConfirm = () => {
         if (!pendingAction) return;
+
+        if (usesUnifiedTimeSlotPicker(pendingAction.leaveType) && !inputData.time_slot_id) {
+            alert('请选择时段');
+            return;
+        }
+
+        const inputConfig = parseLeaveTypeInputConfig(pendingAction.leaveType);
+        const needsDescription = pendingAction.leaveType.input_type === 'text';
+        if (needsDescription && !(inputData.text || '').trim()) {
+            alert(`请填写${inputConfig.label || '去向说明'}`);
+            return;
+        }
 
         if ((inputData.period_ids || []).some(periodId => eveningPeriodIds.has(Number(periodId)))) {
             executeEveningStudyUpdate(inputData);
@@ -1169,7 +1168,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                     </Dialog.Title>
 
                                     <div className="space-y-4" style={{ minHeight: '100px' }}>
-                                        {pendingAction?.leaveType?.input_type === 'time' && (() => {
+                                        {!pendingUsesUnifiedTimeSlots && pendingAction?.leaveType?.input_type === 'time' && (() => {
                                             // 解析input_config
                                             let config = {};
                                             try {
@@ -1210,7 +1209,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                             );
                                         })()}
 
-                                        {pendingAction?.leaveType?.input_type === 'period_select' && (() => {
+                                        {!pendingUsesUnifiedTimeSlots && pendingAction?.leaveType?.input_type === 'period_select' && (() => {
                                             // 解析input_config
                                             let config = {};
                                             try {
@@ -1279,69 +1278,11 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                             );
                                         })()}
 
-                                        {['time', 'period_select'].includes(pendingAction?.leaveType?.input_type)
-                                            && selectedStudentsAreBoarding
-                                            && eveningTimeSlots.length > 0 && (
-                                                <div className="space-y-3 border-t border-gray-200 pt-4">
-                                                    <label className="block text-sm font-medium text-gray-700">夜自习时段</label>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {eveningTimeSlots.map(slot => {
-                                                            const selected = inputData.is_evening_study && inputData.time_slot_id === slot.id;
-                                                            return (
-                                                                <button
-                                                                    key={slot.id}
-                                                                    type="button"
-                                                                    onClick={() => selected ? setInputData({}) : selectEveningTimeSlot(slot)}
-                                                                    className={`rounded-md border px-3 py-2 text-sm ${selected
-                                                                        ? 'border-indigo-600 bg-indigo-600 text-white'
-                                                                        : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                                                                        }`}
-                                                                >
-                                                                    {slot.name}
-                                                                    <span className={`ml-1 text-xs ${selected ? 'text-indigo-200' : 'text-gray-400'}`}>
-                                                                        ({(slot.period_ids || []).length}节)
-                                                                    </span>
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                    {inputData.is_evening_study && renderEveningStudyInputs()}
-                                                </div>
-                                            )}
-
-                                        {pendingAction?.leaveType?.input_type === 'duration_select' && (() => {
-                                            // 解析input_config获取配置的时段
-                                            let config = {};
-                                            try {
-                                                config = typeof pendingAction.leaveType.input_config === 'string'
-                                                    ? JSON.parse(pendingAction.leaveType.input_config)
-                                                    : pendingAction.leaveType.input_config || {};
-                                            } catch (e) {
-                                                console.error('Failed to parse input_config:', e);
-                                            }
-
-                                            // 严格按照配置的 options 过滤时段
-                                            if (!config.options || config.options.length === 0) {
+                                        {pendingUsesUnifiedTimeSlots && (() => {
+                                            if (unifiedTimeSlots.length === 0) {
                                                 return (
                                                     <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
-                                                        该请假类型未配置可选时段
-                                                    </div>
-                                                );
-                                            }
-
-                                            const allowedSlotKeys = config.options.map(opt =>
-                                                typeof opt === 'object' ? opt.key : opt
-                                            );
-                                            const filteredSlots = timeSlots.filter(slot => {
-                                                const slotKey = `time_slot_${slot.id}`;
-                                                const configuredForLeaveType = allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id));
-                                                return configuredForLeaveType || (selectedStudentsAreBoarding && isEveningSlot(slot));
-                                            });
-
-                                            if (filteredSlots.length === 0) {
-                                                return (
-                                                    <div className="p-3 bg-yellow-50 rounded text-sm text-yellow-700">
-                                                        该请假类型配置的时段不存在于系统时段中
+                                                        当前没有可用时段
                                                     </div>
                                                 );
                                             }
@@ -1350,23 +1291,13 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                 <div className="space-y-3">
                                                     <label className="block text-sm font-medium text-gray-700">选择时段</label>
                                                     <div className="flex flex-wrap gap-2">
-                                                        {filteredSlots.map(slot => {
+                                                        {unifiedTimeSlots.map(slot => {
                                                             const eveningSlot = isEveningSlot(slot);
-                                                            const defaultStatus = eveningStatuses[0];
                                                             return (
                                                             <button
                                                                 key={slot.id}
                                                                 type="button"
-                                                                onClick={() => setInputData({
-                                                                    time_slot_id: slot.id,
-                                                                    time_slot_name: slot.name,
-                                                                    option: `time_slot_${slot.id}`,
-                                                                    option_label: slot.name,
-                                                                    option_periods: (slot.period_ids || []).length || 1,
-                                                                    period_ids: slot.period_ids || [],
-                                                                    is_evening_study: eveningSlot,
-                                                                    evening_status_id: eveningSlot ? defaultStatus?.id || '' : undefined,
-                                                                })}
+                                                                onClick={() => selectUnifiedTimeSlot(slot)}
                                                                 className={`px-4 py-2 rounded-lg border text-sm transition-colors ${inputData.time_slot_id === slot.id
                                                                     ? 'bg-indigo-600 text-white border-indigo-600'
                                                                     : 'bg-white border-gray-300 hover:bg-gray-50'
@@ -1382,46 +1313,29 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                                         })}
                                                     </div>
 
-                                                    {inputData.is_evening_study && (() => {
-                                                        const statusOptions = eveningStatuses;
-                                                        return (
-                                                            <div className="space-y-3 rounded-md border border-cyan-200 bg-cyan-50 p-3">
-                                                                <div>
-                                                                    <label className="block text-sm font-medium text-gray-700 mb-1">夜自习状态</label>
-                                                                    {statusOptions.length > 0 ? (
-                                                                        <select
-                                                                            value={inputData.evening_status_id || ''}
-                                                                            onChange={event => setInputData({ ...inputData, evening_status_id: Number(event.target.value) })}
-                                                                            className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                                                        >
-                                                                            {statusOptions.map(status => <option key={status.id} value={status.id}>{status.name}</option>)}
-                                                                        </select>
-                                                                    ) : (
-                                                                        <p className="text-sm text-red-600">请先在系统设置中配置可用的夜自习状态</p>
-                                                                    )}
-                                                                </div>
-                                                                <div>
-                                                                    <label className="block text-sm font-medium text-gray-700 mb-1">具体去向</label>
-                                                                    <input
-                                                                        type="text"
-                                                                        value={inputData.destination || ''}
-                                                                        onChange={event => setInputData({ ...inputData, destination: event.target.value })}
-                                                                        placeholder="宿舍、家中或其他地点"
-                                                                        className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                                                    />
-                                                                </div>
-                                                                <div>
-                                                                    <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
-                                                                    <textarea
-                                                                        rows={2}
-                                                                        value={inputData.reason || ''}
-                                                                        onChange={event => setInputData({ ...inputData, reason: event.target.value })}
-                                                                        className="block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                                                    />
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    })()}
+                                                    {pendingNeedsDescription && (
+                                                        <div>
+                                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                                {pendingInputConfig.label || '去向说明'}
+                                                            </label>
+                                                            <textarea
+                                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                                                rows={2}
+                                                                placeholder={pendingInputConfig.placeholder || '请输入说明...'}
+                                                                value={inputData.text || ''}
+                                                                onChange={event => setInputData({
+                                                                    ...inputData,
+                                                                    text: event.target.value,
+                                                                    text_label: pendingInputConfig.label || '去向说明',
+                                                                    destination: inputData.is_evening_study ? event.target.value : undefined,
+                                                                })}
+                                                            />
+                                                        </div>
+                                                    )}
+
+                                                    {inputData.is_evening_study && renderEveningStudyInputs({
+                                                        showDestination: !pendingNeedsDescription
+                                                    })}
 
                                                     {inputData.time_slot_id && !inputData.is_evening_study && (
                                                         <div className="mt-2">
@@ -1487,7 +1401,7 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                                             );
                                         })()}
 
-                                        {pendingAction?.leaveType?.input_type === 'text' && (() => {
+                                        {!pendingUsesUnifiedTimeSlots && pendingAction?.leaveType?.input_type === 'text' && (() => {
                                             // 解析input_config获取配置
                                             let config = {};
                                             try {
