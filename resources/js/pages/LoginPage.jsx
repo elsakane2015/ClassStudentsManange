@@ -50,7 +50,7 @@ export default function LoginPage() {
 
             // Redirect based on role
             if (user.role === 'student') navigate('/student/dashboard');
-            else if (user.role === 'duty_teacher') navigate('/evening-study');
+            else if (user.role === 'duty_teacher') navigate('/evening-study/take');
             else if (['teacher', 'system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user.role)) navigate('/teacher/dashboard');
             else navigate('/');
 

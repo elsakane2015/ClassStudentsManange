@@ -38,6 +38,14 @@ class UserController extends Controller
                 $query->whereHas('dutyDepartments', function ($departmentQuery) use ($managedDepartmentIds) {
                     $departmentQuery->whereIn('departments.id', $managedDepartmentIds);
                 });
+            } elseif ($targetRole === 'teacher') {
+                $query->where(function ($teacherQuery) use ($managedDepartmentIds) {
+                    $teacherQuery->whereHas('teacherClasses', function ($classQuery) use ($managedDepartmentIds) {
+                        $classQuery->whereIn('department_id', $managedDepartmentIds);
+                    })->orWhereHas('dutyDepartments', function ($departmentQuery) use ($managedDepartmentIds) {
+                        $departmentQuery->whereIn('departments.id', $managedDepartmentIds);
+                    });
+                });
             }
         }
 
@@ -51,7 +59,14 @@ class UserController extends Controller
                 }
             }]);
         } elseif ($targetRole === 'teacher') {
-            $query->with('teacherClasses.department');
+            $query->with([
+                'teacherClasses.department',
+                'dutyDepartments' => function ($departmentQuery) use ($currentUser, $managedDepartmentIds) {
+                    if (in_array($currentUser->role, ['department_manager', 'manager'], true)) {
+                        $departmentQuery->whereIn('departments.id', $managedDepartmentIds);
+                    }
+                },
+            ]);
         }
 
         return response()->json($query->orderBy('created_at', 'desc')->get());
@@ -68,6 +83,8 @@ class UserController extends Controller
             'role' => ['required', Rule::in(['system_admin', 'school_admin', 'department_manager', 'duty_teacher', 'teacher', 'manager', 'admin'])], // Support old and new
             'department_ids' => 'nullable|array',
             'department_ids.*' => 'exists:departments,id',
+            'duty_department_ids' => 'nullable|array',
+            'duty_department_ids.*' => 'exists:departments,id',
             'class_ids' => 'nullable|array',
             'class_ids.*' => 'exists:classes,id',
         ]);
@@ -90,6 +107,16 @@ class UserController extends Controller
             $scopeError = $this->validateDutyDepartmentScope(
                 $currentUser,
                 collect($request->input('department_ids', []))
+            );
+            if ($scopeError) {
+                return $scopeError;
+            }
+        }
+        if ($role === 'teacher' && $request->has('duty_department_ids')) {
+            $scopeError = $this->validateDutyDepartmentScope(
+                $currentUser,
+                collect($request->input('duty_department_ids', [])),
+                false
             );
             if ($scopeError) {
                 return $scopeError;
@@ -118,6 +145,9 @@ class UserController extends Controller
             if ($role === 'teacher' && $request->filled('class_ids')) {
                 \App\Models\SchoolClass::whereIn('id', $request->class_ids)->update(['teacher_id' => $user->id]);
             }
+            if ($role === 'teacher' && $request->filled('duty_department_ids')) {
+                $user->dutyDepartments()->sync($request->duty_department_ids);
+            }
 
             return $user;
         });
@@ -143,6 +173,8 @@ class UserController extends Controller
             'email' => ['sometimes', 'email', Rule::unique('users')->ignore($user->id)],
             'department_ids' => 'nullable|array',
             'department_ids.*' => 'exists:departments,id',
+            'duty_department_ids' => 'nullable|array',
+            'duty_department_ids.*' => 'exists:departments,id',
             'class_ids' => 'nullable|array',
             'class_ids.*' => 'exists:classes,id',
         ]);
@@ -151,6 +183,16 @@ class UserController extends Controller
             $scopeError = $this->validateDutyDepartmentScope(
                 $currentUser,
                 collect($request->input('department_ids', []))
+            );
+            if ($scopeError) {
+                return $scopeError;
+            }
+        }
+        if ($user->role === 'teacher' && $request->has('duty_department_ids')) {
+            $scopeError = $this->validateDutyDepartmentScope(
+                $currentUser,
+                collect($request->input('duty_department_ids', [])),
+                false
             );
             if ($scopeError) {
                 return $scopeError;
@@ -172,15 +214,11 @@ class UserController extends Controller
         }
 
         if ($user->role === 'duty_teacher' && $request->has('department_ids')) {
-            if (in_array($currentUser->role, ['department_manager', 'manager'], true)) {
-                $managedDepartmentIds = $this->managedDepartmentIds($currentUser);
-                $selectedDepartmentIds = collect($request->input('department_ids', []))->map(fn ($id) => (int) $id);
+            $this->syncDutyDepartments($currentUser, $user, collect($request->input('department_ids', [])));
+        }
 
-                $user->dutyDepartments()->detach($managedDepartmentIds->diff($selectedDepartmentIds));
-                $user->dutyDepartments()->syncWithoutDetaching($selectedDepartmentIds);
-            } else {
-                $user->dutyDepartments()->sync($request->department_ids ?? []);
-            }
+        if ($user->role === 'teacher' && $request->has('duty_department_ids')) {
+            $this->syncDutyDepartments($currentUser, $user, collect($request->input('duty_department_ids', [])));
         }
 
         if ($user->role === 'teacher' && $request->has('class_ids')) {
@@ -190,7 +228,7 @@ class UserController extends Controller
             }
         }
 
-        return response()->json($user);
+        return response()->json($user->fresh());
     }
 
     public function destroy(Request $request, User $user)
@@ -291,24 +329,32 @@ class UserController extends Controller
 
     private function canManageTarget(User $currentUser, User $targetUser): bool
     {
-        if (! in_array($currentUser->role, ['department_manager', 'manager'], true)
-            || $targetUser->role !== 'duty_teacher') {
+        if (! in_array($currentUser->role, ['department_manager', 'manager'], true)) {
             return true;
         }
 
-        return $targetUser->dutyDepartments()
-            ->whereIn('departments.id', $this->managedDepartmentIds($currentUser))
-            ->exists();
+        $managedDepartmentIds = $this->managedDepartmentIds($currentUser);
+        if ($targetUser->role === 'duty_teacher') {
+            return $targetUser->dutyDepartments()
+                ->whereIn('departments.id', $managedDepartmentIds)
+                ->exists();
+        }
+        if ($targetUser->role === 'teacher') {
+            return $targetUser->teacherClasses()->whereIn('department_id', $managedDepartmentIds)->exists()
+                || $targetUser->dutyDepartments()->whereIn('departments.id', $managedDepartmentIds)->exists();
+        }
+
+        return true;
     }
 
-    private function validateDutyDepartmentScope(User $currentUser, $departmentIds)
+    private function validateDutyDepartmentScope(User $currentUser, $departmentIds, bool $requireDepartment = true)
     {
         if (! in_array($currentUser->role, ['department_manager', 'manager'], true)) {
             return null;
         }
 
         $departmentIds = collect($departmentIds)->map(fn ($id) => (int) $id)->unique();
-        if ($departmentIds->isEmpty()) {
+        if ($requireDepartment && $departmentIds->isEmpty()) {
             return response()->json([
                 'message' => '请至少选择一个负责系部',
                 'errors' => ['department_ids' => ['请至少选择一个负责系部']],
@@ -327,5 +373,19 @@ class UserController extends Controller
         return $user->managedDepartments()
             ->pluck('departments.id')
             ->map(fn ($id) => (int) $id);
+    }
+
+    private function syncDutyDepartments(User $currentUser, User $targetUser, $selectedDepartmentIds): void
+    {
+        $selectedDepartmentIds = collect($selectedDepartmentIds)->map(fn ($id) => (int) $id)->unique();
+        if (in_array($currentUser->role, ['department_manager', 'manager'], true)) {
+            $managedDepartmentIds = $this->managedDepartmentIds($currentUser);
+            $targetUser->dutyDepartments()->detach($managedDepartmentIds->diff($selectedDepartmentIds));
+            $targetUser->dutyDepartments()->syncWithoutDetaching($selectedDepartmentIds);
+
+            return;
+        }
+
+        $targetUser->dutyDepartments()->sync($selectedDepartmentIds);
     }
 }

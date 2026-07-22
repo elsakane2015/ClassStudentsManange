@@ -34,7 +34,7 @@ const formatDateTime = (value) => {
     }
 };
 
-export default function EveningStudyPage() {
+export default function EveningStudyPage({ view = 'auto' }) {
     const { user } = useAuthStore();
     const [mode, setMode] = useState('take');
     const [date, setDate] = useState(today());
@@ -50,8 +50,12 @@ export default function EveningStudyPage() {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
 
-    const canTake = ['duty_teacher', 'system_admin', 'school_admin'].includes(user?.role);
-    const canModify = ['duty_teacher', 'system_admin', 'school_admin', 'department_manager', 'manager'].includes(user?.role);
+    const hasDutyAssignment = (user?.duty_departments?.length || 0) > 0;
+    const hasAdministrativeScope = ['system_admin', 'school_admin', 'department_manager', 'manager'].includes(user?.role);
+    const isTakeView = view === 'take' || (view === 'auto' && user?.role !== 'teacher');
+    const canTake = isTakeView && (user?.role === 'duty_teacher' || hasAdministrativeScope || hasDutyAssignment);
+    const canModify = isTakeView && (user?.role === 'duty_teacher' || hasAdministrativeScope || hasDutyAssignment);
+    const requestScope = { take: isTakeView ? 1 : 0 };
 
     const loadBase = async () => {
         setLoading(true);
@@ -74,8 +78,8 @@ export default function EveningStudyPage() {
         if (!periodId) return;
         try {
             const [classRes, summaryRes] = await Promise.all([
-                axios.get('/evening-study/classes', { params: { date, period_id: periodId } }),
-                axios.get('/evening-study/summary', { params: { date, period_id: periodId } }),
+                axios.get('/evening-study/classes', { params: { date, period_id: periodId, ...requestScope } }),
+                axios.get('/evening-study/summary', { params: { date, period_id: periodId, ...requestScope } }),
             ]);
             setClasses(classRes.data || []);
             setSummary(summaryRes.data || null);
@@ -86,7 +90,7 @@ export default function EveningStudyPage() {
 
     const loadHistory = async () => {
         try {
-            const response = await axios.get('/evening-study/history');
+            const response = await axios.get('/evening-study/history', { params: requestScope });
             setHistory(response.data.data || []);
         } catch (error) {
             setMessage(error.response?.data?.message || '历史记录加载失败');
@@ -98,11 +102,11 @@ export default function EveningStudyPage() {
     useEffect(() => {
         if (!periodId || mode !== 'take') return;
         loadClassesAndSummary();
-    }, [date, periodId, mode]);
+    }, [date, periodId, mode, isTakeView]);
 
     useEffect(() => {
         if (mode === 'history') loadHistory();
-    }, [mode]);
+    }, [mode, isTakeView]);
 
     const openSession = async (sessionId) => {
         const response = await axios.get(`/evening-study/sessions/${sessionId}`);
@@ -265,11 +269,11 @@ export default function EveningStudyPage() {
             <div className="space-y-5">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900">夜自习点名</h1>
-                        <p className="mt-1 text-sm text-gray-500">按班级核对住宿生当晚状态。</p>
+                        <h1 className="text-2xl font-bold text-gray-900">{isTakeView ? '夜自习点名' : '夜自习情况'}</h1>
+                        <p className="mt-1 text-sm text-gray-500">{isTakeView ? '按班级核对住宿生当晚状态。' : '查看本人负责班级的夜自习状态。'}</p>
                     </div>
                     <div className="inline-flex self-start rounded-md border border-gray-300 bg-white p-1">
-                        <button onClick={showTakeList} className={`rounded px-3 py-1.5 text-sm ${mode === 'take' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}>当晚点名</button>
+                        <button onClick={showTakeList} className={`rounded px-3 py-1.5 text-sm ${mode === 'take' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}>{isTakeView ? '当晚点名' : '当晚情况'}</button>
                         <button onClick={() => setMode('history')} className={`rounded px-3 py-1.5 text-sm ${mode === 'history' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}>历史记录</button>
                     </div>
                 </div>
@@ -282,7 +286,7 @@ export default function EveningStudyPage() {
                         <label className="text-sm text-gray-700">节次<select value={periodId} onChange={event => changePeriod(event.target.value)} className="ml-2 rounded-md border-gray-300"><option value="">请选择</option>{periods.map(period => <option key={period.id} value={period.id}>{period.name}</option>)}</select></label>
                     </div>
 
-                    {!session && overall && <section className="border-b border-gray-200 pb-5">
+                    {!session && overall && !(user?.role === 'teacher' && !isTakeView) && <section className="border-b border-gray-200 pb-5">
                         <div className="flex items-center justify-between gap-4">
                             <h2 className="text-base font-semibold text-gray-900">{summary.scope_type === 'school' ? '全校汇总' : '系部汇总'}</h2>
                             <span className="text-sm text-gray-500">已完成 {overall.completed_class_count}/{overall.class_count} 个班级</span>

@@ -100,6 +100,8 @@ function App() {
             <Route path="/teacher/wechat" element={<RequireAuth><WechatPushPage /></RequireAuth>} />
             <Route path="/teacher/email-notifications" element={<RequireAuth><EmailNotificationSettings /></RequireAuth>} />
             <Route path="/evening-study" element={<RequireAuth><EveningStudyPage /></RequireAuth>} />
+            <Route path="/evening-study/overview" element={<RequireAuth><EveningStudyPage view="overview" /></RequireAuth>} />
+            <Route path="/evening-study/take" element={<RequireAuth><EveningStudyPage view="take" /></RequireAuth>} />
 
             <Route path="/admin/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
             <Route path="/admin/staff" element={<RequireAuth><StaffPage /></RequireAuth>} />

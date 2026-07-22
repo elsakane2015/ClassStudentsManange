@@ -25,7 +25,7 @@ export default function StaffPage() {
     const [classes, setClasses] = useState([]);
 
     // Form States
-    const [formData, setFormData] = useState({ name: '', email: '', password: '', role: '', department_ids: [], class_ids: [] });
+    const [formData, setFormData] = useState({ name: '', email: '', password: '', role: '', department_ids: [], duty_department_ids: [], class_ids: [] });
     const [currentTabRole, setCurrentTabRole] = useState('system_admin'); // Updated default
 
     const fetchUsers = async (role) => {
@@ -84,6 +84,9 @@ export default function StaffPage() {
         if (userData.role === 'duty_teacher' && userData.duty_departments?.length > 0) {
             deptIds = userData.duty_departments.map(d => d.id);
         }
+        const dutyDeptIds = userData.role === 'teacher'
+            ? (userData.duty_departments || []).map(d => d.id)
+            : [];
 
         // Teacher: userData.teacher_classes (array) -> map ids
         let clsIds = [];
@@ -97,6 +100,7 @@ export default function StaffPage() {
             password: '',  // Don't fill password
             role: userData.role,
             department_ids: deptIds,
+            duty_department_ids: dutyDeptIds,
             class_ids: clsIds
         });
         setShowForm(true);
@@ -126,7 +130,7 @@ export default function StaffPage() {
             }
             setShowForm(false);
             setEditingUser(null);
-            setFormData({ name: '', email: '', password: '', role: '', department_ids: [], class_ids: [] });
+            setFormData({ name: '', email: '', password: '', role: '', department_ids: [], duty_department_ids: [], class_ids: [] });
             fetchUsers(currentTabRole);
         } catch (error) {
             alert('操作失败: ' + (error.response?.data?.message || '未知错误'));
@@ -136,7 +140,7 @@ export default function StaffPage() {
     const openCreateForm = (role) => {
         setCurrentTabRole(role);
         setEditingUser(null);
-        setFormData({ name: '', email: '', password: '', role, department_ids: [], class_ids: [] });
+        setFormData({ name: '', email: '', password: '', role, department_ids: [], duty_department_ids: [], class_ids: [] });
         setShowForm(true);
     };
 
@@ -213,6 +217,7 @@ export default function StaffPage() {
                                                     {['manager', 'department_manager', 'duty_teacher'].includes(tab.key) ? '负责系部' : '负责班级'}
                                                 </th>
                                             )}
+                                            {tab.key === 'teacher' && <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">夜自习值班系部</th>}
                                             <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
                                                 <span className="sr-only">操作</span>
                                             </th>
@@ -254,6 +259,11 @@ export default function StaffPage() {
                                                             )}
                                                         </td>
                                                     )}
+                                                    {tab.key === 'teacher' && <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                                        {person.duty_departments?.length > 0
+                                                            ? person.duty_departments.map(d => d.name).join(', ')
+                                                            : <span className="text-gray-400">未授权</span>}
+                                                    </td>}
                                                     <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                                                         <button onClick={() => handleEdit(person)} className="text-indigo-600 hover:text-indigo-900 mr-4">编辑</button>
                                                         <button onClick={() => handleDelete(person.id, tab.key)} className="text-red-600 hover:text-red-900">删除</button>
@@ -275,7 +285,7 @@ export default function StaffPage() {
                                             }
                                             return data.length === 0 && (
                                                 <tr>
-                                                    <td colSpan={['system_admin', 'school_admin', 'admin'].includes(tab.key) ? "3" : "4"} className="text-center py-4 text-gray-500 text-sm">暂无数据</td>
+                                                    <td colSpan={['system_admin', 'school_admin', 'admin'].includes(tab.key) ? "3" : tab.key === 'teacher' ? "5" : "4"} className="text-center py-4 text-gray-500 text-sm">暂无数据</td>
                                                 </tr>
                                             )
                                         })()}
@@ -371,8 +381,9 @@ export default function StaffPage() {
                                     )}
 
                                     {currentTabRole === 'teacher' && (
+                                        <>
                                         <div>
-                                            <label className="block text-sm font-medium text-gray-700">分配班级 (Head Teacher)</label>
+                                            <label className="block text-sm font-medium text-gray-700">分配班级</label>
                                             <select
                                                 multiple
                                                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border h-32"
@@ -390,6 +401,22 @@ export default function StaffPage() {
                                             </select>
                                             <p className="mt-1 text-xs text-gray-500">按住 Ctrl/Cmd 可多选。被选中的班级将指派此教师为班主任。</p>
                                         </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700">夜自习点名授权系部</label>
+                                            <select
+                                                multiple
+                                                className="mt-1 block h-32 w-full rounded-md border border-gray-300 p-2 shadow-sm sm:text-sm"
+                                                value={formData.duty_department_ids}
+                                                onChange={(e) => {
+                                                    const selected = Array.from(e.target.selectedOptions, option => parseInt(option.value));
+                                                    setFormData({ ...formData, duty_department_ids: selected });
+                                                }}
+                                            >
+                                                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                            </select>
+                                            <p className="mt-1 text-xs text-gray-500">授权后，该班主任可点名所选系部的全部住宿生；不改变其班主任角色。</p>
+                                        </div>
+                                        </>
                                     )}
                                 </div>
                                 <div className="mt-5 sm:mt-6 sm:grid sm:grid-flow-row-dense sm:grid-cols-2 sm:gap-3">

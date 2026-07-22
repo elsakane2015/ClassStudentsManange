@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\Department;
+use App\Models\Grade;
 use App\Models\School;
+use App\Models\SchoolClass;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -104,6 +106,66 @@ class DepartmentDutyTeacherManagementTest extends TestCase
 
         $this->assertDatabaseHas('users', ['id' => $dutyTeacher->id]);
         $this->assertSame([$outsideDepartment->id], $dutyTeacher->dutyDepartments()->pluck('departments.id')->all());
+    }
+
+    public function test_department_manager_can_assign_managed_night_duty_to_existing_teacher(): void
+    {
+        [$manager, $managedDepartment, $outsideDepartment] = $this->managerWithDepartments();
+        $grade = Grade::create(['school_id' => $managedDepartment->school_id, 'name' => '2026级']);
+        $teacher = $this->user('existing.teacher@example.com', 'teacher');
+        SchoolClass::create([
+            'school_id' => $managedDepartment->school_id,
+            'department_id' => $managedDepartment->id,
+            'grade_id' => $grade->id,
+            'name' => '艺术2601',
+            'teacher_id' => $teacher->id,
+        ]);
+        $teacher->dutyDepartments()->attach($outsideDepartment->id);
+
+        Sanctum::actingAs($manager);
+        $this->putJson("/api/users/{$teacher->id}", [
+            'name' => $teacher->name,
+            'duty_department_ids' => [$managedDepartment->id],
+        ])->assertOk();
+
+        $this->assertEqualsCanonicalizing(
+            [$managedDepartment->id, $outsideDepartment->id],
+            $teacher->dutyDepartments()->pluck('departments.id')->all()
+        );
+
+        $listedTeacher = $this->getJson('/api/users?role=teacher')->assertOk()->json('0');
+        $this->assertSame($teacher->id, $listedTeacher['id']);
+        $this->assertSame([$managedDepartment->id], collect($listedTeacher['duty_departments'])->pluck('id')->all());
+
+        $this->putJson("/api/users/{$teacher->id}", [
+            'duty_department_ids' => [],
+        ])->assertOk();
+
+        $this->assertSame(
+            [$outsideDepartment->id],
+            $teacher->dutyDepartments()->pluck('departments.id')->all()
+        );
+    }
+
+    public function test_department_manager_cannot_assign_teacher_to_outside_night_duty(): void
+    {
+        [$manager, $managedDepartment, $outsideDepartment] = $this->managerWithDepartments();
+        $grade = Grade::create(['school_id' => $managedDepartment->school_id, 'name' => '2026级']);
+        $teacher = $this->user('scope.teacher@example.com', 'teacher');
+        SchoolClass::create([
+            'school_id' => $managedDepartment->school_id,
+            'department_id' => $managedDepartment->id,
+            'grade_id' => $grade->id,
+            'name' => '艺术2602',
+            'teacher_id' => $teacher->id,
+        ]);
+
+        Sanctum::actingAs($manager);
+        $this->putJson("/api/users/{$teacher->id}", [
+            'duty_department_ids' => [$outsideDepartment->id],
+        ])->assertForbidden();
+
+        $this->assertFalse($teacher->dutyDepartments()->exists());
     }
 
     private function managerWithDepartments(bool $withSecondManagedDepartment = false): array

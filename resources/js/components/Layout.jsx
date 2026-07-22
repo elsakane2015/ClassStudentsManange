@@ -81,6 +81,17 @@ export default function Layout({ children }) {
     const canApproveLeave = hasPermission('leave_requests.approve');
     // Check if user has roll call management permission
     const canManageRollCall = hasPermission('roll_calls.manage');
+    const canTakeEveningStudy = ['duty_teacher', 'system_admin', 'school_admin', 'department_manager', 'manager'].includes(user?.role)
+        || (user?.duty_departments?.length || 0) > 0;
+    const eveningStudyMenu = hasPermission('evening_study.view')
+        ? [{
+            name: '夜自习',
+            children: [
+                { name: '夜自习情况', href: '/evening-study/overview' },
+                ...(canTakeEveningStudy ? [{ name: '夜自习点名', href: '/evening-study/take' }] : []),
+            ],
+        }]
+        : [];
 
     const navigation = user?.role === 'student'
         ? [
@@ -91,13 +102,13 @@ export default function Layout({ children }) {
             ...(isRollCallAdmin ? [{ name: '点名', href: '/roll-call' }] : []),
         ]
         : user?.role === 'duty_teacher'
-        ? [{ name: '夜自习点名', href: '/evening-study' }]
+        ? [{ name: '夜自习点名', href: '/evening-study/take' }]
         : [
             { name: '概览', href: '/teacher/dashboard' },
             ...(canApproveLeave ? [{ name: '审批记录', href: '/teacher/approvals' }] : []),
             { name: '学生管理', href: '/teacher/students' },
             ...(canManageRollCall ? [{ name: '点名', href: '/roll-call' }] : []),
-            ...(hasPermission('evening_study.view') ? [{ name: '夜自习', href: '/evening-study' }] : []),
+            ...eveningStudyMenu,
             ...(showWechatMenu ? [{ name: '微信推送', href: '/teacher/wechat' }] : []),
             ...(user?.role === 'teacher' ? [{ name: '家长通知', href: '/teacher/email-notifications' }] : []),
             ...(['system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user?.role) ? [{ name: '人员管理', href: '/admin/staff' }] : []),
@@ -118,7 +129,31 @@ export default function Layout({ children }) {
                                     </div>
                                     <div className="hidden md:block">
                                         <div className="ml-10 flex items-baseline space-x-4">
-                                            {navigation.map((item) => (
+                                            {navigation.map((item) => item.children ? (
+                                                <Menu as="div" key={item.name} className="relative">
+                                                    <Menu.Button className={classNames(
+                                                        item.children.some(child => location.pathname === child.href)
+                                                            ? 'bg-indigo-700 text-white'
+                                                            : 'text-white hover:bg-indigo-500 hover:bg-opacity-75',
+                                                        'inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium'
+                                                    )}>
+                                                        {item.name}<ChevronDownIcon className="h-4 w-4" />
+                                                    </Menu.Button>
+                                                    <Transition
+                                                        as={Fragment}
+                                                        enter="transition ease-out duration-100"
+                                                        enterFrom="transform opacity-0 scale-95"
+                                                        enterTo="transform opacity-100 scale-100"
+                                                        leave="transition ease-in duration-75"
+                                                        leaveFrom="transform opacity-100 scale-100"
+                                                        leaveTo="transform opacity-0 scale-95"
+                                                    >
+                                                        <Menu.Items className="absolute left-0 z-20 mt-2 w-40 origin-top-left rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                                                            {item.children.map(child => <Menu.Item key={child.href}>{({ active }) => <Link to={child.href} className={classNames(active || location.pathname === child.href ? 'bg-gray-100 text-indigo-700' : 'text-gray-700', 'block px-4 py-2 text-sm')}>{child.name}</Link>}</Menu.Item>)}
+                                                        </Menu.Items>
+                                                    </Transition>
+                                                </Menu>
+                                            ) : (
                                                 <Link
                                                     key={item.name}
                                                     to={item.href}
@@ -203,7 +238,12 @@ export default function Layout({ children }) {
 
                         <Disclosure.Panel className="md:hidden">
                             <div className="space-y-1 px-2 pb-3 pt-2 sm:px-3">
-                                {navigation.map((item) => (
+                                {navigation.map((item) => item.children ? (
+                                    <div key={item.name} className="space-y-1">
+                                        <div className="px-3 py-2 text-sm font-semibold text-indigo-200">{item.name}</div>
+                                        {item.children.map(child => <Link key={child.href} to={child.href} className={classNames(location.pathname === child.href ? 'bg-indigo-700 text-white' : 'text-white hover:bg-indigo-500 hover:bg-opacity-75', 'block rounded-md py-2 pl-6 pr-3 text-base font-medium')}>{child.name}</Link>)}
+                                    </div>
+                                ) : (
                                     <Link
                                         key={item.name}
                                         to={item.href}

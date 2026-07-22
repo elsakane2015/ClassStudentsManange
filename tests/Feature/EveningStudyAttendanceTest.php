@@ -636,6 +636,46 @@ class EveningStudyAttendanceTest extends TestCase
         $this->assertSame('在图书馆', $record->fresh()->requested_status_name_snapshot);
     }
 
+    public function test_teacher_overview_is_limited_to_own_class_and_duty_assignment_enables_department_roll_call(): void
+    {
+        $data = $this->schoolData('teacher-duty-scope');
+        $teacher = $this->user('teacher.duty.scope@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $this->student($data, 'teacher-own-class', true);
+        $otherClass = SchoolClass::create([
+            'school_id' => $data['school']->id,
+            'department_id' => $data['department']->id,
+            'grade_id' => $data['grade']->id,
+            'name' => '同系其他班级',
+        ]);
+        $otherData = [...$data, 'class' => $otherClass];
+        $this->student($otherData, 'teacher-other-class', true);
+
+        Sanctum::actingAs($teacher);
+        $this->getJson('/api/evening-study/classes?date=2026-07-26&period_id=10')
+            ->assertOk()
+            ->assertJsonCount(1)
+            ->assertJsonPath('0.id', $data['class']->id);
+        $this->getJson('/api/evening-study/summary?date=2026-07-26&period_id=10')
+            ->assertOk()
+            ->assertJsonPath('scope_type', 'class')
+            ->assertJsonPath('overall.class_count', 1)
+            ->assertJsonPath('overall.expected_count', 1);
+        $this->getJson('/api/evening-study/classes?date=2026-07-26&period_id=10&take=1')
+            ->assertForbidden();
+
+        $teacher->dutyDepartments()->attach($data['department']->id);
+        $this->getJson('/api/evening-study/classes?date=2026-07-26&period_id=10&take=1')
+            ->assertOk()
+            ->assertJsonCount(2);
+        $this->postJson('/api/evening-study/sessions', [
+            'date' => '2026-07-26',
+            'period_id' => 10,
+            'class_id' => $otherClass->id,
+        ])->assertOk()
+            ->assertJsonPath('session.class_id', $otherClass->id);
+    }
+
     public function test_completing_session_saves_statuses_and_duty_teacher_can_reopen_it(): void
     {
         $data = $this->schoolData('complete-and-reopen');

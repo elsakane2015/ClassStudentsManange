@@ -28,10 +28,11 @@ class EveningStudyController extends Controller
         $data = $request->validate([
             'date' => 'required|date',
             'period_id' => 'required|integer',
+            'take' => 'nullable|boolean',
         ]);
         $period = $this->nightPeriod($periodService, (int) $data['period_id']);
         $query = SchoolClass::with('department:id,name')->where('is_graduated', false);
-        $this->scopeClasses($request, $query);
+        $this->scopeClasses($request, $query, $request->boolean('take'));
 
         $classes = $query->orderBy('department_id')->orderBy('name')->get();
         $sessions = EveningStudySession::where('attendance_date', $data['date'])
@@ -74,10 +75,12 @@ class EveningStudyController extends Controller
         $data = $request->validate([
             'date' => 'required|date',
             'period_id' => 'required|integer',
+            'take' => 'nullable|boolean',
         ]);
         $period = $this->nightPeriod($periodService, (int) $data['period_id']);
         $classQuery = SchoolClass::with('department:id,name')->where('is_graduated', false);
-        $this->scopeClasses($request, $classQuery);
+        $isTakeScope = $request->boolean('take');
+        $this->scopeClasses($request, $classQuery, $isTakeScope);
         $classes = $classQuery->orderBy('department_id')->orderBy('name')->get();
 
         $boardingCounts = Student::whereIn('class_id', $classes->pluck('id'))
@@ -125,7 +128,9 @@ class EveningStudyController extends Controller
         return response()->json([
             'date' => $data['date'],
             'period' => $period,
-            'scope_type' => in_array($request->user()->role, ['system_admin', 'school_admin'], true) ? 'school' : 'department',
+            'scope_type' => in_array($request->user()->role, ['system_admin', 'school_admin'], true)
+                ? 'school'
+                : ($request->user()->role === 'teacher' && ! $isTakeScope ? 'class' : 'department'),
             'overall' => $buildSummary($classes),
             'departments' => $departmentSummaries,
         ]);
@@ -422,9 +427,10 @@ class EveningStudyController extends Controller
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date|after_or_equal:date_from',
             'class_id' => 'nullable|exists:classes,id',
+            'take' => 'nullable|boolean',
         ]);
         $classQuery = SchoolClass::query();
-        $this->scopeClasses($request, $classQuery);
+        $this->scopeClasses($request, $classQuery, $request->boolean('take'));
         $query = EveningStudySession::with(['schoolClass:id,name', 'department:id,name', 'creator:id,name'])
             ->whereIn('class_id', $classQuery->select('id'));
         if (! empty($data['date_from'])) {
@@ -545,6 +551,9 @@ class EveningStudyController extends Controller
 
     private function authorizeClass(Request $request, SchoolClass $class, bool $take): void
     {
+        if (! $take && $request->user()->dutyDepartments()->whereKey($class->department_id)->exists()) {
+            return;
+        }
         $query = SchoolClass::whereKey($class->id);
         $this->scopeClasses($request, $query, $take);
         abort_unless($query->exists(), 403, '无权访问该班级');
@@ -572,8 +581,7 @@ class EveningStudyController extends Controller
         if (in_array($user->role, ['system_admin', 'school_admin'], true)) {
             return;
         }
-        if ($user->role === 'duty_teacher'
-            && $user->dutyDepartments()->whereKey($class->department_id)->exists()) {
+        if ($user->dutyDepartments()->whereKey($class->department_id)->exists()) {
             return;
         }
         if (in_array($user->role, ['department_manager', 'manager'], true)
@@ -589,13 +597,23 @@ class EveningStudyController extends Controller
         if (in_array($user->role, ['system_admin', 'school_admin'], true)) {
             return;
         }
+        if ($take) {
+            if (in_array($user->role, ['department_manager', 'manager'], true)) {
+                $query->whereIn('department_id', $user->managedDepartments()->select('departments.id'));
+
+                return;
+            }
+            if ($user->dutyDepartments()->exists()) {
+                $query->whereIn('department_id', $user->dutyDepartments()->select('departments.id'));
+
+                return;
+            }
+            abort(403, '只有值班老师或系统管理员可以执行夜自习点名');
+        }
         if ($user->role === 'duty_teacher') {
             $query->whereIn('department_id', $user->dutyDepartments()->select('departments.id'));
 
             return;
-        }
-        if ($take) {
-            abort(403, '只有值班老师或系统管理员可以执行夜自习点名');
         }
         if ($user->role === 'teacher') {
             $query->where('teacher_id', $user->id);
