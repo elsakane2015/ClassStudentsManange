@@ -66,11 +66,14 @@ export default function StaffPage() {
         } else if (user?.role === 'school_admin') {
             fetchUsers('department_manager');
             fetchUsers('duty_teacher');
+        } else if (['department_manager', 'manager'].includes(user?.role)) {
+            fetchUsers('duty_teacher');
         }
         fetchUsers('teacher');
     }, [user]);
 
     const handleEdit = (userData) => {
+        setCurrentTabRole(userData.role);
         setEditingUser(userData);
         // Extract assignment
         // Manager/Department Manager: userData.managed_departments (array) -> map ids
@@ -146,8 +149,8 @@ export default function StaffPage() {
     } else if (user?.role === 'school_admin') {
         tabs.push({ key: 'department_manager', name: '系部管理员' });
         tabs.push({ key: 'duty_teacher', name: '系部值班老师' });
-    } else if (user?.role === 'department_manager') {
-        // Department managers can only see teachers
+    } else if (['department_manager', 'manager'].includes(user?.role)) {
+        tabs.push({ key: 'duty_teacher', name: '系部值班老师' });
     }
     tabs.push({ key: 'teacher', name: '班主任(教师)' });
 
