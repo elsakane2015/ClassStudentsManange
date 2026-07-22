@@ -13,6 +13,7 @@ use App\Models\Student;
 use App\Models\SystemSetting;
 use App\Models\TeacherEmailAccount;
 use App\Models\User;
+use App\Services\MicrosoftMailConfigurationService;
 use App\Services\ParentEmailNotificationService;
 use App\Services\PersonalEmailService;
 use App\Services\ResendEmailService;
@@ -457,6 +458,55 @@ class ResendParentNotificationTest extends TestCase
         $this->assertSame('microsoft', $result['provider']);
         Http::assertSent(fn ($request) => $request->url() === 'https://graph.microsoft.com/v1.0/me/sendMail'
             && $request['message']['toRecipients'][0]['emailAddress']['address'] === 'parent@example.com');
+    }
+
+    public function test_admin_can_configure_microsoft_mail_and_teacher_can_start_oauth(): void
+    {
+        [$teacher] = $this->createTeacherAndStudent();
+        $admin = User::create([
+            'uuid' => (string) Str::uuid(),
+            'name' => '系统管理员',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password'),
+            'role' => 'system_admin',
+            'status' => true,
+        ]);
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/microsoft-mail/settings', [
+            'microsoft_mail_enabled' => true,
+            'microsoft_mail_client_id' => 'database-client-id',
+            'microsoft_mail_client_secret' => 'database-client-secret',
+            'microsoft_mail_redirect_uri' => 'https://school.example.com/api/teacher-email/microsoft/callback',
+        ])->assertOk()
+            ->assertJsonPath('is_ready', true);
+
+        $this->assertNotSame(
+            'database-client-secret',
+            SystemSetting::get('microsoft_mail_client_secret')
+        );
+        $this->assertSame(
+            'database-client-secret',
+            app(MicrosoftMailConfigurationService::class)->configuration()['client_secret']
+        );
+        $this->getJson('/api/microsoft-mail/settings')
+            ->assertOk()
+            ->assertJsonPath('microsoft_mail_client_secret', '******')
+            ->assertJsonPath('source', 'system_settings');
+
+        Sanctum::actingAs($teacher);
+        $teacherSettings = $this->getJson('/api/resend/teacher-settings')->assertOk();
+        $microsoftOption = collect($teacherSettings->json('personal_email_providers'))
+            ->firstWhere('key', 'microsoft');
+        $this->assertTrue($microsoftOption['available']);
+
+        $connect = $this->postJson('/api/teacher-email/microsoft/connect')->assertOk();
+        parse_str(parse_url($connect->json('authorization_url'), PHP_URL_QUERY), $query);
+        $this->assertSame('database-client-id', $query['client_id']);
+        $this->assertSame(
+            'https://school.example.com/api/teacher-email/microsoft/callback',
+            $query['redirect_uri']
+        );
     }
 
     public function test_teacher_can_view_masked_logs_and_retry_failed_email(): void

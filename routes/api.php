@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\AttendanceExportController;
 use App\Http\Controllers\Api\WechatController;
 use App\Http\Controllers\Api\ResendController;
+use App\Http\Controllers\Api\MicrosoftMailSettingsController;
 use App\Http\Controllers\Api\TeacherEmailAccountController;
 use App\Http\Controllers\Api\SmsController;
 use App\Http\Controllers\Api\BoardingSuspensionController;
@@ -134,6 +135,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/resend/settings', [ResendController::class, 'getSettings']);
     Route::post('/resend/settings', [ResendController::class, 'saveSettings']);
     Route::post('/resend/test', [ResendController::class, 'sendTest']);
+    Route::get('/microsoft-mail/settings', [MicrosoftMailSettingsController::class, 'show']);
+    Route::post('/microsoft-mail/settings', [MicrosoftMailSettingsController::class, 'update']);
     Route::get('/resend/teacher-settings', [ResendController::class, 'getTeacherSettings']);
     Route::post('/resend/teacher-settings', [ResendController::class, 'saveTeacherSettings']);
     Route::post('/teacher-email/account', [TeacherEmailAccountController::class, 'store']);

@@ -9,6 +9,7 @@ import LeaveImageSettings from './LeaveImageSettings';
 import AttendanceSettings from './AttendanceSettings';
 import EveningStudySettings from './EveningStudySettings';
 import ResendSettings from './ResendSettings';
+import MicrosoftMailSettings from './MicrosoftMailSettings';
 import SmsSettings from './SmsSettings';
 import useAuthStore from '../../store/authStore';
 
@@ -913,6 +914,7 @@ export default function SettingsPage() {
                                 {user?.role === 'system_admin' && <NavButton id="eveningStudy" label="夜自习状态" />}
                                 <NavButton id="wechat" label="微信推送" />
                                 <NavButton id="resend" label="Resend 发送" />
+                                <NavButton id="microsoftMail" label="Microsoft 邮箱" />
                                 <NavButton id="sms" label="短信发送" />
                             </nav>
                         </div>
@@ -1400,6 +1402,10 @@ export default function SettingsPage() {
                             {/* RESEND EMAIL */}
                             {activeTab === 'resend' && (
                                 <ResendSettings />
+                            )}
+
+                            {activeTab === 'microsoftMail' && (
+                                <MicrosoftMailSettings />
                             )}
 
                             {activeTab === 'sms' && (

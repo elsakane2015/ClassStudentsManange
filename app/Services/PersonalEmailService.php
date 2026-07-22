@@ -38,6 +38,8 @@ class PersonalEmailService
         ],
     ];
 
+    public function __construct(private MicrosoftMailConfigurationService $microsoftMail) {}
+
     public function providerOptions(): array
     {
         $providers = collect(self::SMTP_PROVIDERS)
@@ -173,6 +175,7 @@ class PersonalEmailService
     public function microsoftAuthorizationUrl(User $teacher): string
     {
         abort_unless($this->microsoftConfigured(), 422, '系统管理员尚未配置 Microsoft 邮箱应用');
+        $microsoftConfig = $this->microsoftMail->configuration();
 
         $nonce = (string) Str::uuid();
         Cache::put('teacher-email-oauth:'.$nonce, $teacher->id, now()->addMinutes(10));
@@ -183,7 +186,7 @@ class PersonalEmailService
         ], JSON_THROW_ON_ERROR));
 
         return 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?'.http_build_query([
-            'client_id' => config('services.microsoft_mail.client_id'),
+            'client_id' => $microsoftConfig['client_id'],
             'response_type' => 'code',
             'redirect_uri' => $this->microsoftRedirectUri(),
             'response_mode' => 'query',
@@ -244,8 +247,7 @@ class PersonalEmailService
 
     public function microsoftConfigured(): bool
     {
-        return filled(config('services.microsoft_mail.client_id'))
-            && filled(config('services.microsoft_mail.client_secret'));
+        return $this->microsoftMail->isReady();
     }
 
     private function sendUsingAccount(TeacherEmailAccount $account, string $to, string $subject, string $html): array
@@ -344,11 +346,12 @@ class PersonalEmailService
 
     private function requestMicrosoftToken(array $parameters): array
     {
+        $microsoftConfig = $this->microsoftMail->configuration();
         $response = Http::asForm()->timeout(10)
             ->post('https://login.microsoftonline.com/common/oauth2/v2.0/token', [
                 ...$parameters,
-                'client_id' => config('services.microsoft_mail.client_id'),
-                'client_secret' => config('services.microsoft_mail.client_secret'),
+                'client_id' => $microsoftConfig['client_id'],
+                'client_secret' => $microsoftConfig['client_secret'],
                 'scope' => 'openid profile email offline_access User.Read Mail.Send',
             ]);
 
@@ -373,8 +376,7 @@ class PersonalEmailService
 
     private function microsoftRedirectUri(): string
     {
-        return config('services.microsoft_mail.redirect_uri')
-            ?: rtrim(config('app.url'), '/').'/api/teacher-email/microsoft/callback';
+        return $this->microsoftMail->configuration()['redirect_uri'];
     }
 
     private function validateProviderEmail(string $provider, string $email): void

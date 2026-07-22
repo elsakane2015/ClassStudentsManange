@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Models\AttendanceRecord;
 use App\Observers\AttendanceRecordObserver;
+use App\Services\MicrosoftMailConfigurationService;
 use App\Services\ParentEmailNotificationService;
 use App\Services\ParentEmailTemplateService;
 use App\Services\PersonalEmailService;
@@ -20,6 +21,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->singleton(ResendEmailService::class);
         $this->app->singleton(ParentEmailTemplateService::class);
+        $this->app->singleton(MicrosoftMailConfigurationService::class);
         $this->app->singleton(PersonalEmailService::class);
         $this->app->singleton(SmsService::class);
         $this->app->singleton(ParentEmailNotificationService::class);

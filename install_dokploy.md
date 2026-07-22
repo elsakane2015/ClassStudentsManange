@@ -154,7 +154,7 @@ SESSION_LIFETIME=120
 CACHE_STORE=database
 QUEUE_CONNECTION=database
 
-# 可选：允许班主任连接 Microsoft Outlook/Hotmail 发信
+# 可选：也可在“系统设置 -> Microsoft 邮箱”中配置
 MICROSOFT_MAIL_CLIENT_ID=
 MICROSOFT_MAIL_CLIENT_SECRET=
 MICROSOFT_MAIL_REDIRECT_URI=https://你的域名.com/api/teacher-email/microsoft/callback

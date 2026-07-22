@@ -29,14 +29,16 @@
 
 ## Microsoft Outlook / Hotmail
 
-Microsoft 邮箱使用 OAuth2 和 Microsoft Graph，不保存邮箱密码。部署管理员需要先在 Microsoft Entra 注册应用，并为应用配置：
+Microsoft 邮箱使用 OAuth2 和 Microsoft Graph，不保存邮箱密码。系统管理员需要先在 Microsoft Entra 注册应用，并为应用配置：
 
 - Microsoft Graph delegated permission：`User.Read`
 - Microsoft Graph delegated permission：`Mail.Send`
 - 允许公共 Microsoft 账号和组织账号登录
-- Web Redirect URI：`https://你的域名/api/teacher-email/microsoft/callback`
+- Web Redirect URI：系统设置“Microsoft 邮箱”中显示的回调地址
 
-在 Dokploy 应用环境变量中添加：
+然后进入“系统设置 -> Microsoft 邮箱”，填写 Application (client) ID、Client Secret 和 Web Redirect URI，启用后保存。配置生效后，班主任端的 Microsoft Outlook/Hotmail 选项会立即解除禁用。
+
+也可以选择通过 Dokploy 环境变量预置配置：
 
 ```env
 MICROSOFT_MAIL_CLIENT_ID=应用客户端ID
@@ -44,13 +46,13 @@ MICROSOFT_MAIL_CLIENT_SECRET=应用客户端密钥
 MICROSOFT_MAIL_REDIRECT_URI=https://你的域名/api/teacher-email/microsoft/callback
 ```
 
-修改环境变量后重新部署应用，或在容器中执行：
+环境变量是可选的兼容方式，网页系统设置的配置优先。修改环境变量后需要重新部署应用，或在容器中执行：
 
 ```bash
 php artisan config:clear
 ```
 
-配置完成后，班主任点击“连接 Microsoft 邮箱”，在 Microsoft 页面授权后会自动返回家长通知页面。
+配置完成后，班主任点击“连接 Microsoft 邮箱”，在 Microsoft 页面授权后会自动返回家长通知页面。每位班主任只会授权自己的邮箱账号。
 
 ## 失败处理
 
@@ -62,7 +64,7 @@ php artisan config:clear
 
 ## 安全与运维
 
-- SMTP 授权码、Microsoft access token 和 refresh token 均使用 Laravel 加密存储。
+- SMTP 授权码、Microsoft OAuth Client Secret、access token 和 refresh token 均使用 Laravel 加密存储。
 - `APP_KEY` 丢失后将无法解密已有凭据，生产环境必须持久保存同一个 `APP_KEY`。
 - API 和页面不会返回授权码或 OAuth Token 明文。
 - Laravel 容器需要能够发起到 SMTP `465` 端口及 Microsoft Graph HTTPS `443` 的出站连接，不需要映射或开放入站 SMTP 端口。本功能当前固定使用 `465`，无需额外开放 `587`；如以后切换为 STARTTLS 才需要允许 `587` 出站。
