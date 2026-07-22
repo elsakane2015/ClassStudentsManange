@@ -154,9 +154,16 @@ SESSION_LIFETIME=120
 CACHE_STORE=database
 QUEUE_CONNECTION=database
 
+# 可选：允许班主任连接 Microsoft Outlook/Hotmail 发信
+MICROSOFT_MAIL_CLIENT_ID=
+MICROSOFT_MAIL_CLIENT_SECRET=
+MICROSOFT_MAIL_REDIRECT_URI=https://你的域名.com/api/teacher-email/microsoft/callback
+
 # 如果使用 SQLite（简单部署）
 # DB_CONNECTION=sqlite
 ```
+
+QQ、网易个人邮箱无需在 Dokploy 中配置账号，班主任在系统“家长通知”页面使用客户端授权码完成连接。完整说明见 [班主任个人邮箱配置](docs/PERSONAL_EMAIL_CONFIGURATION.md)。
 
 ### 5.2 生成 APP_KEY
 

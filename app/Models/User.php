@@ -53,6 +53,11 @@ class User extends Authenticatable
             ->withTimestamps();
     }
 
+    public function teacherEmailAccount()
+    {
+        return $this->hasOne(TeacherEmailAccount::class);
+    }
+
     /**
      * Check if user has a specific permission
      */

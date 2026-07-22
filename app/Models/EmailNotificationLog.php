@@ -10,6 +10,8 @@ class EmailNotificationLog extends Model
 
     protected $casts = [
         'payload' => 'array',
+        'fallback_used' => 'boolean',
+        'last_attempt_at' => 'datetime',
     ];
 
     public function student()

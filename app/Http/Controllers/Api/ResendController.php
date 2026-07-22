@@ -3,24 +3,27 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\EmailNotificationLog;
 use App\Models\EmailNotificationPreference;
 use App\Models\Student;
 use App\Models\SystemSetting;
 use App\Services\ParentEmailNotificationService;
+use App\Services\PersonalEmailService;
 use App\Services\ResendEmailService;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ResendController extends Controller
 {
     public function __construct(
         private ResendEmailService $resend,
         private ParentEmailNotificationService $notifications,
+        private PersonalEmailService $personalEmail,
         private SmsService $sms
-    ) {
-    }
+    ) {}
 
     public function getSettings(Request $request)
     {
@@ -55,7 +58,7 @@ class ResendController extends Controller
 
         $incomingKey = $validated['resend_api_key'] ?? '';
         $hasKey = ($incomingKey && $incomingKey !== '******') || $this->resend->hasApiKey();
-        if ($validated['resend_enabled'] && (!$hasKey || empty($validated['resend_from_email']))) {
+        if ($validated['resend_enabled'] && (! $hasKey || empty($validated['resend_from_email']))) {
             return response()->json(['error' => '启用 Resend 前必须填写 API Key 和发件邮箱'], 422);
         }
 
@@ -98,7 +101,7 @@ class ResendController extends Controller
             'resend-test-'.Str::uuid()
         );
 
-        if (!$result['success']) {
+        if (! $result['success']) {
             return response()->json(['error' => $result['error'] ?? '发送失败'], 422);
         }
 
@@ -120,17 +123,42 @@ class ResendController extends Controller
             ->count();
         $students = (clone $studentQuery)->get(['parent_contact']);
         $missingParentPhoneCount = $students
-            ->filter(fn ($student) => !$this->sms->normalizeChinesePhone($student->parent_contact))
+            ->filter(fn ($student) => ! $this->sms->normalizeChinesePhone($student->parent_contact))
             ->count();
+        $personalEmailReady = $this->personalEmail->isReady($teacher);
+        $emailReady = $preference['email_provider'] === 'personal_email'
+            ? $personalEmailReady || ($preference['email_fallback_to_resend'] && $this->resend->isReady())
+            : $this->resend->isReady();
+        $emailLogs = EmailNotificationLog::where('teacher_id', $teacher->id)
+            ->latest()->limit(20)->get()
+            ->map(fn (EmailNotificationLog $log) => [
+                'id' => $log->id,
+                'recipient' => $this->maskEmail($log->recipient),
+                'event_key' => $log->event_key,
+                'subject' => $log->subject,
+                'provider' => $log->provider ?: 'system_resend',
+                'status' => $log->status,
+                'attempt_count' => $log->attempt_count,
+                'fallback_used' => $log->fallback_used,
+                'error_message' => $log->error_message,
+                'created_at' => $log->created_at,
+            ]);
 
         return response()->json([
             'enabled' => $preference['enabled'],
             'email_enabled' => $preference['email_enabled'],
+            'email_provider' => $preference['email_provider'],
+            'email_fallback_to_resend' => $preference['email_fallback_to_resend'],
             'sms_enabled' => $preference['sms_enabled'],
             'enabled_events' => $preference['enabled_events'],
             'events' => $this->notifications->eventOptions($teacher),
             'resend_ready' => $this->resend->isReady(),
+            'personal_email_account' => $this->personalEmail->publicConfiguration($teacher),
+            'personal_email_providers' => $this->personalEmail->providerOptions(),
+            'personal_email_ready' => $personalEmailReady,
+            'email_ready' => $emailReady,
             'sms_ready' => $this->sms->isReady(),
+            'email_logs' => $emailLogs,
             'student_count' => $studentCount,
             'missing_parent_email_count' => $missingParentEmailCount,
             'missing_parent_phone_count' => $missingParentPhoneCount,
@@ -145,6 +173,8 @@ class ResendController extends Controller
         $validated = $request->validate([
             'enabled' => 'required|boolean',
             'email_enabled' => 'required|boolean',
+            'email_provider' => ['required', Rule::in(['system_resend', 'personal_email'])],
+            'email_fallback_to_resend' => 'required|boolean',
             'sms_enabled' => 'required|boolean',
             'enabled_events' => 'required|array',
             'enabled_events.*' => 'required|string',
@@ -160,6 +190,8 @@ class ResendController extends Controller
             [
                 'enabled' => $validated['enabled'],
                 'email_enabled' => $validated['email_enabled'],
+                'email_provider' => $validated['email_provider'],
+                'email_fallback_to_resend' => $validated['email_fallback_to_resend'],
                 'sms_enabled' => $validated['sms_enabled'],
                 'enabled_events' => array_values(array_unique($validated['enabled_events'])),
             ]
@@ -184,5 +216,15 @@ class ResendController extends Controller
         abort_unless($user?->role === 'teacher', 403, '仅班主任可配置');
 
         return $user;
+    }
+
+    private function maskEmail(string $email): string
+    {
+        [$name, $domain] = array_pad(explode('@', $email, 2), 2, '');
+        if ($domain === '') {
+            return '***';
+        }
+
+        return mb_substr($name, 0, 1).'***@'.$domain;
     }
 }

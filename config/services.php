@@ -28,6 +28,12 @@ return [
         'key' => env('RESEND_KEY'),
     ],
 
+    'microsoft_mail' => [
+        'client_id' => env('MICROSOFT_MAIL_CLIENT_ID'),
+        'client_secret' => env('MICROSOFT_MAIL_CLIENT_SECRET'),
+        'redirect_uri' => env('MICROSOFT_MAIL_REDIRECT_URI'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

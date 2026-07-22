@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { CheckCircleIcon, DevicePhoneMobileIcon, EnvelopeIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ArrowTopRightOnSquareIcon, CheckCircleIcon, DevicePhoneMobileIcon, EnvelopeIcon, ExclamationTriangleIcon, PaperAirplaneIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { Link } from 'react-router-dom';
 import Layout from '../../components/Layout';
 
@@ -8,10 +8,17 @@ export default function EmailNotificationSettings() {
     const [settings, setSettings] = useState({
         enabled: true,
         email_enabled: true,
+        email_provider: 'system_resend',
+        email_fallback_to_resend: false,
         sms_enabled: false,
         enabled_events: [],
         events: [],
         resend_ready: false,
+        email_ready: false,
+        personal_email_ready: false,
+        personal_email_account: null,
+        personal_email_providers: [],
+        email_logs: [],
         sms_ready: false,
         student_count: 0,
         missing_parent_email_count: 0,
@@ -19,11 +26,28 @@ export default function EmailNotificationSettings() {
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [accountBusy, setAccountBusy] = useState(false);
     const [notice, setNotice] = useState(null);
+    const [personalProvider, setPersonalProvider] = useState('qq');
+    const [accountForm, setAccountForm] = useState({ email: '', from_name: '', authorization_code: '' });
 
     useEffect(() => {
         axios.get('/resend/teacher-settings')
-            .then(response => setSettings(response.data))
+            .then(response => {
+                setSettings(response.data);
+                const account = response.data.personal_email_account;
+                if (account?.provider) {
+                    setPersonalProvider(account.provider);
+                    setAccountForm({
+                        email: account.email || '',
+                        from_name: account.from_name || '',
+                        authorization_code: '',
+                    });
+                }
+                const connection = new URLSearchParams(window.location.search).get('email_connection');
+                if (connection === 'success') setNotice({ type: 'success', text: 'Microsoft 邮箱连接成功' });
+                if (connection === 'error') setNotice({ type: 'error', text: 'Microsoft 邮箱连接失败，请重试' });
+            })
             .catch(error => setNotice({ type: 'error', text: error.response?.data?.error || '读取配置失败' }))
             .finally(() => setLoading(false));
     }, []);
@@ -50,6 +74,8 @@ export default function EmailNotificationSettings() {
             const response = await axios.post('/resend/teacher-settings', {
                 enabled: settings.enabled,
                 email_enabled: settings.email_enabled,
+                email_provider: settings.email_provider,
+                email_fallback_to_resend: settings.email_fallback_to_resend,
                 sms_enabled: settings.sms_enabled,
                 enabled_events: settings.enabled_events,
             });
@@ -58,6 +84,108 @@ export default function EmailNotificationSettings() {
             setNotice({ type: 'error', text: error.response?.data?.error || '保存失败' });
         } finally {
             setSaving(false);
+        }
+    };
+
+    const updateAccountState = (account) => {
+        setSettings(prev => ({
+            ...prev,
+            personal_email_account: account,
+            personal_email_ready: account.ready,
+            email_ready: prev.email_provider === 'personal_email'
+                ? account.ready || (prev.email_fallback_to_resend && prev.resend_ready)
+                : prev.resend_ready,
+        }));
+        if (account?.provider) {
+            setPersonalProvider(account.provider);
+            setAccountForm({
+                email: account.email || '',
+                from_name: account.from_name || '',
+                authorization_code: '',
+            });
+        }
+    };
+
+    const savePersonalAccount = async () => {
+        setAccountBusy(true);
+        setNotice(null);
+        try {
+            const response = await axios.post('/teacher-email/account', {
+                provider: personalProvider,
+                ...accountForm,
+            });
+            updateAccountState(response.data.account);
+            setNotice({ type: 'success', text: response.data.message });
+        } catch (error) {
+            const validation = error.response?.data?.errors;
+            const detail = validation ? Object.values(validation).flat()[0] : null;
+            setNotice({ type: 'error', text: detail || error.response?.data?.error || error.response?.data?.message || '个人邮箱保存失败' });
+        } finally {
+            setAccountBusy(false);
+        }
+    };
+
+    const testPersonalAccount = async () => {
+        setAccountBusy(true);
+        setNotice(null);
+        try {
+            const response = await axios.post('/teacher-email/account/test');
+            updateAccountState(response.data.account);
+            setNotice({ type: 'success', text: response.data.message });
+        } catch (error) {
+            setNotice({ type: 'error', text: error.response?.data?.error || '测试邮件发送失败' });
+        } finally {
+            setAccountBusy(false);
+        }
+    };
+
+    const disconnectPersonalAccount = async () => {
+        if (!window.confirm('确定删除当前个人邮箱连接吗？')) return;
+        setAccountBusy(true);
+        try {
+            const response = await axios.delete('/teacher-email/account');
+            setSettings(prev => ({
+                ...prev,
+                personal_email_account: null,
+                personal_email_ready: false,
+                email_ready: prev.email_provider === 'personal_email'
+                    ? prev.email_fallback_to_resend && prev.resend_ready
+                    : prev.resend_ready,
+            }));
+            setPersonalProvider('qq');
+            setAccountForm({ email: '', from_name: '', authorization_code: '' });
+            setNotice({ type: 'success', text: response.data.message });
+        } catch (error) {
+            setNotice({ type: 'error', text: error.response?.data?.error || '删除个人邮箱连接失败' });
+        } finally {
+            setAccountBusy(false);
+        }
+    };
+
+    const connectMicrosoft = async () => {
+        setAccountBusy(true);
+        setNotice(null);
+        try {
+            const response = await axios.post('/teacher-email/microsoft/connect');
+            window.location.assign(response.data.authorization_url);
+        } catch (error) {
+            setNotice({ type: 'error', text: error.response?.data?.message || error.response?.data?.error || 'Microsoft 邮箱连接失败' });
+            setAccountBusy(false);
+        }
+    };
+
+    const retryEmail = async (logId) => {
+        setAccountBusy(true);
+        setNotice(null);
+        try {
+            const response = await axios.post(`/teacher-email/logs/${logId}/retry`);
+            const refreshed = await axios.get('/resend/teacher-settings');
+            setSettings(refreshed.data);
+            setNotice({ type: 'success', text: response.data.message });
+        } catch (error) {
+            setNotice({ type: 'error', text: error.response?.data?.error || '重新发送失败' });
+        } finally {
+            setAccountBusy(false);
         }
     };
 
@@ -88,10 +216,10 @@ export default function EmailNotificationSettings() {
                     </button>
                 </div>
 
-                {settings.email_enabled && !settings.resend_ready && (
+                {settings.email_enabled && !settings.email_ready && (
                     <div className="flex items-start gap-3 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800">
                         <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0" />
-                        <span>系统管理员尚未完成 Resend 配置，邮件通道暂不可用。</span>
+                        <span>{settings.email_provider === 'personal_email' ? '个人邮箱尚未连接并通过测试，邮件通道暂不可用。' : '系统管理员尚未完成 Resend 配置，邮件通道暂不可用。'}</span>
                     </div>
                 )}
 
@@ -125,7 +253,7 @@ export default function EmailNotificationSettings() {
                             label="邮件"
                             description="发送到家长邮箱"
                             enabled={settings.email_enabled}
-                            ready={settings.resend_ready}
+                            ready={settings.email_ready}
                             icon={EnvelopeIcon}
                             onChange={() => setSettings(prev => ({ ...prev, email_enabled: !prev.email_enabled }))}
                         />
@@ -139,6 +267,101 @@ export default function EmailNotificationSettings() {
                         />
                     </div>
                 </section>
+
+                {settings.enabled && settings.email_enabled && (
+                    <section className="border-b border-gray-200 pb-6">
+                        <h2 className="text-sm font-semibold text-gray-900">邮件发送账户</h2>
+                        <div className="mt-3 inline-flex rounded-md border border-gray-300 bg-white p-1">
+                            <button
+                                type="button"
+                                onClick={() => setSettings(prev => ({ ...prev, email_provider: 'system_resend', email_ready: prev.resend_ready }))}
+                                className={`rounded px-3 py-1.5 text-sm ${settings.email_provider === 'system_resend' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}
+                            >系统 Resend</button>
+                            <button
+                                type="button"
+                                onClick={() => setSettings(prev => ({
+                                    ...prev,
+                                    email_provider: 'personal_email',
+                                    email_ready: prev.personal_email_ready || (prev.email_fallback_to_resend && prev.resend_ready),
+                                }))}
+                                className={`rounded px-3 py-1.5 text-sm ${settings.email_provider === 'personal_email' ? 'bg-indigo-600 text-white' : 'text-gray-600'}`}
+                            >个人邮箱</button>
+                        </div>
+
+                        {settings.email_provider === 'system_resend' ? (
+                            <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
+                                <span className={`h-2.5 w-2.5 rounded-full ${settings.resend_ready ? 'bg-green-500' : 'bg-amber-500'}`} />
+                                {settings.resend_ready ? '系统 Resend 已配置，由学校统一发信。' : '系统 Resend 尚未配置。'}
+                            </div>
+                        ) : (
+                            <div className="mt-5 space-y-5">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">邮箱服务商</label>
+                                    <select
+                                        value={personalProvider}
+                                        onChange={event => {
+                                            setPersonalProvider(event.target.value);
+                                            setAccountForm({ email: '', from_name: '', authorization_code: '' });
+                                        }}
+                                        className="mt-1 block w-full rounded-md border-gray-300 sm:max-w-md"
+                                    >
+                                        {settings.personal_email_providers.map(provider => (
+                                            <option key={provider.key} value={provider.key} disabled={provider.available === false}>{provider.label}{provider.available === false ? '（系统未配置）' : ''}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {personalProvider === 'microsoft' ? (
+                                    <div className="flex flex-col items-start gap-3">
+                                        {settings.personal_email_account?.provider === 'microsoft' && (
+                                            <div className="text-sm text-gray-700">
+                                                已连接：<span className="font-medium">{settings.personal_email_account.email}</span>
+                                                <span className={`ml-2 ${settings.personal_email_account.ready ? 'text-green-700' : 'text-amber-700'}`}>{settings.personal_email_account.ready ? '可用' : '需要重新连接'}</span>
+                                            </div>
+                                        )}
+                                        <button type="button" onClick={connectMicrosoft} disabled={accountBusy} className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                                            <ArrowTopRightOnSquareIcon className="h-4 w-4" />连接 Microsoft 邮箱
+                                        </button>
+                                        <p className="text-xs text-gray-500">将跳转到 Microsoft 完成 OAuth 授权，系统不会获取或保存邮箱密码。</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <label className="text-sm font-medium text-gray-700">邮箱地址
+                                            <input type="email" value={accountForm.email} onChange={event => setAccountForm(prev => ({ ...prev, email: event.target.value }))} className="mt-1 block w-full rounded-md border-gray-300" placeholder={personalProvider === 'qq' ? 'example@qq.com' : personalProvider === 'netease_163' ? 'example@163.com' : 'example@126.com'} />
+                                        </label>
+                                        <label className="text-sm font-medium text-gray-700">发件人名称
+                                            <input type="text" value={accountForm.from_name} onChange={event => setAccountForm(prev => ({ ...prev, from_name: event.target.value }))} className="mt-1 block w-full rounded-md border-gray-300" placeholder="例如：王老师" />
+                                        </label>
+                                        <label className="text-sm font-medium text-gray-700 sm:col-span-2">客户端授权码
+                                            <input type="password" value={accountForm.authorization_code} onChange={event => setAccountForm(prev => ({ ...prev, authorization_code: event.target.value }))} className="mt-1 block w-full rounded-md border-gray-300 sm:max-w-md" placeholder={settings.personal_email_account?.credential_configured ? '已保存；留空表示不修改' : '不是邮箱登录密码'} autoComplete="new-password" />
+                                        </label>
+                                    </div>
+                                )}
+
+                                {personalProvider !== 'microsoft' && (
+                                    <div className="rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                        请先在邮箱网页设置中开启 SMTP 服务并生成客户端授权码。系统固定使用服务商官方 SMTP 地址，不支持自定义服务器。
+                                    </div>
+                                )}
+
+                                <div className="flex flex-wrap gap-3">
+                                    {personalProvider !== 'microsoft' && <button type="button" onClick={savePersonalAccount} disabled={accountBusy} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">保存邮箱配置</button>}
+                                    {settings.personal_email_account?.provider === personalProvider && <button type="button" onClick={testPersonalAccount} disabled={accountBusy} className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 disabled:opacity-50"><PaperAirplaneIcon className="h-4 w-4" />发送测试邮件</button>}
+                                    {settings.personal_email_account?.provider && <button type="button" onClick={disconnectPersonalAccount} disabled={accountBusy} className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-red-600 disabled:opacity-50"><TrashIcon className="h-4 w-4" />删除连接</button>}
+                                </div>
+
+                                <label className="flex items-center gap-3 text-sm text-gray-700">
+                                    <input type="checkbox" checked={settings.email_fallback_to_resend} onChange={event => setSettings(prev => ({
+                                        ...prev,
+                                        email_fallback_to_resend: event.target.checked,
+                                        email_ready: prev.personal_email_ready || (event.target.checked && prev.resend_ready),
+                                    }))} className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+                                    个人邮箱发送失败时，使用系统 Resend 重试
+                                </label>
+                            </div>
+                        )}
+                    </section>
+                )}
 
                 <div className={`divide-y divide-gray-200 border-b border-gray-200 ${settings.enabled ? '' : 'pointer-events-none opacity-50'}`}>
                     {Object.entries(groupedEvents).map(([group, events]) => (
@@ -161,6 +384,34 @@ export default function EmailNotificationSettings() {
                     ))}
                 </div>
 
+                {settings.email_logs.length > 0 && (
+                    <section className="border-b border-gray-200 pb-6">
+                        <h2 className="text-sm font-semibold text-gray-900">最近邮件发送记录</h2>
+                        <div className="mt-3 overflow-x-auto border-y border-gray-200">
+                            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                                <thead className="bg-gray-50 text-left text-xs text-gray-500">
+                                    <tr><th className="px-3 py-2 font-medium">时间</th><th className="px-3 py-2 font-medium">收件人</th><th className="px-3 py-2 font-medium">主题</th><th className="px-3 py-2 font-medium">通道</th><th className="px-3 py-2 font-medium">状态</th><th className="px-3 py-2 font-medium"><span className="sr-only">操作</span></th></tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 bg-white">
+                                    {settings.email_logs.map(log => (
+                                        <tr key={log.id}>
+                                            <td className="whitespace-nowrap px-3 py-2 text-gray-500">{log.created_at}</td>
+                                            <td className="whitespace-nowrap px-3 py-2 text-gray-700">{log.recipient}</td>
+                                            <td className="max-w-xs truncate px-3 py-2 text-gray-700" title={log.subject}>{log.subject}</td>
+                                            <td className="whitespace-nowrap px-3 py-2 text-gray-500">{providerLabel(log.provider)}{log.fallback_used ? '（兜底）' : ''}</td>
+                                            <td className="px-3 py-2">
+                                                <span className={log.status === 'success' ? 'text-green-700' : log.status === 'failed' ? 'text-red-700' : 'text-amber-700'}>{log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : '发送中'}</span>
+                                                {log.status === 'failed' && log.error_message && <p className="mt-1 max-w-xs truncate text-xs text-red-600" title={log.error_message}>{log.error_message}</p>}
+                                            </td>
+                                            <td className="whitespace-nowrap px-3 py-2 text-right">{log.status === 'failed' && <button type="button" disabled={accountBusy} onClick={() => retryEmail(log.id)} className="text-indigo-600 hover:text-indigo-800 disabled:opacity-50">重试</button>}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                )}
+
                 <div className="flex justify-end">
                     <button
                         type="button"
@@ -174,6 +425,17 @@ export default function EmailNotificationSettings() {
             </div>
         </Layout>
     );
+}
+
+function providerLabel(provider) {
+    return {
+        system_resend: '系统 Resend',
+        qq: 'QQ 邮箱',
+        netease_163: '网易 163',
+        netease_126: '网易 126',
+        microsoft: 'Microsoft',
+        personal_email: '个人邮箱',
+    }[provider] || provider;
 }
 
 function ChannelToggle({ label, description, enabled, ready, icon: Icon, onChange }) {

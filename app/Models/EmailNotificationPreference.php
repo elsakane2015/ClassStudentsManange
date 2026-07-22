@@ -11,6 +11,7 @@ class EmailNotificationPreference extends Model
     protected $casts = [
         'enabled' => 'boolean',
         'email_enabled' => 'boolean',
+        'email_fallback_to_resend' => 'boolean',
         'sms_enabled' => 'boolean',
         'enabled_events' => 'array',
     ];

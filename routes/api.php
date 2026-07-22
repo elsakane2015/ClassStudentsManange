@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\AttendanceExportController;
 use App\Http\Controllers\Api\WechatController;
 use App\Http\Controllers\Api\ResendController;
+use App\Http\Controllers\Api\TeacherEmailAccountController;
 use App\Http\Controllers\Api\SmsController;
 use App\Http\Controllers\Api\BoardingSuspensionController;
 use App\Http\Controllers\Api\EveningStudyController;
@@ -43,6 +44,7 @@ Route::get('/attendance/auto-mark', [AttendanceController::class, 'triggerAutoMa
 // WeChat callback routes (no auth required)
 Route::match(['get', 'post'], '/wechat/callback/system', [WechatController::class, 'callbackSystem']);
 Route::match(['get', 'post'], '/wechat/callback/teacher/{teacherId}', [WechatController::class, 'callbackTeacher']);
+Route::get('/teacher-email/microsoft/callback', [TeacherEmailAccountController::class, 'microsoftCallback']);
 
 // Protected routes
 Route::middleware(['auth:sanctum'])->group(function () {
@@ -134,6 +136,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/resend/test', [ResendController::class, 'sendTest']);
     Route::get('/resend/teacher-settings', [ResendController::class, 'getTeacherSettings']);
     Route::post('/resend/teacher-settings', [ResendController::class, 'saveTeacherSettings']);
+    Route::post('/teacher-email/account', [TeacherEmailAccountController::class, 'store']);
+    Route::post('/teacher-email/account/test', [TeacherEmailAccountController::class, 'test']);
+    Route::delete('/teacher-email/account', [TeacherEmailAccountController::class, 'destroy']);
+    Route::post('/teacher-email/microsoft/connect', [TeacherEmailAccountController::class, 'microsoftConnect']);
+    Route::post('/teacher-email/logs/{emailNotificationLog}/retry', [TeacherEmailAccountController::class, 'retry']);
     Route::get('/sms/settings', [SmsController::class, 'getSettings']);
     Route::post('/sms/settings', [SmsController::class, 'saveSettings']);
     Route::post('/sms/test', [SmsController::class, 'sendTest']);

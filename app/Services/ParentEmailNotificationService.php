@@ -19,13 +19,15 @@ class ParentEmailNotificationService
     ];
 
     private array $processedKeys = [];
+
     private array $preferenceCache = [];
 
     public function __construct(
         private ResendEmailService $resend,
+        private PersonalEmailService $personalEmail,
+        private ParentEmailTemplateService $templates,
         private SmsService $sms
-    ) {
-    }
+    ) {}
 
     public function eventOptions(User $teacher): array
     {
@@ -72,6 +74,8 @@ class ParentEmailNotificationService
         return $this->preferenceCache[$teacher->id] = [
             'enabled' => $preference?->enabled ?? true,
             'email_enabled' => $preference?->email_enabled ?? true,
+            'email_provider' => $preference?->email_provider ?? 'system_resend',
+            'email_fallback_to_resend' => $preference?->email_fallback_to_resend ?? false,
             'sms_enabled' => $preference?->sms_enabled ?? false,
             'enabled_events' => $preference?->enabled_events ?? self::DEFAULT_ENABLED_EVENTS,
         ];
@@ -81,6 +85,7 @@ class ParentEmailNotificationService
     {
         if ($teacherId === null) {
             $this->preferenceCache = [];
+
             return;
         }
 
@@ -110,7 +115,7 @@ class ParentEmailNotificationService
         $record->loadMissing(['student.user', 'student.school', 'student.schoolClass.teacher', 'leaveType']);
         [$eventKey, $eventName] = $this->attendanceEvent($record);
 
-        if (!$eventKey) {
+        if (! $eventKey) {
             return ['success' => false, 'skipped' => 'unsupported_event'];
         }
 
@@ -136,16 +141,16 @@ class ParentEmailNotificationService
         $class = $student?->schoolClass;
         $teacher = $class?->teacher;
 
-        if (!$student || !$class || !$teacher) {
+        if (! $student || ! $class || ! $teacher) {
             return ['success' => false, 'skipped' => 'missing_student_or_teacher'];
         }
 
         $preference = $this->preferenceFor($teacher);
-        if (!$preference['enabled'] || !in_array($eventKey, $preference['enabled_events'], true)) {
+        if (! $preference['enabled'] || ! in_array($eventKey, $preference['enabled_events'], true)) {
             return ['success' => false, 'skipped' => 'event_disabled'];
         }
 
-        if (!$preference['email_enabled'] && !$preference['sms_enabled']) {
+        if (! $preference['email_enabled'] && ! $preference['sms_enabled']) {
             return ['success' => false, 'skipped' => 'channels_disabled'];
         }
 
@@ -192,13 +197,9 @@ class ParentEmailNotificationService
         string $dedupeKey,
         array $variables
     ): array {
-        if (!$this->resend->isReady()) {
-            return ['success' => false, 'skipped' => 'resend_not_ready'];
-        }
-
         $student = $record->student;
         $teacher = $student->schoolClass->teacher;
-        if (!$student->parent_email) {
+        if (! $student->parent_email) {
             return ['success' => false, 'skipped' => 'missing_email_recipient'];
         }
 
@@ -212,18 +213,40 @@ class ParentEmailNotificationService
             return ['success' => true, 'skipped' => 'duplicate'];
         }
 
-        $config = $this->resend->configuration();
-        $subject = $this->renderTemplate($config['subject_template'], $variables, false);
-        $html = $this->renderTemplate($config['html_template'], $variables, true);
+        $preference = $this->preferenceFor($teacher);
+        $selectedProvider = $preference['email_provider'] === 'personal_email'
+            ? 'personal_email'
+            : 'system_resend';
+        $fallbackEnabled = $selectedProvider === 'personal_email'
+            && $preference['email_fallback_to_resend'];
+
+        if ($selectedProvider === 'system_resend' && ! $this->resend->isReady()) {
+            return ['success' => false, 'skipped' => 'resend_not_ready'];
+        }
+        if ($selectedProvider === 'personal_email'
+            && ! $this->personalEmail->isReady($teacher)
+            && ! ($fallbackEnabled && $this->resend->isReady())) {
+            return ['success' => false, 'skipped' => 'personal_email_not_ready'];
+        }
+
+        $subject = $this->templates->renderSubject($variables);
+        $html = $this->templates->renderHtml($variables);
 
         $log = $existingLog ?: new EmailNotificationLog(['dedupe_key' => $dedupeKey]);
         $log->fill([
             'student_id' => $record->student_id,
             'teacher_id' => $teacher->id,
             'recipient' => $student->parent_email,
+            'provider' => $selectedProvider,
+            'sender_address' => $selectedProvider === 'personal_email'
+                ? $teacher->teacherEmailAccount?->email
+                : $this->resend->configuration()['from_email'],
             'event_key' => $eventKey,
             'subject' => $subject,
             'status' => 'pending',
+            'attempt_count' => 1,
+            'fallback_used' => false,
+            'last_attempt_at' => now(),
             'error_message' => null,
             'related_type' => $relatedType,
             'related_id' => $relatedId,
@@ -232,23 +255,71 @@ class ParentEmailNotificationService
             ],
         ])->save();
 
-        $result = $this->resend->send(
-            $student->parent_email,
-            $subject,
-            $html,
-            'parent-notification-'.$dedupeKey
-        );
+        $personalReady = $selectedProvider === 'personal_email' && $this->personalEmail->isReady($teacher);
+        $attemptedProviders = [];
+        $fallbackUsed = false;
+        if ($personalReady) {
+            $attemptedProviders[] = $teacher->teacherEmailAccount?->provider ?: 'personal_email';
+            $result = $this->personalEmail->send($teacher, $student->parent_email, $subject, $html);
+        } elseif ($selectedProvider === 'personal_email') {
+            if ($fallbackEnabled && $this->resend->isReady()) {
+                $fallbackUsed = true;
+                $attemptedProviders[] = 'system_resend';
+                $result = $this->resend->send(
+                    $student->parent_email,
+                    $subject,
+                    $html,
+                    'parent-notification-fallback-'.$dedupeKey
+                );
+            } else {
+                $result = [
+                    'success' => false,
+                    'provider' => $teacher->teacherEmailAccount?->provider ?: 'personal_email',
+                    'sender' => $teacher->teacherEmailAccount?->email,
+                    'error' => '班主任个人邮箱尚未验证，且未启用可用的系统 Resend 回退',
+                ];
+            }
+        } else {
+            $attemptedProviders[] = 'system_resend';
+            $result = $this->resend->send(
+                $student->parent_email,
+                $subject,
+                $html,
+                'parent-notification-'.$dedupeKey
+            );
+        }
+
+        if ($personalReady && ! $result['success'] && $fallbackEnabled && $this->resend->isReady()) {
+            $fallbackUsed = true;
+            $attemptedProviders[] = 'system_resend';
+            $result = $this->resend->send(
+                $student->parent_email,
+                $subject,
+                $html,
+                'parent-notification-fallback-'.$dedupeKey
+            );
+        }
 
         $log->update([
             'status' => $result['success'] ? 'success' : 'failed',
+            'provider' => $result['provider'] ?? $selectedProvider,
+            'sender_address' => $result['sender'] ?? $log->sender_address,
+            'attempt_count' => count($attemptedProviders),
+            'fallback_used' => $fallbackUsed,
+            'last_attempt_at' => now(),
             'provider_message_id' => $result['id'] ?? null,
             'error_message' => $result['success'] ? null : ($result['error'] ?? '未知错误'),
+            'payload' => [
+                'variables' => $variables,
+                'attempted_providers' => $attemptedProviders,
+            ],
         ]);
 
-        if (!$result['success']) {
+        if (! $result['success']) {
             Log::warning('Parent email notification failed', [
                 'student_id' => $student->id,
                 'event_key' => $eventKey,
+                'provider' => $result['provider'] ?? $selectedProvider,
                 'error' => $result['error'] ?? '未知错误',
             ]);
         }
@@ -264,13 +335,13 @@ class ParentEmailNotificationService
         string $baseDedupeKey,
         array $variables
     ): array {
-        if (!$this->sms->isReady()) {
+        if (! $this->sms->isReady()) {
             return ['success' => false, 'skipped' => 'sms_not_ready'];
         }
 
         $student = $record->student;
         $teacher = $student->schoolClass->teacher;
-        if (!$student->parent_contact || !$this->sms->normalizeChinesePhone($student->parent_contact)) {
+        if (! $student->parent_contact || ! $this->sms->normalizeChinesePhone($student->parent_contact)) {
             return ['success' => false, 'skipped' => 'missing_sms_recipient'];
         }
 
@@ -310,7 +381,7 @@ class ParentEmailNotificationService
             'error_message' => $result['success'] ? null : ($result['error'] ?? '未知错误'),
         ]);
 
-        if (!$result['success']) {
+        if (! $result['success']) {
             Log::warning('Parent SMS notification failed', [
                 'student_id' => $student->id,
                 'event_key' => $eventKey,
@@ -410,12 +481,12 @@ class ParentEmailNotificationService
         $details = $record->details ?? [];
         if (is_array($details)) {
             foreach (['display_label', 'time_slot_name', 'option_label'] as $key) {
-                if (!empty($details[$key])) {
+                if (! empty($details[$key])) {
                     return (string) $details[$key];
                 }
             }
 
-            if (!empty($details['period_names']) && is_array($details['period_names'])) {
+            if (! empty($details['period_names']) && is_array($details['period_names'])) {
                 return implode('、', $details['period_names']);
             }
 
@@ -426,7 +497,7 @@ class ParentEmailNotificationService
                 'afternoon_half' => '下午',
                 'full_day' => '全天',
             ];
-            if (!empty($details['option']) && isset($optionLabels[$details['option']])) {
+            if (! empty($details['option']) && isset($optionLabels[$details['option']])) {
                 return $optionLabels[$details['option']];
             }
         }
@@ -443,17 +514,6 @@ class ParentEmailNotificationService
         }
 
         return '全天';
-    }
-
-    private function renderTemplate(string $template, array $variables, bool $escapeHtml): string
-    {
-        $replacements = [];
-        foreach ($variables as $key => $value) {
-            $stringValue = (string) $value;
-            $replacements['{{'.$key.'}}'] = $escapeHtml ? e($stringValue) : strip_tags($stringValue);
-        }
-
-        return strtr($template, $replacements);
     }
 
     private function leaveRequestDedupeKey(AttendanceRecord $record): string
