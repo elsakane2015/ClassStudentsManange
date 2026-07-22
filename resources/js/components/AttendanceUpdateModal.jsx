@@ -580,7 +580,9 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
                     option: details.option,
                     source_type: record.source_type,
                     source_id: record.source_id,
-                    leave_batch_id: record.leave_batch_id ?? null
+                    leave_batch_id: record.leave_batch_id ?? null,
+                    scene: record.scene ?? 'regular',
+                    delete_scope: record.leave_batch_id ? 'scene_date' : 'record'
                 }
             });
 

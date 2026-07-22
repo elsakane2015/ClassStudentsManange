@@ -2324,9 +2324,26 @@ class AttendanceController extends Controller
             'source_type' => 'nullable|string',
             'source_id' => 'nullable|integer',
             'leave_batch_id' => 'nullable|string',
+            'scene' => 'nullable|in:regular,evening_study',
+            'delete_scope' => 'nullable|in:record,scene_date,batch',
         ]);
 
-        // 如果提供了 leave_batch_id（self_applied 批次请假），直接整批删除
+        // 考勤标记页中的一个徽标代表同一天、同一场景的一组记录。
+        // 撤销该徽标时只删除对应分组，不能连带删除同批次的另一场景。
+        if ($request->leave_batch_id
+            && $request->source_type === 'self_applied'
+            && $request->delete_scope === 'scene_date') {
+            $count = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('leave_batch_id', $request->leave_batch_id)
+                ->where('student_id', $request->student_id)
+                ->whereDate('date', $request->date)
+                ->where('scene', $request->input('scene', 'regular'))
+                ->delete();
+
+            return response()->json(['message' => '对应考勤分组已撤销', 'deleted_count' => $count]);
+        }
+
+        // 其他明确要求整批撤销的旧调用保持原行为。
         if ($request->leave_batch_id && $request->source_type === 'self_applied') {
             $count = AttendanceRecord::withoutGlobalScope('day_attendance')
                 ->where('leave_batch_id', $request->leave_batch_id)
@@ -2365,13 +2382,24 @@ class AttendanceController extends Controller
             return response()->json(['message' => 'Record not found.'], 404);
         }
 
-        // self_applied 记录即使没传 leave_batch_id，也尝试整批删除
+        // self_applied 记录按调用方指定范围删除。
         if ($record->source_type === 'self_applied' && $record->leave_batch_id) {
-            $count = AttendanceRecord::withoutGlobalScope('day_attendance')
+            $batchQuery = AttendanceRecord::withoutGlobalScope('day_attendance')
                 ->where('leave_batch_id', $record->leave_batch_id)
-                ->where('student_id', $record->student_id)
-                ->delete();
-            return response()->json(['message' => '请假记录已整批撤销', 'deleted_count' => $count]);
+                ->where('student_id', $record->student_id);
+
+            if ($request->delete_scope === 'scene_date') {
+                $batchQuery->whereDate('date', $record->date)
+                    ->where('scene', $request->input('scene', $record->scene ?? 'regular'));
+            }
+
+            $count = $batchQuery->delete();
+            return response()->json([
+                'message' => $request->delete_scope === 'scene_date'
+                    ? '对应考勤分组已撤销'
+                    : '请假记录已整批撤销',
+                'deleted_count' => $count,
+            ]);
         }
 
         // If the record is from a leave_request, cancel the leave request

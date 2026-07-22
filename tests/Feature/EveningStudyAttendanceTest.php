@@ -401,6 +401,66 @@ class EveningStudyAttendanceTest extends TestCase
         );
     }
 
+    public function test_teacher_removes_only_the_clicked_scene_from_a_mixed_leave_batch(): void
+    {
+        $data = $this->schoolData('delete-mixed-scene');
+        $teacher = $this->user('teacher.delete.scene@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $student = $this->student($data, 'delete-mixed-scene', true);
+        $leaveType = LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '病假',
+            'slug' => 'sick_leave',
+            'is_active' => true,
+            'student_requestable' => true,
+            'input_type' => 'duration_select',
+        ]);
+        $requestedStatus = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在家',
+            'color' => 'blue',
+            'base_status' => 'excused',
+            'student_requestable' => true,
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($student->user);
+        $created = $this->postJson('/api/leave-requests', [
+            'type' => $leaveType->slug,
+            'start_date' => '2026-07-22',
+            'end_date' => '2026-07-22',
+            'sessions' => [1, 2, 10],
+            'reason' => '撤销分组测试',
+            'evening_study_status_id' => $requestedStatus->id,
+            'destination' => '父母家',
+        ])->assertCreated();
+        $records = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('leave_batch_id', $created->json('leave_batch_id'))
+            ->get();
+
+        Sanctum::actingAs($teacher);
+        $regularRecord = $records->firstWhere('scene', 'regular');
+        $this->deleteJson('/api/attendance/records?' . http_build_query([
+            'record_id' => $regularRecord->id,
+            'student_id' => $student->id,
+            'date' => '2026-07-22',
+            'period_id' => $regularRecord->period_id,
+            'source_type' => 'self_applied',
+            'leave_batch_id' => $created->json('leave_batch_id'),
+            'scene' => 'regular',
+            'delete_scope' => 'scene_date',
+        ]))->assertOk()
+            ->assertJsonPath('deleted_count', 2);
+
+        $remaining = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('leave_batch_id', $created->json('leave_batch_id'))
+            ->get();
+        $this->assertCount(1, $remaining);
+        $this->assertSame('evening_study', $remaining->sole()->scene);
+        $this->assertSame(10, $remaining->sole()->period_id);
+    }
+
     public function test_teacher_marks_night_leave_with_separate_leave_type_and_status(): void
     {
         $data = $this->schoolData('teacher-mark');
