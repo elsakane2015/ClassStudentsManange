@@ -463,10 +463,13 @@ export default function LeaveRequestForm() {
                     const slotKey = `time_slot_${slot.id}`;
                     const effectivePeriodIds = getEffectiveSlotPeriodIds(slot);
                     const hasRegularPeriod = effectivePeriodIds.some(id => regularPeriods.some(period => Number(period.id) === id));
+                    const isEveningOnly = effectivePeriodIds.length > 0
+                        && effectivePeriodIds.every(id => eveningPeriods.some(period => Number(period.id) === id));
                     return slot.is_active !== false
                         && effectivePeriodIds.length > 0
-                        && hasRegularPeriod
-                        && (allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id)));
+                        && (isEveningOnly
+                            || (hasRegularPeriod
+                                && (allowedSlotKeys.includes(slotKey) || allowedSlotKeys.includes(String(slot.id)))));
                 });
 
                 if (filteredTimeSlots.length === 0) {

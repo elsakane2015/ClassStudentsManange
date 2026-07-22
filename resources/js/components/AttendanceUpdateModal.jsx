@@ -302,11 +302,17 @@ export default function AttendanceUpdateModal({ isOpen, onClose, date, user }) {
             const hasRegularPeriod = effectivePeriodIds.some(periodId => (
                 regularPeriods.some(period => Number(period.id) === periodId)
             ));
-            if (effectivePeriodIds.length === 0 || !hasRegularPeriod) return false;
+            const isEveningOnly = effectivePeriodIds.length > 0
+                && effectivePeriodIds.every(periodId => eveningPeriodIds.has(periodId));
+            if (effectivePeriodIds.length === 0) return false;
             if (pendingLeaveType?.input_type !== 'duration_select') return true;
 
+            // 夜自习专用时段由节次的住宿生范围控制，不依赖请假类型的旧时段白名单。
+            if (isEveningOnly && selectedStudentsAreBoarding) return true;
+
             const slotKey = `time_slot_${slot.id}`;
-            return configuredSlotKeys.includes(slotKey) || configuredSlotKeys.includes(String(slot.id));
+            return hasRegularPeriod
+                && (configuredSlotKeys.includes(slotKey) || configuredSlotKeys.includes(String(slot.id)));
         });
 
     const selectUnifiedTimeSlot = (slot) => {
