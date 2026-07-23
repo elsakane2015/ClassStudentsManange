@@ -162,6 +162,21 @@ class StudentManagementTest extends TestCase
         $this->assertSame('parent.invalid-parent-email@example.com', $student->fresh()->parent_email);
     }
 
+    public function test_teacher_can_update_one_student_with_multiple_parent_emails(): void
+    {
+        [$teacher, $student] = $this->createTeacherAndStudent('single-parent-emails');
+        Sanctum::actingAs($teacher);
+
+        $this->putJson("/api/students/{$student->id}", [
+            'parent_email' => 'first.parent@example.com, second.parent@example.com',
+        ])->assertOk();
+
+        $this->assertSame(
+            'first.parent@example.com, second.parent@example.com',
+            $student->fresh()->parent_email
+        );
+    }
+
     private function createTeacherAndStudent(string $suffix): array
     {
         $school = School::create(['name' => "测试学校-$suffix"]);

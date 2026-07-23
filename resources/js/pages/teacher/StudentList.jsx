@@ -660,8 +660,8 @@ export default function StudentList() {
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">家长邮箱</label>
-                                    <input type="text" value={formData.parent_email} onChange={e => setFormData({ ...formData, parent_email: e.target.value })} placeholder="parent@example.com, guardian@example.com" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
-                                    <p className="mt-1 text-xs text-gray-500">最多 10 个邮箱，多个地址请使用逗号分隔</p>
+                                    <input type="email" multiple value={formData.parent_email} onChange={e => setFormData({ ...formData, parent_email: e.target.value })} placeholder="parent@example.com, guardian@example.com" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
+                                    <p className="mt-1 text-xs text-gray-500">最多 10 个邮箱，多个地址请使用英文逗号分隔</p>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">账号(Email)</label>
