@@ -24,6 +24,12 @@ class PersonalEmailService
             'port' => 465,
             'domains' => ['qq.com'],
         ],
+        'tencent_exmail' => [
+            'label' => '腾讯企业邮箱',
+            'host' => 'smtp.exmail.qq.com',
+            'port' => 465,
+            'domains' => null,
+        ],
         'netease_163' => [
             'label' => '网易 163 邮箱',
             'host' => 'smtp.163.com',
@@ -381,8 +387,13 @@ class PersonalEmailService
 
     private function validateProviderEmail(string $provider, string $email): void
     {
+        $allowedDomains = self::SMTP_PROVIDERS[$provider]['domains'] ?? null;
+        if ($allowedDomains === null) {
+            return;
+        }
+
         $domain = strtolower((string) Str::afterLast($email, '@'));
-        if (! in_array($domain, self::SMTP_PROVIDERS[$provider]['domains'], true)) {
+        if (! in_array($domain, $allowedDomains, true)) {
             throw ValidationException::withMessages([
                 'email' => ['所填邮箱地址与选择的邮箱服务商不匹配'],
             ]);

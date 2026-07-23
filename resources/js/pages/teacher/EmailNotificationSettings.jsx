@@ -346,12 +346,12 @@ export default function EmailNotificationSettings() {
                                 ) : (
                                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                         <label className="text-sm font-medium text-gray-700">邮箱地址
-                                            <input type="email" value={accountForm.email} onChange={event => setAccountForm(prev => ({ ...prev, email: event.target.value }))} className="mt-1 block w-full rounded-md border-gray-300" placeholder={personalProvider === 'qq' ? 'example@qq.com' : personalProvider === 'netease_163' ? 'example@163.com' : 'example@126.com'} />
+                                            <input type="email" value={accountForm.email} onChange={event => setAccountForm(prev => ({ ...prev, email: event.target.value }))} className="mt-1 block w-full rounded-md border-gray-300" placeholder={emailPlaceholder(personalProvider)} />
                                         </label>
                                         <label className="text-sm font-medium text-gray-700">发件人名称
                                             <input type="text" value={accountForm.from_name} onChange={event => setAccountForm(prev => ({ ...prev, from_name: event.target.value }))} className="mt-1 block w-full rounded-md border-gray-300" placeholder="例如：王老师" />
                                         </label>
-                                        <label className="text-sm font-medium text-gray-700 sm:col-span-2">客户端授权码
+                                        <label className="text-sm font-medium text-gray-700 sm:col-span-2">客户端授权码/专用密码
                                             <input type="password" value={accountForm.authorization_code} onChange={event => setAccountForm(prev => ({ ...prev, authorization_code: event.target.value }))} className="mt-1 block w-full rounded-md border-gray-300 sm:max-w-md" placeholder={settings.personal_email_account?.credential_configured ? '已保存；留空表示不修改' : '不是邮箱登录密码'} autoComplete="new-password" />
                                         </label>
                                     </div>
@@ -359,7 +359,9 @@ export default function EmailNotificationSettings() {
 
                                 {personalProvider !== 'microsoft' && (
                                     <div className="rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                                        请先在邮箱网页设置中开启 SMTP 服务并生成客户端授权码。系统固定使用服务商官方 SMTP 地址，不支持自定义服务器。
+                                        {personalProvider === 'tencent_exmail'
+                                            ? '请填写完整企业邮箱地址，并在腾讯企业邮箱安全设置中生成客户端专用密码。系统固定使用 smtp.exmail.qq.com:465。'
+                                            : '请先在邮箱网页设置中开启 SMTP 服务并生成客户端授权码。系统固定使用服务商官方 SMTP 地址，不支持自定义服务器。'}
                                     </div>
                                 )}
 
@@ -450,11 +452,21 @@ function providerLabel(provider) {
     return {
         system_resend: '系统 Resend',
         qq: 'QQ 邮箱',
+        tencent_exmail: '腾讯企业邮箱',
         netease_163: '网易 163',
         netease_126: '网易 126',
         microsoft: 'Microsoft',
         personal_email: '个人邮箱',
     }[provider] || provider;
+}
+
+function emailPlaceholder(provider) {
+    return {
+        qq: 'example@qq.com',
+        tencent_exmail: 'teacher@school.example',
+        netease_163: 'example@163.com',
+        netease_126: 'example@126.com',
+    }[provider] || 'name@example.com';
 }
 
 function ChannelToggle({ label, description, enabled, ready, icon: Icon, onChange }) {

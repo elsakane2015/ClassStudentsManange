@@ -246,6 +246,20 @@ class ResendParentNotificationTest extends TestCase
             'email' => 'teacher@qq.com',
             'authorization_code' => 'another-code',
         ])->assertUnprocessable()->assertJsonValidationErrors('email');
+
+        $this->postJson('/api/teacher-email/account', [
+            'provider' => 'tencent_exmail',
+            'email' => 'teacher@art-design.top',
+            'from_name' => '企业邮箱教师',
+            'authorization_code' => 'enterprise-client-password',
+        ])->assertOk()
+            ->assertJsonPath('account.provider', 'tencent_exmail')
+            ->assertJsonPath('account.email', 'teacher@art-design.top');
+
+        $enterpriseAccount = TeacherEmailAccount::where('user_id', $teacher->id)->firstOrFail();
+        $this->assertSame('enterprise-client-password', $enterpriseAccount->secret);
+        $this->assertSame('smtp.exmail.qq.com', PersonalEmailService::SMTP_PROVIDERS['tencent_exmail']['host']);
+        $this->assertSame(465, PersonalEmailService::SMTP_PROVIDERS['tencent_exmail']['port']);
     }
 
     public function test_parent_notification_uses_verified_teacher_personal_email(): void
