@@ -99,8 +99,8 @@ class TeacherEmailAccountController extends Controller
         abort_unless($record, 404, '关联的考勤记录不存在');
 
         $result = $emailNotificationLog->event_key === 'leave_request_submitted'
-            ? $this->notifications->sendLeaveRequestNotification($record)
-            : $this->notifications->sendAttendanceNotification($record);
+            ? $this->notifications->sendLeaveRequestNotification($record, $emailNotificationLog->recipient)
+            : $this->notifications->sendAttendanceNotification($record, $emailNotificationLog->recipient);
         if (! ($result['success'] ?? false)) {
             return response()->json([
                 'error' => $result['error'] ?? $result['skipped'] ?? '重新发送失败',

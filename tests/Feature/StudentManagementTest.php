@@ -30,7 +30,7 @@ class StudentManagementTest extends TestCase
                 'is_boarding' => true,
                 'email' => 'student.changed@example.com',
                 'parent_contact' => '13900000000',
-                'parent_email' => 'parent.changed@example.com',
+                'parent_email' => 'parent.changed@example.com， guardian.changed@example.com',
             ]],
         ]);
 
@@ -43,13 +43,13 @@ class StudentManagementTest extends TestCase
         $this->assertSame('female', $student->gender);
         $this->assertTrue($student->is_boarding);
         $this->assertSame('13900000000', $student->parent_contact);
-        $this->assertSame('parent.changed@example.com', $student->parent_email);
+        $this->assertSame('parent.changed@example.com, guardian.changed@example.com', $student->parent_email);
         $this->assertSame('student.changed@example.com', $student->user->fresh()->email);
 
         $this->getJson('/api/students')
             ->assertOk()
             ->assertJsonPath('data.0.is_boarding', true)
-            ->assertJsonPath('data.0.parent_email', 'parent.changed@example.com');
+            ->assertJsonPath('data.0.parent_email', 'parent.changed@example.com, guardian.changed@example.com');
     }
 
     public function test_batch_update_is_rejected_atomically_for_another_teachers_student(): void
@@ -132,7 +132,7 @@ class StudentManagementTest extends TestCase
                 '性别' => '女',
                 '出生日期' => '2010-02-02',
                 '家长联系方式' => '13912345678',
-                '家长邮箱' => 'chinese.parent@example.com',
+                '家长邮箱' => 'chinese.parent@example.com，chinese.guardian@example.com',
                 '是否住宿生' => '否',
             ]),
         ]));
@@ -146,8 +146,20 @@ class StudentManagementTest extends TestCase
         $chineseTemplateStudent = Student::where('student_no', 'IMPORT002')->firstOrFail();
         $this->assertSame('female', $chineseTemplateStudent->gender);
         $this->assertFalse($chineseTemplateStudent->is_boarding);
-        $this->assertSame('chinese.parent@example.com', $chineseTemplateStudent->parent_email);
+        $this->assertSame('chinese.parent@example.com, chinese.guardian@example.com', $chineseTemplateStudent->parent_email);
         $this->assertSame($class->id, $chineseTemplateStudent->class_id);
+    }
+
+    public function test_parent_email_list_rejects_an_invalid_address(): void
+    {
+        [$teacher, $student] = $this->createTeacherAndStudent('invalid-parent-email');
+        Sanctum::actingAs($teacher);
+
+        $this->putJson("/api/students/{$student->id}", [
+            'parent_email' => 'valid@example.com, invalid-address',
+        ])->assertUnprocessable()->assertJsonValidationErrors('parent_email');
+
+        $this->assertSame('parent.invalid-parent-email@example.com', $student->fresh()->parent_email);
     }
 
     private function createTeacherAndStudent(string $suffix): array

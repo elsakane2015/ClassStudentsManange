@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Imports\StudentsImport;
 use App\Models\SchoolClass; // Ensure alias
 use App\Models\Student;
+use App\Support\ParentEmailList;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -175,7 +176,7 @@ class StudentController extends Controller
             'gender' => 'required|in:male,female,other',
             'is_boarding' => 'sometimes|boolean',
             'parent_contact' => 'nullable|string',
-            'parent_email' => 'nullable|email:rfc|max:255',
+            'parent_email' => ParentEmailList::rules(),
             'class_id' => 'required|exists:classes,id',
             'email' => 'required|email|unique:users,email', // New user account
             'password' => 'required|min:6',
@@ -206,7 +207,7 @@ class StudentController extends Controller
             'gender' => $request->gender,
             'is_boarding' => $request->boolean('is_boarding'),
             'parent_contact' => $request->parent_contact,
-            'parent_email' => $request->parent_email,
+            'parent_email' => ParentEmailList::normalize($request->parent_email),
         ]);
 
         return response()->json($student, 201);
@@ -228,7 +229,7 @@ class StudentController extends Controller
                 'gender' => 'nullable|in:male,female,other',  // Allow null
                 'is_boarding' => 'sometimes|boolean',
                 'parent_contact' => 'nullable|string',
-                'parent_email' => 'nullable|email:rfc|max:255',
+                'parent_email' => ParentEmailList::rules(),
                 'email' => 'sometimes|email|unique:users,email,'.$student->user->id,
                 'password' => 'nullable|string|min:6',
             ]);
@@ -256,6 +257,9 @@ class StudentController extends Controller
 
         // Update Student info
         $studentUpdates = $request->only(['student_no', 'gender', 'is_boarding', 'parent_contact', 'parent_email']);
+        if ($request->has('parent_email')) {
+            $studentUpdates['parent_email'] = ParentEmailList::normalize($request->parent_email);
+        }
         \Log::info('[StudentController.update] Student updates:', $studentUpdates);
         $student->update($studentUpdates);
 
@@ -273,7 +277,7 @@ class StudentController extends Controller
             'students.*.is_boarding' => 'required|boolean',
             'students.*.email' => 'required|email:rfc|max:255|distinct:ignore_case',
             'students.*.parent_contact' => 'nullable|string|max:50',
-            'students.*.parent_email' => 'nullable|email:rfc|max:255',
+            'students.*.parent_email' => ParentEmailList::rules(),
         ]);
 
         $students = Student::with(['user', 'schoolClass.department'])
@@ -305,7 +309,7 @@ class StudentController extends Controller
                     'gender' => $data['gender'],
                     'is_boarding' => $data['is_boarding'],
                     'parent_contact' => filled($data['parent_contact'] ?? null) ? trim($data['parent_contact']) : null,
-                    'parent_email' => filled($data['parent_email'] ?? null) ? trim($data['parent_email']) : null,
+                    'parent_email' => ParentEmailList::normalize($data['parent_email'] ?? null),
                 ]);
             }
         });

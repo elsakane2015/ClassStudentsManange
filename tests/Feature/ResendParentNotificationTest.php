@@ -77,10 +77,9 @@ class ResendParentNotificationTest extends TestCase
             'enabled_events' => ['attendance_absent'],
         ]);
 
-        $this->configureResend();
-
         $firstRecord = $this->createAttendanceRecord($student, 1, 'absent');
         $secondRecord = $this->createAttendanceRecord($student, 2, 'absent');
+        $this->configureResend();
         $notifications = app(ParentEmailNotificationService::class);
 
         $firstResult = $notifications->sendAttendanceNotification($firstRecord);
@@ -97,6 +96,81 @@ class ResendParentNotificationTest extends TestCase
                 && str_contains($request['html'], $student->user->name)
                 && str_contains($request['html'], '软件1班');
         });
+    }
+
+    public function test_attendance_notification_sends_to_each_parent_email(): void
+    {
+        Http::fake([
+            'api.resend.com/*' => Http::sequence()
+                ->push(['id' => 'email_parent_one'], 200)
+                ->push(['id' => 'email_parent_two'], 200),
+        ]);
+
+        [$teacher, $student] = $this->createTeacherAndStudent();
+        $student->update([
+            'parent_email' => 'first.parent@example.com， second.parent@example.com, FIRST.PARENT@example.com',
+        ]);
+        EmailNotificationPreference::create([
+            'user_id' => $teacher->id,
+            'enabled' => true,
+            'enabled_events' => ['attendance_absent'],
+        ]);
+        $this->configureResend();
+
+        $firstRecord = $this->createAttendanceRecord($student, 1, 'absent');
+        $secondRecord = $this->createAttendanceRecord($student, 2, 'absent');
+        $notifications = app(ParentEmailNotificationService::class);
+
+        $result = $notifications->sendAttendanceNotification($firstRecord);
+        $duplicateResult = $notifications->sendAttendanceNotification($secondRecord);
+
+        $this->assertTrue($result['success']);
+        $this->assertSame(2, $result['recipient_count']);
+        $this->assertSame(2, $result['successful_count']);
+        $this->assertTrue($duplicateResult['success']);
+        Http::assertSentCount(2);
+        $this->assertDatabaseCount('email_notification_logs', 2);
+        $this->assertDatabaseHas('email_notification_logs', ['recipient' => 'first.parent@example.com']);
+        $this->assertDatabaseHas('email_notification_logs', ['recipient' => 'second.parent@example.com']);
+        Http::assertSent(fn ($request) => $request['to'] === ['first.parent@example.com']);
+        Http::assertSent(fn ($request) => $request['to'] === ['second.parent@example.com']);
+    }
+
+    public function test_one_failed_parent_email_does_not_stop_the_remaining_recipients(): void
+    {
+        Http::fake([
+            'api.resend.com/*' => Http::sequence()
+                ->push(['message' => 'invalid recipient'], 422)
+                ->push(['id' => 'email_parent_two'], 200),
+        ]);
+
+        [$teacher, $student] = $this->createTeacherAndStudent();
+        $student->update([
+            'parent_email' => 'failed.parent@example.com, delivered.parent@example.com',
+        ]);
+        EmailNotificationPreference::create([
+            'user_id' => $teacher->id,
+            'enabled' => true,
+            'enabled_events' => ['attendance_absent'],
+        ]);
+        $record = $this->createAttendanceRecord($student, 1, 'absent');
+        $this->configureResend();
+
+        $result = app(ParentEmailNotificationService::class)->sendAttendanceNotification($record);
+
+        $this->assertFalse($result['success'], json_encode($result, JSON_UNESCAPED_UNICODE));
+        $this->assertTrue($result['partial_success']);
+        $this->assertSame(2, $result['recipient_count']);
+        $this->assertSame(1, $result['successful_count']);
+        Http::assertSentCount(2);
+        $this->assertDatabaseHas('email_notification_logs', [
+            'recipient' => 'failed.parent@example.com',
+            'status' => 'failed',
+        ]);
+        $this->assertDatabaseHas('email_notification_logs', [
+            'recipient' => 'delivered.parent@example.com',
+            'status' => 'success',
+        ]);
     }
 
     public function test_disabled_teacher_event_does_not_send(): void

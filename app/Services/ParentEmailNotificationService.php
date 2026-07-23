@@ -9,6 +9,7 @@ use App\Models\LeaveType;
 use App\Models\SmsNotificationLog;
 use App\Models\SystemSetting;
 use App\Models\User;
+use App\Support\ParentEmailList;
 use Illuminate\Support\Facades\Log;
 
 class ParentEmailNotificationService
@@ -92,7 +93,7 @@ class ParentEmailNotificationService
         unset($this->preferenceCache[$teacherId]);
     }
 
-    public function sendLeaveRequestNotification(AttendanceRecord $record): array
+    public function sendLeaveRequestNotification(AttendanceRecord $record, ?string $emailRecipient = null): array
     {
         $record->loadMissing(['student.user', 'student.school', 'student.schoolClass.teacher', 'leaveType']);
 
@@ -102,11 +103,12 @@ class ParentEmailNotificationService
             '请假申请',
             'leave_request',
             $record->id,
-            $this->leaveRequestDedupeKey($record)
+            $this->leaveRequestDedupeKey($record),
+            $emailRecipient
         );
     }
 
-    public function sendAttendanceNotification(AttendanceRecord $record): array
+    public function sendAttendanceNotification(AttendanceRecord $record, ?string $emailRecipient = null): array
     {
         if ($record->is_self_applied || in_array($record->source_type, ['self_applied', 'leave_request'], true)) {
             return ['success' => false, 'skipped' => 'leave_request_record'];
@@ -125,7 +127,8 @@ class ParentEmailNotificationService
             $eventName,
             'attendance_record',
             $record->id,
-            $this->attendanceDedupeKey($record, $eventKey)
+            $this->attendanceDedupeKey($record, $eventKey),
+            $emailRecipient
         );
     }
 
@@ -135,7 +138,8 @@ class ParentEmailNotificationService
         string $eventName,
         string $relatedType,
         int $relatedId,
-        string $dedupeKey
+        string $dedupeKey,
+        ?string $emailRecipient = null
     ): array {
         $student = $record->student;
         $class = $student?->schoolClass;
@@ -164,11 +168,12 @@ class ParentEmailNotificationService
                 $relatedType,
                 $relatedId,
                 $dedupeKey,
-                $variables
+                $variables,
+                $emailRecipient
             );
         }
 
-        if ($preference['sms_enabled']) {
+        if ($preference['sms_enabled'] && $emailRecipient === null) {
             $results['sms'] = $this->sendSmsChannel(
                 $record,
                 $eventKey,
@@ -195,22 +200,15 @@ class ParentEmailNotificationService
         string $relatedType,
         int $relatedId,
         string $dedupeKey,
-        array $variables
+        array $variables,
+        ?string $emailRecipient = null
     ): array {
         $student = $record->student;
         $teacher = $student->schoolClass->teacher;
-        if (! $student->parent_email) {
+        $configuredRecipients = ParentEmailList::parse($student->parent_email);
+        $recipients = $emailRecipient ? [$emailRecipient] : $configuredRecipients;
+        if ($recipients === []) {
             return ['success' => false, 'skipped' => 'missing_email_recipient'];
-        }
-
-        if (isset($this->processedKeys[$dedupeKey])) {
-            return ['success' => true, 'skipped' => 'duplicate'];
-        }
-        $this->processedKeys[$dedupeKey] = true;
-
-        $existingLog = EmailNotificationLog::where('dedupe_key', $dedupeKey)->first();
-        if ($existingLog && in_array($existingLog->status, ['pending', 'success'], true)) {
-            return ['success' => true, 'skipped' => 'duplicate'];
         }
 
         $preference = $this->preferenceFor($teacher);
@@ -232,11 +230,79 @@ class ParentEmailNotificationService
         $subject = $this->templates->renderSubject($variables);
         $html = $this->templates->renderHtml($variables);
 
+        $results = [];
+        $multipleRecipients = count($configuredRecipients) > 1;
+        foreach ($recipients as $recipient) {
+            $recipientDedupeKey = $multipleRecipients
+                ? hash('sha256', $dedupeKey.'|'.mb_strtolower($recipient))
+                : $dedupeKey;
+            $results[$recipient] = $this->sendEmailToRecipient(
+                $record,
+                $teacher,
+                $recipient,
+                $eventKey,
+                $relatedType,
+                $relatedId,
+                $recipientDedupeKey,
+                $dedupeKey,
+                $variables,
+                $subject,
+                $html,
+                $selectedProvider,
+                $fallbackEnabled
+            );
+        }
+
+        if (count($results) === 1) {
+            return reset($results);
+        }
+
+        $successfulCount = collect($results)->filter(fn ($result) => $result['success'] ?? false)->count();
+
+        return [
+            'success' => $successfulCount === count($results),
+            'partial_success' => $successfulCount > 0 && $successfulCount < count($results),
+            'recipient_count' => count($results),
+            'successful_count' => $successfulCount,
+            'recipients' => $results,
+        ];
+    }
+
+    private function sendEmailToRecipient(
+        AttendanceRecord $record,
+        User $teacher,
+        string $recipient,
+        string $eventKey,
+        string $relatedType,
+        int $relatedId,
+        string $dedupeKey,
+        string $legacyDedupeKey,
+        array $variables,
+        string $subject,
+        string $html,
+        string $selectedProvider,
+        bool $fallbackEnabled
+    ): array {
+        if (isset($this->processedKeys[$dedupeKey])) {
+            return ['success' => true, 'skipped' => 'duplicate'];
+        }
+        $this->processedKeys[$dedupeKey] = true;
+
+        $existingLog = EmailNotificationLog::where('dedupe_key', $dedupeKey)->first();
+        if (! $existingLog && $dedupeKey !== $legacyDedupeKey) {
+            $existingLog = EmailNotificationLog::where('dedupe_key', $legacyDedupeKey)
+                ->where('recipient', $recipient)
+                ->first();
+        }
+        if ($existingLog && in_array($existingLog->status, ['pending', 'success'], true)) {
+            return ['success' => true, 'skipped' => 'duplicate'];
+        }
+
         $log = $existingLog ?: new EmailNotificationLog(['dedupe_key' => $dedupeKey]);
         $log->fill([
             'student_id' => $record->student_id,
             'teacher_id' => $teacher->id,
-            'recipient' => $student->parent_email,
+            'recipient' => $recipient,
             'provider' => $selectedProvider,
             'sender_address' => $selectedProvider === 'personal_email'
                 ? $teacher->teacherEmailAccount?->email
@@ -261,13 +327,13 @@ class ParentEmailNotificationService
         $fallbackUsed = false;
         if ($personalReady) {
             $attemptedProviders[] = $teacher->teacherEmailAccount?->provider ?: 'personal_email';
-            $result = $this->personalEmail->send($teacher, $student->parent_email, $subject, $html);
+            $result = $this->personalEmail->send($teacher, $recipient, $subject, $html);
         } elseif ($selectedProvider === 'personal_email') {
             if ($fallbackEnabled && $this->resend->isReady()) {
                 $fallbackUsed = true;
                 $attemptedProviders[] = 'system_resend';
                 $result = $this->resend->send(
-                    $student->parent_email,
+                    $recipient,
                     $subject,
                     $html,
                     'parent-notification-fallback-'.$dedupeKey
@@ -283,7 +349,7 @@ class ParentEmailNotificationService
         } else {
             $attemptedProviders[] = 'system_resend';
             $result = $this->resend->send(
-                $student->parent_email,
+                $recipient,
                 $subject,
                 $html,
                 'parent-notification-'.$dedupeKey
@@ -294,7 +360,7 @@ class ParentEmailNotificationService
             $fallbackUsed = true;
             $attemptedProviders[] = 'system_resend';
             $result = $this->resend->send(
-                $student->parent_email,
+                $recipient,
                 $subject,
                 $html,
                 'parent-notification-fallback-'.$dedupeKey
@@ -319,7 +385,8 @@ class ParentEmailNotificationService
 
         if (! $result['success']) {
             Log::warning('Parent email notification failed', [
-                'student_id' => $student->id,
+                'student_id' => $record->student_id,
+                'recipient' => $recipient,
                 'event_key' => $eventKey,
                 'provider' => $result['provider'] ?? $selectedProvider,
                 'error' => $result['error'] ?? '未知错误',

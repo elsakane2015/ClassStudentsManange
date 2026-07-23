@@ -4,6 +4,7 @@ namespace App\Imports;
 
 use App\Models\Student;
 use App\Models\User;
+use App\Support\ParentEmailList;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -54,7 +55,7 @@ class StudentsImport implements ToCollection, WithHeadingRow
             $password = $this->value($row, 'password');
             $studentNo = $this->value($row, 'student_no');
             $phone = $this->value($row, 'parent_contact');
-            $parentEmail = $this->value($row, 'parent_email');
+            $parentEmail = ParentEmailList::normalize($this->value($row, 'parent_email'));
             $gender = $this->parseGender($this->value($row, 'gender'), $index);
             $isBoarding = $this->parseBoolean($this->value($row, 'is_boarding', false), $index);
             $birthdate = $this->value($row, 'birthdate');
@@ -63,8 +64,11 @@ class StudentsImport implements ToCollection, WithHeadingRow
                 continue;
             }
 
-            if ($parentEmail && ! filter_var($parentEmail, FILTER_VALIDATE_EMAIL)) {
-                throw new \Exception('导入失败：第 '.($index + 2).' 行家长邮箱格式不正确。');
+            $parentEmailValidator = validator(['parent_email' => $parentEmail], [
+                'parent_email' => ParentEmailList::rules(),
+            ]);
+            if ($parentEmailValidator->fails()) {
+                throw new \Exception('导入失败：第 '.($index + 2).' 行'.$parentEmailValidator->errors()->first('parent_email'));
             }
 
             // Determine Class ID

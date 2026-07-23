@@ -568,7 +568,7 @@ export default function StudentList() {
                                                     {batchEditing ? <input aria-label={`${student.name}的家长联系方式`} type="tel" value={draft.parent_contact} onChange={event => updateDraft(student.id, 'parent_contact', event.target.value)} className="w-36 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.parent_contact || '-')}
                                                 </td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                                                    {batchEditing ? <input aria-label={`${student.name}的家长邮箱`} type="email" value={draft.parent_email} onChange={event => updateDraft(student.id, 'parent_email', event.target.value)} className="w-52 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.parent_email || '-')}
+                                                    {batchEditing ? <input aria-label={`${student.name}的家长邮箱`} type="text" value={draft.parent_email} onChange={event => updateDraft(student.id, 'parent_email', event.target.value)} placeholder="多个邮箱用逗号分隔" className="w-64 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.parent_email || '-')}
                                                 </td>
                                                 <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6 space-x-2">
                                                     {!batchEditing && (
@@ -660,7 +660,8 @@ export default function StudentList() {
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">家长邮箱</label>
-                                    <input type="email" value={formData.parent_email} onChange={e => setFormData({ ...formData, parent_email: e.target.value })} placeholder="parent@example.com" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
+                                    <input type="text" value={formData.parent_email} onChange={e => setFormData({ ...formData, parent_email: e.target.value })} placeholder="parent@example.com, guardian@example.com" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
+                                    <p className="mt-1 text-xs text-gray-500">最多 10 个邮箱，多个地址请使用逗号分隔</p>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">账号(Email)</label>
