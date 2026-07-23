@@ -123,7 +123,7 @@ export default function StudentImport() {
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', 'student_import_template.xlsx');
+            link.setAttribute('download', '学生导入模板.xlsx');
             document.body.appendChild(link);
             link.click();
             link.remove();
@@ -187,8 +187,8 @@ export default function StudentImport() {
                     <h3 className="font-semibold mb-2 mt-6">使用说明</h3>
                     <p className="text-sm text-gray-500 mb-4">
                         <strong>方式 A (推荐)：</strong>上方选择具体班级，Excel 只需包含学生信息。<br />
-                        <strong>方式 B (混合导入)：</strong>上方不选班级，Excel 需包含 <code>department_name</code>, <code>grade_name</code>, <code>class_name</code> 列。<br />
-                        模板包含家长邮箱 <code>parent_email</code> 和住宿状态 <code>is_boarding</code>；住宿状态可填写 1/0、是/否或 yes/no。
+                        <strong>方式 B (混合导入)：</strong>上方不选班级，Excel 需填写“系部名称”“年级名称”“班级名称”。<br />
+                        模板表头均为中文；“性别”填写男/女/其他，“是否住宿生”填写是/否。旧版英文表头和英文值仍可继续导入。
                     </p>
                     <button onClick={downloadTemplate} className="text-sm text-indigo-600 hover:text-indigo-500 flex items-center">
                         <DocumentArrowDownIcon className="h-4 w-4 mr-1" /> 下载 Excel 模版

@@ -102,12 +102,17 @@ class StudentManagementTest extends TestCase
     public function test_import_template_and_import_include_parent_email_and_boarding_status(): void
     {
         $headings = (new StudentTemplateExport)->headings();
-        $this->assertContains('parent_email', $headings);
-        $this->assertContains('is_boarding', $headings);
+        $this->assertSame([
+            '系部名称', '年级名称', '班级名称', '学生姓名', '账号邮箱', '初始密码',
+            '学号', '性别', '出生日期', '家长联系方式', '家长邮箱', '是否住宿生',
+        ], $headings);
 
         [$teacher, , $school, $class] = $this->createTeacherAndStudent('import-owner');
 
-        (new StudentsImport($class->id, $school->id))->collection(collect([
+        $import = new StudentsImport($class->id, $school->id);
+        $this->assertSame($headings, \Maatwebsite\Excel\Imports\HeadingRowFormatter::format($headings));
+
+        $import->collection(collect([
             collect([
                 'name' => '导入学生',
                 'email' => 'imported.student@example.com',
@@ -119,6 +124,17 @@ class StudentManagementTest extends TestCase
                 'parent_email' => 'imported.parent@example.com',
                 'is_boarding' => '是',
             ]),
+            collect([
+                '学生姓名' => '中文模板学生',
+                '账号邮箱' => 'chinese.template.student@example.com',
+                '初始密码' => 'password123',
+                '学号' => 'IMPORT002',
+                '性别' => '女',
+                '出生日期' => '2010-02-02',
+                '家长联系方式' => '13912345678',
+                '家长邮箱' => 'chinese.parent@example.com',
+                '是否住宿生' => '否',
+            ]),
         ]));
 
         $imported = Student::where('student_no', 'IMPORT001')->firstOrFail();
@@ -126,6 +142,12 @@ class StudentManagementTest extends TestCase
         $this->assertSame('imported.parent@example.com', $imported->parent_email);
         $this->assertSame($class->id, $imported->class_id);
         $this->assertSame($teacher->id, $imported->schoolClass->teacher_id);
+
+        $chineseTemplateStudent = Student::where('student_no', 'IMPORT002')->firstOrFail();
+        $this->assertSame('female', $chineseTemplateStudent->gender);
+        $this->assertFalse($chineseTemplateStudent->is_boarding);
+        $this->assertSame('chinese.parent@example.com', $chineseTemplateStudent->parent_email);
+        $this->assertSame($class->id, $chineseTemplateStudent->class_id);
     }
 
     private function createTeacherAndStudent(string $suffix): array

@@ -9,9 +9,25 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
+use Maatwebsite\Excel\Imports\HeadingRowFormatter;
 
 class StudentsImport implements ToCollection, WithHeadingRow
 {
+    private const COLUMN_ALIASES = [
+        'department_name' => ['department_name', '系部名称', '系部'],
+        'grade_name' => ['grade_name', '年级名称', '年级'],
+        'class_name' => ['class_name', '班级名称', '班级'],
+        'name' => ['name', '学生姓名', '姓名'],
+        'email' => ['email', '账号邮箱', '账号'],
+        'password' => ['password', '初始密码', '密码'],
+        'student_no' => ['student_no', '学号'],
+        'gender' => ['gender', '性别'],
+        'birthdate' => ['birthdate', '出生日期'],
+        'parent_contact' => ['parent_contact', '家长联系方式', '家长联系电话'],
+        'parent_email' => ['parent_email', '家长邮箱'],
+        'is_boarding' => ['is_boarding', '是否住宿生', '住宿生'],
+    ];
+
     protected $classId;
 
     protected $schoolId;
@@ -20,25 +36,28 @@ class StudentsImport implements ToCollection, WithHeadingRow
     {
         $this->classId = $classId;
         $this->schoolId = $schoolId;
+
+        // The default slug formatter drops Chinese headings entirely.
+        HeadingRowFormatter::default(HeadingRowFormatter::FORMATTER_NONE);
     }
 
     public function collection(Collection $rows)
     {
         foreach ($rows as $index => $row) {
             // Mapping
-            $deptName = $row['department_name'] ?? null;
-            $gradeName = $row['grade_name'] ?? null;
-            $className = $row['class_name'] ?? null;
+            $deptName = $this->value($row, 'department_name');
+            $gradeName = $this->value($row, 'grade_name');
+            $className = $this->value($row, 'class_name');
 
-            $name = $row['name'] ?? null;
-            $email = $row['email'] ?? null;
-            $password = $row['password'] ?? null;
-            $studentNo = $row['student_no'] ?? null;
-            $phone = $row['parent_contact'] ?? null;
-            $parentEmail = $row['parent_email'] ?? null;
-            $gender = $row['gender'] ?? null;
-            $isBoarding = $this->parseBoolean($row['is_boarding'] ?? false, $index);
-            $birthdate = $row['birthdate'] ?? null;
+            $name = $this->value($row, 'name');
+            $email = $this->value($row, 'email');
+            $password = $this->value($row, 'password');
+            $studentNo = $this->value($row, 'student_no');
+            $phone = $this->value($row, 'parent_contact');
+            $parentEmail = $this->value($row, 'parent_email');
+            $gender = $this->parseGender($this->value($row, 'gender'), $index);
+            $isBoarding = $this->parseBoolean($this->value($row, 'is_boarding', false), $index);
+            $birthdate = $this->value($row, 'birthdate');
 
             if (! $name || ! $studentNo || ! $email || ! $password) {
                 continue;
@@ -105,6 +124,17 @@ class StudentsImport implements ToCollection, WithHeadingRow
         }
     }
 
+    private function value(Collection $row, string $column, mixed $default = null): mixed
+    {
+        foreach (self::COLUMN_ALIASES[$column] as $alias) {
+            if ($row->has($alias)) {
+                return $row->get($alias);
+            }
+        }
+
+        return $default;
+    }
+
     private function parseBoolean(mixed $value, int $index): bool
     {
         if (is_bool($value)) {
@@ -119,6 +149,25 @@ class StudentsImport implements ToCollection, WithHeadingRow
             return true;
         }
 
-        throw new \Exception('导入失败：第 '.($index + 2).' 行 is_boarding 应填写 1/0、是/否或 yes/no。');
+        throw new \Exception('导入失败：第 '.($index + 2).' 行“是否住宿生”应填写 1/0、是/否或 yes/no。');
+    }
+
+    private function parseGender(mixed $value, int $index): ?string
+    {
+        $normalized = strtolower(trim((string) $value));
+        if ($normalized === '') {
+            return null;
+        }
+        if (in_array($normalized, ['male', '男'], true)) {
+            return 'male';
+        }
+        if (in_array($normalized, ['female', '女'], true)) {
+            return 'female';
+        }
+        if (in_array($normalized, ['other', '其他'], true)) {
+            return 'other';
+        }
+
+        throw new \Exception('导入失败：第 '.($index + 2).' 行“性别”应填写男/女/其他或 male/female/other。');
     }
 }
