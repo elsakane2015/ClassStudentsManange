@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\WechatController;
 use App\Http\Controllers\Api\ResendController;
 use App\Http\Controllers\Api\MicrosoftMailSettingsController;
 use App\Http\Controllers\Api\TeacherEmailAccountController;
+use App\Http\Controllers\Api\EmailNotificationLogController;
 use App\Http\Controllers\Api\SmsController;
 use App\Http\Controllers\Api\BoardingSuspensionController;
 use App\Http\Controllers\Api\EveningStudyController;
@@ -143,6 +144,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/teacher-email/account/test', [TeacherEmailAccountController::class, 'test']);
     Route::delete('/teacher-email/account', [TeacherEmailAccountController::class, 'destroy']);
     Route::post('/teacher-email/microsoft/connect', [TeacherEmailAccountController::class, 'microsoftConnect']);
+    Route::get('/teacher-email/logs', [EmailNotificationLogController::class, 'index']);
+    Route::delete('/teacher-email/logs', [EmailNotificationLogController::class, 'bulkDestroy']);
+    Route::get('/teacher-email/logs/{emailNotificationLog}', [EmailNotificationLogController::class, 'show']);
+    Route::delete('/teacher-email/logs/{emailNotificationLog}', [EmailNotificationLogController::class, 'destroy']);
     Route::post('/teacher-email/logs/{emailNotificationLog}/retry', [TeacherEmailAccountController::class, 'retry']);
     Route::get('/sms/settings', [SmsController::class, 'getSettings']);
     Route::post('/sms/settings', [SmsController::class, 'saveSettings']);

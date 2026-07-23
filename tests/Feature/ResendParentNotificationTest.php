@@ -569,6 +569,86 @@ class ResendParentNotificationTest extends TestCase
         ]);
     }
 
+    public function test_teacher_can_paginate_view_and_delete_only_their_email_logs(): void
+    {
+        [$teacher, $student] = $this->createTeacherAndStudent();
+        $otherTeacher = User::create([
+            'uuid' => (string) Str::uuid(),
+            'name' => '其他班主任',
+            'email' => 'other.teacher@example.com',
+            'password' => bcrypt('password'),
+            'role' => 'teacher',
+            'status' => true,
+        ]);
+
+        $ownLogs = collect(range(1, 12))->map(fn (int $number) => EmailNotificationLog::create([
+            'student_id' => $student->id,
+            'teacher_id' => $teacher->id,
+            'recipient' => "parent{$number}@example.com",
+            'provider' => 'system_resend',
+            'event_key' => 'absent',
+            'subject' => "测试邮件 {$number}",
+            'status' => 'success',
+            'attempt_count' => 1,
+            'dedupe_key' => hash('sha256', "teacher-log-{$number}"),
+            'payload' => [
+                'variables' => ['student_name' => '张三'],
+                'html' => "<p>邮件正文 {$number}</p>",
+            ],
+            'created_at' => now()->subMinutes(12 - $number),
+            'updated_at' => now()->subMinutes(12 - $number),
+        ]));
+        $otherLog = EmailNotificationLog::create([
+            'student_id' => $student->id,
+            'teacher_id' => $otherTeacher->id,
+            'recipient' => 'other.parent@example.com',
+            'provider' => 'system_resend',
+            'event_key' => 'absent',
+            'subject' => '其他班级邮件',
+            'status' => 'success',
+            'dedupe_key' => hash('sha256', 'other-teacher-log'),
+        ]);
+
+        Sanctum::actingAs($teacher);
+        $this->getJson('/api/teacher-email/logs?per_page=10&page=1')
+            ->assertOk()
+            ->assertJsonCount(10, 'data')
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonPath('meta.total', 12)
+            ->assertJsonPath('data.0.recipient', 'p***@example.com');
+        $this->getJson('/api/teacher-email/logs?per_page=10&page=2')
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+
+        $detailLog = $ownLogs->last();
+        $this->getJson("/api/teacher-email/logs/{$detailLog->id}")
+            ->assertOk()
+            ->assertJsonPath('recipient', 'parent12@example.com')
+            ->assertJsonPath('html', '<p>邮件正文 12</p>');
+        $this->getJson("/api/teacher-email/logs/{$otherLog->id}")->assertForbidden();
+
+        $singleDeleteLog = $ownLogs->first();
+        $this->deleteJson("/api/teacher-email/logs/{$singleDeleteLog->id}")
+            ->assertOk()
+            ->assertJsonPath('message', '邮件发送记录已删除');
+        $this->assertDatabaseMissing('email_notification_logs', ['id' => $singleDeleteLog->id]);
+
+        $bulkIds = $ownLogs->slice(1, 2)->pluck('id')->all();
+        $this->deleteJson('/api/teacher-email/logs', ['ids' => $bulkIds])
+            ->assertOk()
+            ->assertJsonPath('deleted_count', 2);
+        foreach ($bulkIds as $id) {
+            $this->assertDatabaseMissing('email_notification_logs', ['id' => $id]);
+        }
+
+        $protectedOwnLog = $ownLogs->get(3);
+        $this->deleteJson('/api/teacher-email/logs', ['ids' => [$protectedOwnLog->id, $otherLog->id]])
+            ->assertForbidden();
+        $this->assertDatabaseHas('email_notification_logs', ['id' => $protectedOwnLog->id]);
+        $this->assertDatabaseHas('email_notification_logs', ['id' => $otherLog->id]);
+    }
+
     private function configureResend(): void
     {
         $service = app(ResendEmailService::class);

@@ -252,6 +252,7 @@ class ParentEmailNotificationService
             'related_id' => $relatedId,
             'payload' => [
                 'variables' => $variables,
+                'html' => $html,
             ],
         ])->save();
 
@@ -311,6 +312,7 @@ class ParentEmailNotificationService
             'error_message' => $result['success'] ? null : ($result['error'] ?? '未知错误'),
             'payload' => [
                 'variables' => $variables,
+                'html' => $html,
                 'attempted_providers' => $attemptedProviders,
             ],
         ]);
