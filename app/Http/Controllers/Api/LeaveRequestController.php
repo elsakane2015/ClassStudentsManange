@@ -803,6 +803,7 @@ class LeaveRequestController extends Controller
 
             foreach ($relatedRecords as $r) {
                 $details = is_array($r->details) ? $r->details : (json_decode($r->details ?? '{}', true) ?? []);
+                $rcp = $details['roll_call_pending'] ?? null;
                 unset($details['roll_call_pending']); // 批准后清除点名标记
 
                 // 更新为实际批准的节次信息
@@ -834,7 +835,7 @@ class LeaveRequestController extends Controller
                 $r->update($updateData);
                 $r->refresh();
                 if ($r->scene !== 'evening_study') {
-                    $this->syncRollCallAfterApproval($r);
+                    $this->syncRollCallAfterApproval($r, $rcp);
                 }
             }
 
@@ -1034,13 +1035,13 @@ class LeaveRequestController extends Controller
      * When a self-applied leave is approved, it wins over any roll-call absence
      * recorded for the same student/date/period.
      */
-    private function syncRollCallAfterApproval(AttendanceRecord $record): void
+    private function syncRollCallAfterApproval(AttendanceRecord $record, ?array $rcp = null): void
     {
         $details = is_array($record->details) ? $record->details : (json_decode($record->details ?? '{}', true) ?? []);
         $periodIds = $this->resolveRecordPeriodIds($record, $details);
         $rollCallRecordIds = collect();
 
-        $rcp = $details['roll_call_pending'] ?? null;
+        $rcp = $rcp ?? ($details['roll_call_pending'] ?? null);
         if (!empty($rcp['roll_call_record_id'])) {
             $rollCallRecordIds->push((int) $rcp['roll_call_record_id']);
         }
@@ -1072,6 +1073,28 @@ class LeaveRequestController extends Controller
 
         if ($rollCallRecords->isNotEmpty()) {
             AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $rollCallRecords->pluck('id'))->delete();
+        }
+
+        if ($rollCallRecordIds->isEmpty()) {
+            // 备用：按班级与日期查找该学生当日对应节次处于 absent 或 pending 的点名记录
+            $candidateRollCalls = RollCall::where('class_id', $record->class_id)
+                ->whereDate('roll_call_time', $record->date)
+                ->where('status', 'completed')
+                ->with('rollCallType')
+                ->get();
+
+            foreach ($candidateRollCalls as $rc) {
+                $rcPeriodIds = array_map('intval', $rc->rollCallType?->period_ids ?? []);
+                if (empty($periodIds) || empty($rcPeriodIds) || !empty(array_intersect($periodIds, $rcPeriodIds))) {
+                    $matchingRecord = RollCallRecord::where('roll_call_id', $rc->id)
+                        ->where('student_id', $record->student_id)
+                        ->whereIn('status', ['absent', 'pending'])
+                        ->first();
+                    if ($matchingRecord) {
+                        $rollCallRecordIds->push($matchingRecord->id);
+                    }
+                }
+            }
         }
 
         $rollCallRecordIds = $rollCallRecordIds->filter()->unique()->values();
