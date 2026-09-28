@@ -240,6 +240,77 @@ class EveningStudyAttendanceTest extends TestCase
             ->assertJsonPath('attendance.0.has_evening_study', true);
     }
 
+    public function test_multi_day_leave_uses_daily_unique_periods_in_all_teacher_displays(): void
+    {
+        $data = $this->schoolData('multi-day-periods');
+        $teacher = $this->user('teacher.multi.day@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $student = $this->student($data, 'multi-day-periods', true);
+        $leaveType = LeaveType::create([
+            'school_id' => $data['school']->id,
+            'name' => '病假',
+            'slug' => 'sick_leave',
+            'is_active' => true,
+            'student_requestable' => true,
+            'input_type' => 'duration_select',
+        ]);
+
+        Sanctum::actingAs($student->user);
+        $created = $this->postJson('/api/leave-requests', [
+            'type' => $leaveType->slug,
+            'start_date' => '2026-07-21',
+            'end_date' => '2026-07-23',
+            'sessions' => [1, 1, 2, 2],
+            'reason' => '多日请假节次去重测试',
+        ])->assertCreated()
+            ->assertJsonPath('record_count', 6);
+
+        $records = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('leave_batch_id', $created->json('leave_batch_id'))
+            ->orderBy('date')
+            ->orderBy('period_id')
+            ->get();
+
+        $this->assertCount(6, $records);
+        $this->assertSame([1, 2], $records->first()->details['period_ids']);
+
+        Sanctum::actingAs($teacher);
+        $this->postJson('/api/leave-requests/'.$created->json('id').'/approve', [
+            'record_ids' => $records->pluck('id')->all(),
+        ])->assertOk()->assertJsonPath('approved_count', 6);
+
+        $records->each->refresh();
+        $this->assertTrue($records->every(
+            fn ($record) => $record->details['display_label'] === '第1-2节'
+                && $record->details['option_periods'] === 2
+        ));
+
+        // 模拟修复上线前已经写入的跨日期重复标签，展示层仍应按当天实际记录纠正。
+        foreach ($records as $record) {
+            $details = $record->details;
+            $details['display_label'] = '第1,1,1-2,2,2节';
+            $details['option_periods'] = 6;
+            $record->update(['details' => $details]);
+        }
+
+        $calendar = $this->getJson('/api/attendance/calendar-summary?month=2026-07')->assertOk();
+        foreach (['2026-07-21', '2026-07-22', '2026-07-23'] as $date) {
+            $events = collect($calendar->json($date));
+            $this->assertCount(1, $events);
+            $this->assertSame('第1-2节 (2节)', $events->first()['option']);
+        }
+
+        $overview = $this->getJson('/api/attendance/overview?date=2026-07-22')->assertOk();
+        $overviewStudent = collect($overview->json())
+            ->flatMap(fn ($department) => $department['classes'] ?? [])
+            ->flatMap(fn ($class) => $class['students'] ?? [])
+            ->firstWhere('id', $student->id);
+        $this->assertCount(2, $overviewStudent['attendance']);
+        $this->assertTrue(collect($overviewStudent['attendance'])->every(
+            fn ($record) => $record['display_label'] === '第1-2节'
+        ));
+    }
+
     public function test_day_student_cannot_submit_a_boarding_only_period_in_a_mixed_request(): void
     {
         $data = $this->schoolData('day-mixed-leave');

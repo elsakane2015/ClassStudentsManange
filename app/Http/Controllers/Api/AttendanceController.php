@@ -706,8 +706,29 @@ class AttendanceController extends Controller
                 ];
             }
         }
+
+        // 旧的多日申请可能把跨日期节次写进同一个 display_label。考勤弹窗始终按当天、
+        // 当前审批状态下的实际记录重新生成标签，避免三天的节次在每天重复显示。
+        $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+        $periodMap = collect($attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [])
+            ->keyBy(fn ($period) => (int) ($period['id'] ?? 0));
+        $batchDisplayLabels = $attendances
+            ->filter(fn ($record) => $record->leave_batch_id
+                && $record->period_id
+                && $record->scene !== 'evening_study')
+            ->groupBy(fn ($record) => $this->attendanceBatchDisplayKey($record))
+            ->map(function ($records) use ($periodMap) {
+                $periodNames = $records->pluck('period_id')
+                    ->map(fn ($periodId) => $periodMap->get((int) $periodId)['name'] ?? null)
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                return $this->formatAttendancePeriodNames($periodNames);
+            });
         
-        $attendances = $attendances->map(function($record) use ($allLeaveRequests, $leaveRequests) {
+        $attendances = $attendances->map(function($record) use ($allLeaveRequests, $leaveRequests, $batchDisplayLabels) {
             if ($record->status === 'excused' && $record->source_type === 'leave_request') {
                 $sourceData = $allLeaveRequests[$record->source_id] ?? null;
                 
@@ -767,6 +788,13 @@ class AttendanceController extends Controller
                     $leaveType = \App\Models\LeaveType::where('slug', $originalStatus)->first();
                     $statusLabel = $leaveType ? $leaveType->name : $originalStatus;
                     $record->display_label = $statusLabel . '(' . $details['roll_call_type'] . ')';
+                }
+            }
+
+            if ($record->leave_batch_id && $record->period_id && $record->scene !== 'evening_study') {
+                $displayLabel = $batchDisplayLabels->get($this->attendanceBatchDisplayKey($record));
+                if ($displayLabel) {
+                    $record->setAttribute('display_label', $displayLabel);
                 }
             }
 
@@ -970,6 +998,9 @@ class AttendanceController extends Controller
             $optionLabel = '';
             $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
             $timeSlotId = $details['time_slot_id'] ?? null;
+            $isBatchPeriodRecord = $record->leave_batch_id
+                && $record->period_id
+                && $record->scene !== 'evening_study';
             
             // 优先使用自定义的显示标签（用户自定义选择节次时生成）
             if ($record->scene === 'evening_study') {
@@ -983,6 +1014,8 @@ class AttendanceController extends Controller
                         : ($record->status_name_snapshot ?: $record->requested_status_name_snapshot))
                     ?? '已标记';
                 $optionLabel = $periodName . '·' . $statusName;
+            } elseif ($isBatchPeriodRecord) {
+                $optionLabel = $periodMap->get((int) $record->period_id)['name'] ?? "第{$record->period_id}节";
             } elseif (isset($details['display_label'])) {
                 $optionLabel = $details['display_label'];
                 // 附加节次数量
@@ -1045,9 +1078,10 @@ class AttendanceController extends Controller
             
             // 创建合并键
             // 对于有 period_id 但没有 time_slot_id 的记录，使用特殊键来收集所有节次
-            if ($record->period_id && !$timeSlotId && !isset($details['option_label'])) {
+            if ($isBatchPeriodRecord || ($record->period_id && !$timeSlotId && !isset($details['option_label']))) {
                 // 单独节次记录，需要合并
-                $mergeKey = $record->student_id . '_individual_periods_' . $record->scene . '_' . $record->leave_type_id . '_' . $record->status . '_' . $record->approval_status;
+                $batchKey = $isBatchPeriodRecord ? '_batch_' . $record->leave_batch_id : '';
+                $mergeKey = $record->student_id . '_individual_periods_' . $record->scene . $batchKey . '_' . $record->leave_type_id . '_' . $record->status . '_' . $record->approval_status;
                 
                 if (!isset($result[$dateKey][$mergeKey])) {
                     $result[$dateKey][$mergeKey] = [
@@ -1062,6 +1096,7 @@ class AttendanceController extends Controller
                         'approval_status' => $record->approval_status,
                         '_period_ids' => [$record->period_id], // 收集节次ID
                         '_period_names' => [$optionLabel], // 收集节次名称
+                        '_include_period_count' => $isBatchPeriodRecord,
                     ];
                 } else {
                     // 追加节次
@@ -1089,41 +1124,23 @@ class AttendanceController extends Controller
         // 处理合并后的单独节次记录，生成显示标签
         foreach ($result as $dateKey => &$records) {
             foreach ($records as $key => &$rec) {
-                if (isset($rec['_period_ids']) && count($rec['_period_ids']) > 1) {
-                    // 多个节次，生成范围显示
-                    $periodIds = array_unique($rec['_period_ids']);
-                    sort($periodIds);
-                    
-                    // 检查是否连续
-                    $isConsecutive = true;
-                    for ($i = 1; $i < count($periodIds); $i++) {
-                        if ($periodIds[$i] - $periodIds[$i-1] != 1) {
-                            $isConsecutive = false;
-                            break;
+                if (isset($rec['_period_ids'])) {
+                    $periodIds = array_values(array_unique(array_map('intval', $rec['_period_ids'])));
+                    if (!empty($rec['_include_period_count']) || count($periodIds) > 1) {
+                        $periodNames = array_values(array_filter(array_map(
+                            fn ($periodId) => $periodMap->get($periodId)['name'] ?? null,
+                            $periodIds
+                        )));
+                        $rec['option'] = $this->formatAttendancePeriodNames($periodNames);
+                        if (!empty($rec['_include_period_count'])) {
+                            $rec['option'] .= ' (' . count($periodIds) . '节)';
                         }
-                    }
-                    
-                    if ($isConsecutive && count($periodIds) > 1) {
-                        // 连续节次，显示范围
-                        $firstPeriod = $periodMap[$periodIds[0]]['name'] ?? "第{$periodIds[0]}节";
-                        $lastPeriod = $periodMap[$periodIds[count($periodIds)-1]]['name'] ?? "第{$periodIds[count($periodIds)-1]}节";
-                        // 提取节次数字
-                        preg_match('/第?(\d+)节?/', $firstPeriod, $firstMatch);
-                        preg_match('/第?(\d+)节?/', $lastPeriod, $lastMatch);
-                        if ($firstMatch && $lastMatch) {
-                            $rec['option'] = "第{$firstMatch[1]}-{$lastMatch[1]}节";
-                        } else {
-                            $rec['option'] = $firstPeriod . '-' . $lastPeriod;
-                        }
-                    } else {
-                        // 非连续，列出所有节次
-                        $names = array_unique($rec['_period_names']);
-                        $rec['option'] = implode('、', $names);
                     }
                 }
                 // 清理临时字段
                 unset($rec['_period_ids']);
                 unset($rec['_period_names']);
+                unset($rec['_include_period_count']);
             }
         }
         
@@ -1323,6 +1340,9 @@ class AttendanceController extends Controller
             }
         }
 
+        $numbered = array_values(array_unique($numbered));
+        $special = array_values(array_unique($special));
+
         $parts = [];
         if (!empty($numbered)) {
             sort($numbered);
@@ -1343,6 +1363,23 @@ class AttendanceController extends Controller
         }
 
         return implode('、', array_merge($parts, $special));
+    }
+
+    private function attendanceBatchDisplayKey(AttendanceRecord $record): string
+    {
+        $date = $record->date instanceof \Carbon\Carbon
+            ? $record->date->format('Y-m-d')
+            : (string) $record->date;
+
+        return implode(':', [
+            $record->student_id,
+            $record->leave_batch_id,
+            $date,
+            $record->scene,
+            $record->leave_type_id,
+            $record->status,
+            $record->approval_status ?? 'none',
+        ]);
     }
 
     /**

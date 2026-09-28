@@ -317,7 +317,12 @@ class LeaveRequestController extends Controller
         }
         
         // 处理时段：优先使用用户自定义选择的节次，否则使用时段的默认节次
-        $periodIds = $request->sessions ?? [];
+        $periodIds = collect($request->sessions ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
         $timeSlotId = $request->time_slot_id;
 
         if (empty($timeSlotId) && !empty($details['option']) && preg_match('/^time_slot_(\d+)$/', $details['option'], $matches)) {
@@ -340,11 +345,12 @@ class LeaveRequestController extends Controller
 
                         return $period['audience_scope'] !== 'boarding' || $student->is_boarding;
                     })
+                    ->unique()
                     ->values()
                     ->all();
                 if (!empty($periodIds)) {
                     // 用户有自定义选择 - 转换为整数并排序后比较
-                    $userPeriods = array_map('intval', $periodIds);
+                    $userPeriods = array_values(array_unique(array_map('intval', $periodIds)));
                     $defaultPeriods = array_map('intval', $defaultPeriodIds);
                     sort($userPeriods);
                     sort($defaultPeriods);
@@ -409,7 +415,12 @@ class LeaveRequestController extends Controller
         
         // 处理文本输入类型的节次选择（无 time_slot_id 但有 sessions）
         if (empty($timeSlotId) && !empty($request->sessions)) {
-            $periodIds = array_map('intval', $request->sessions);
+            $periodIds = collect($request->sessions)
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn ($id) => $id > 0)
+                ->unique()
+                ->values()
+                ->all();
             $details['period_ids'] = $periodIds;
             
             // 获取节次名称
@@ -775,30 +786,34 @@ class LeaveRequestController extends Controller
             abort_if($relatedRecords->isEmpty(), 422, '请至少选择一条待审批记录');
 
             // 部分批准普通考勤时，按实际批准的节次重算显示信息。
-            $newDisplayLabel  = null;
-            $newOptionPeriods = null;
+            $approvedPeriodDisplays = collect();
             if (($selectedRecordIds->isNotEmpty() || $excludedRecordIds->isNotEmpty()) && $relatedRecords->isNotEmpty()) {
-                $approvedPeriodIds = $relatedRecords
+                $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+                $periodMap = collect($attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [])->keyBy('id');
+                $approvedPeriodDisplays = $relatedRecords
                     ->where('scene', '!=', 'evening_study')
-                    ->pluck('period_id')
-                    ->filter(fn($pid) => $pid !== null)
-                    ->sort()
-                    ->values()
-                    ->toArray();
+                    ->filter(fn ($item) => $item->period_id !== null)
+                    ->groupBy(fn ($item) => $item->date instanceof \Carbon\Carbon
+                        ? $item->date->format('Y-m-d')
+                        : (string) $item->date)
+                    ->map(function ($dateRecords) use ($periodMap) {
+                        $periodIds = $dateRecords->pluck('period_id')
+                            ->map(fn ($periodId) => (int) $periodId)
+                            ->unique()
+                            ->sort()
+                            ->values();
+                        $periodNames = $periodIds
+                            ->map(fn ($periodId) => $periodMap->get($periodId)['name'] ?? null)
+                            ->filter()
+                            ->values()
+                            ->all();
 
-                if (!empty($approvedPeriodIds)) {
-                    $attendancePeriodsJson = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
-                    $periodMap = collect($attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [])->keyBy('id');
-
-                    $periodNames = array_values(array_filter(
-                        array_map(fn($pid) => $periodMap->has($pid) ? $periodMap->get($pid)['name'] : null, $approvedPeriodIds)
-                    ));
-
-                    if (!empty($periodNames)) {
-                        $newDisplayLabel  = $this->generatePeriodDisplayLabel($periodNames);
-                        $newOptionPeriods = count($approvedPeriodIds);
-                    }
-                }
+                        return empty($periodNames) ? null : [
+                            'display_label' => $this->generatePeriodDisplayLabel($periodNames),
+                            'option_periods' => $periodIds->count(),
+                        ];
+                    })
+                    ->filter();
             }
 
             foreach ($relatedRecords as $r) {
@@ -807,9 +822,13 @@ class LeaveRequestController extends Controller
                 unset($details['roll_call_pending']); // 批准后清除点名标记
 
                 // 更新为实际批准的节次信息
-                if ($newDisplayLabel !== null) {
-                    $details['display_label']  = $newDisplayLabel;
-                    $details['option_periods'] = $newOptionPeriods;
+                $recordDate = $r->date instanceof \Carbon\Carbon
+                    ? $r->date->format('Y-m-d')
+                    : (string) $r->date;
+                $approvedPeriodDisplay = $approvedPeriodDisplays->get($recordDate);
+                if ($approvedPeriodDisplay) {
+                    $details['display_label'] = $approvedPeriodDisplay['display_label'];
+                    $details['option_periods'] = $approvedPeriodDisplay['option_periods'];
                 }
 
                 $approvedEveningStatus = $r->scene === 'evening_study' ? $r->requestedEveningStatus : null;
@@ -1270,6 +1289,9 @@ class LeaveRequestController extends Controller
                 $specialPeriods[] = $name;
             }
         }
+
+        $regularPeriods = array_values(array_unique($regularPeriods));
+        $specialPeriods = array_values(array_unique($specialPeriods));
         
         $parts = [];
         
