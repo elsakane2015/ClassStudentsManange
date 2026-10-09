@@ -1162,11 +1162,13 @@ class AttendanceController extends Controller
                 unset($rec['_period_names']);
                 unset($rec['_include_period_count']);
             }
+            unset($rec);
         }
+        unset($records);
         
         // 将合并后的结果转换为数组
-        foreach ($result as $dateKey => $records) {
-            $result[$dateKey] = array_values($records);
+        foreach ($result as $dateKey => $dateRecords) {
+            $result[$dateKey] = array_values($dateRecords);
         }
         
         return response()->json($result);

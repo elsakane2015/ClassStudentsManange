@@ -256,6 +256,17 @@ class RollCallLeaveOrderTest extends TestCase
             'source_type' => 'manual_bulk',
             'is_self_applied' => false,
         ]);
+        $pastTeacherMarkedLeave = AttendanceRecord::create([
+            'student_id' => $data['student']->id,
+            'school_id' => $data['school']->id,
+            'class_id' => $data['class']->id,
+            'date' => '2026-10-08',
+            'period_id' => 5,
+            'status' => 'leave',
+            'leave_type_id' => $data['leaveType']->id,
+            'source_type' => 'manual_bulk',
+            'is_self_applied' => false,
+        ]);
 
         Sanctum::actingAs($data['teacherUser']);
         $calendar = $this->getJson('/api/attendance/calendar-summary?month=2026-10')
@@ -269,6 +280,10 @@ class RollCallLeaveOrderTest extends TestCase
             collect($futureRecords)->pluck('id')->all()
         );
         $this->assertNotContains($futureAbsence->id, collect($futureRecords)->pluck('id')->all());
+
+        $pastRecords = $calendar['2026-10-08'] ?? [];
+        $this->assertCount(1, $pastRecords);
+        $this->assertSame($pastTeacherMarkedLeave->id, $pastRecords[0]['id']);
 
         Carbon::setTestNow();
     }
