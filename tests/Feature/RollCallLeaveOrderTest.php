@@ -14,6 +14,7 @@ use App\Models\SchoolClass;
 use App\Models\Student;
 use App\Models\SystemSetting;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
@@ -142,6 +143,122 @@ class RollCallLeaveOrderTest extends TestCase
         $this->assertSame('pending', $fullDayLeave->approval_status);
         $this->assertSame('self_applied', $fullDayLeave->source_type);
         $this->assertNotNull($fullDayLeave->details['roll_call_pending'] ?? null);
+    }
+
+    public function test_teacher_leave_replaces_overlapping_roll_call_absence(): void
+    {
+        $data = $this->setupData('teacher-leave');
+
+        Sanctum::actingAs($data['rollCallAdminUser']);
+        $rollCallId = $this->postJson('/api/roll-calls', [
+            'class_id' => $data['class']->id,
+            'roll_call_type_id' => $data['rollCallType']->id,
+            'roll_call_time' => '2026-10-09 08:00:00',
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/roll-calls/{$rollCallId}/complete", [])->assertOk();
+
+        $this->assertDatabaseHas('attendance_records', [
+            'student_id' => $data['student']->id,
+            'date' => '2026-10-09 00:00:00',
+            'period_id' => 1,
+            'source_type' => 'roll_call',
+        ]);
+
+        Sanctum::actingAs($data['teacherUser']);
+        $this->postJson('/api/attendance/bulk', [
+            'date' => '2026-10-09',
+            'records' => [[
+                'student_id' => $data['student']->id,
+                'status' => 'leave',
+                'leave_type_id' => $data['leaveType']->id,
+                'details' => [
+                    'option' => '上午',
+                    'option_label' => '上午',
+                    'option_periods' => 2,
+                    'period_ids' => [1, 2],
+                    'period_names' => ['第1节', '第2节'],
+                    'is_custom' => false,
+                ],
+            ]],
+        ])->assertOk();
+
+        $this->assertDatabaseMissing('attendance_records', [
+            'student_id' => $data['student']->id,
+            'date' => '2026-10-09 00:00:00',
+            'source_type' => 'roll_call',
+        ]);
+        $this->assertDatabaseHas('attendance_records', [
+            'student_id' => $data['student']->id,
+            'date' => '2026-10-09 00:00:00',
+            'status' => 'leave',
+            'leave_type_id' => $data['leaveType']->id,
+            'source_type' => 'manual_bulk',
+        ]);
+        $this->assertDatabaseHas('roll_call_records', [
+            'roll_call_id' => $rollCallId,
+            'student_id' => $data['student']->id,
+            'status' => 'on_leave',
+            'leave_type_id' => $data['leaveType']->id,
+            'leave_status' => 'approved',
+        ]);
+        $this->assertSame(1, RollCall::findOrFail($rollCallId)->on_leave_count);
+    }
+
+    public function test_teacher_calendar_hides_future_attendance_but_keeps_planned_leave(): void
+    {
+        Carbon::setTestNow('2026-10-09 12:00:00');
+        $data = $this->setupData('future-calendar');
+
+        $futureAbsence = AttendanceRecord::create([
+            'student_id' => $data['student']->id,
+            'school_id' => $data['school']->id,
+            'class_id' => $data['class']->id,
+            'date' => '2026-10-10',
+            'period_id' => 1,
+            'status' => 'leave',
+            'leave_type_id' => $data['absentLeaveType']->id,
+            'source_type' => 'self_applied',
+            'is_self_applied' => true,
+            'approval_status' => 'approved',
+        ]);
+        $plannedLeave = AttendanceRecord::create([
+            'student_id' => $data['student']->id,
+            'school_id' => $data['school']->id,
+            'class_id' => $data['class']->id,
+            'date' => '2026-10-10',
+            'period_id' => 2,
+            'status' => 'leave',
+            'leave_type_id' => $data['leaveType']->id,
+            'source_type' => 'self_applied',
+            'is_self_applied' => true,
+            'approval_status' => 'approved',
+        ]);
+        AttendanceRecord::create([
+            'student_id' => $data['student']->id,
+            'school_id' => $data['school']->id,
+            'class_id' => $data['class']->id,
+            'date' => '2026-10-09',
+            'period_id' => 1,
+            'status' => 'leave',
+            'leave_type_id' => $data['leaveType']->id,
+            'source_type' => 'self_applied',
+            'is_self_applied' => true,
+            'approval_status' => 'rejected',
+        ]);
+
+        Sanctum::actingAs($data['teacherUser']);
+        $calendar = $this->getJson('/api/attendance/calendar-summary?month=2026-10')
+            ->assertOk()
+            ->json();
+
+        $futureRecords = $calendar['2026-10-10'] ?? [];
+        $this->assertCount(1, $futureRecords);
+        $this->assertSame($plannedLeave->id, $futureRecords[0]['id']);
+        $this->assertNotSame($futureAbsence->id, $futureRecords[0]['id']);
+        $this->assertArrayNotHasKey('2026-10-09', $calendar);
+
+        Carbon::setTestNow();
     }
 
     private function setupData(string $suffix): array

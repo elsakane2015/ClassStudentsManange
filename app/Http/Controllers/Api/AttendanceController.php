@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceRecord;
 use App\Models\LeaveRequest;
+use App\Services\RollCallAttendanceSyncService;
 use Illuminate\Http\Request;
 
 class AttendanceController extends Controller
@@ -936,9 +937,26 @@ class AttendanceController extends Controller
         }
         
         // Fetch attendance records for the month
+        $today = now()->toDateString();
         $records = AttendanceRecord::withoutGlobalScope('day_attendance')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
+            ->where(function ($query) {
+                $query->where('is_self_applied', false)
+                    ->orWhereNull('is_self_applied')
+                    ->orWhereIn('approval_status', ['pending', 'approved']);
+            })
+            ->where(function ($query) use ($today) {
+                $query->whereDate('date', '<=', $today)
+                    ->orWhere(function ($futureQuery) use ($today) {
+                        $futureQuery->whereDate('date', '>', $today)
+                            ->where('is_self_applied', true)
+                            ->whereIn('approval_status', ['pending', 'approved'])
+                            ->whereHas('leaveType', function ($leaveTypeQuery) {
+                                $leaveTypeQuery->whereNotIn('slug', ['absent', 'late', 'early_leave']);
+                            });
+                    });
+            })
             ->where(function ($query) {
                 $query->where('scene', 'evening_study')
                     ->orWhereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave']);
@@ -2180,7 +2198,7 @@ class AttendanceController extends Controller
         return response()->json(['message' => 'Auto-mark completed.', 'marked_count' => $count]);
     }
 
-    public function bulkStore(Request $request)
+    public function bulkStore(Request $request, RollCallAttendanceSyncService $rollCallAttendanceSync)
     {
         $request->validate([
             'date' => 'required|date',
@@ -2310,6 +2328,9 @@ class AttendanceController extends Controller
                 );
                 
                 if ($record) {
+                    if (in_array($record->status, ['leave', 'excused'], true) && $record->leave_type_id) {
+                        $rollCallAttendanceSync->replaceAbsenceWithLeave($record);
+                    }
                     $updatedCount++;
                 }
             } else {
@@ -2335,6 +2356,9 @@ class AttendanceController extends Controller
                 );
                 
                 if ($record) {
+                    if (in_array($record->status, ['leave', 'excused'], true) && $record->leave_type_id) {
+                        $rollCallAttendanceSync->replaceAbsenceWithLeave($record);
+                    }
                     $updatedCount++;
                 }
             }

@@ -15,7 +15,7 @@ const statusColors = {
 };
 
 // Detail Modal Component
-function CalendarDetailModal({ isOpen, onClose, date, records }) {
+function CalendarDetailModal({ isOpen, onClose, date, records, loading }) {
     if (!isOpen) return null;
 
     return (
@@ -37,7 +37,9 @@ function CalendarDetailModal({ isOpen, onClose, date, records }) {
                             </button>
                         </div>
                         <div className="max-h-96 overflow-y-auto space-y-2">
-                            {records.length === 0 ? (
+                            {loading ? (
+                                <p className="text-gray-500 text-center py-4">正在读取最新记录...</p>
+                            ) : records.length === 0 ? (
                                 <p className="text-gray-500 text-center py-4">暂无考勤记录</p>
                             ) : (
                                 records.map((record, idx) => {
@@ -99,6 +101,7 @@ export default function AttendanceCalendar({ user }) {
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [detailDate, setDetailDate] = useState(null);
     const [detailRecords, setDetailRecords] = useState([]);
+    const [loadingDetails, setLoadingDetails] = useState(false);
 
     useEffect(() => {
         // Fetch active semester to calculate "Week Number"
@@ -176,11 +179,25 @@ export default function AttendanceCalendar({ user }) {
         setIsModalOpen(true);
     };
 
-    const handleShowMore = (day, records, e) => {
+    const handleShowMore = async (day, records, e) => {
         e.stopPropagation();
         setDetailDate(day);
         setDetailRecords(records);
         setIsDetailModalOpen(true);
+        setLoadingDetails(true);
+
+        try {
+            const month = format(day, 'yyyy-MM');
+            const dateKey = format(day, 'yyyy-MM-dd');
+            const res = await axios.get('/attendance/calendar-summary', { params: { month } });
+            const latestData = res.data || {};
+            setAttendanceData(latestData);
+            setDetailRecords(latestData[dateKey] || []);
+        } catch (error) {
+            console.error('Failed to refresh calendar details:', error);
+        } finally {
+            setLoadingDetails(false);
+        }
     };
 
     const next = () => {
@@ -372,6 +389,7 @@ export default function AttendanceCalendar({ user }) {
                 onClose={() => setIsDetailModalOpen(false)}
                 date={detailDate}
                 records={detailRecords}
+                loading={loadingDetails}
             />
         </div>
     );
