@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\SendParentNotification;
 use App\Models\AttendanceRecord;
 use App\Models\EmailNotificationLog;
 use App\Models\EmailNotificationPreference;
@@ -21,6 +22,7 @@ use App\Services\Sms\AlibabaSmsProvider;
 use App\Services\Sms\TencentSmsProvider;
 use App\Services\SmsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -30,6 +32,26 @@ use Tests\TestCase;
 class ResendParentNotificationTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Bus::fake();
+    }
+
+    public function test_attendance_notification_is_deferred_until_after_the_response(): void
+    {
+        [, $student] = $this->createTeacherAndStudent();
+
+        $record = $this->createAttendanceRecord($student, 1, 'absent');
+
+        Bus::assertDispatchedAfterResponse(
+            SendParentNotification::class,
+            fn (SendParentNotification $job) => $job->attendanceRecordId === $record->id
+                && $job->notificationType === 'attendance'
+        );
+        $this->assertDatabaseCount('email_notification_logs', 0);
+    }
 
     public function test_resend_client_sends_expected_api_payload(): void
     {
@@ -284,8 +306,10 @@ class ResendParentNotificationTest extends TestCase
 
         $firstRecord = $this->createAttendanceRecord($student, 1, 'absent');
         $secondRecord = $this->createAttendanceRecord($student, 2, 'absent');
+        $firstResult = app(ParentEmailNotificationService::class)->sendAttendanceNotification($firstRecord);
         $result = app(ParentEmailNotificationService::class)->sendAttendanceNotification($secondRecord);
 
+        $this->assertTrue($firstResult['success']);
         $this->assertSame('duplicate', $result['skipped']);
         $this->assertSame(1, SmsNotificationLog::count());
         $this->assertSame(0, EmailNotificationLog::count());

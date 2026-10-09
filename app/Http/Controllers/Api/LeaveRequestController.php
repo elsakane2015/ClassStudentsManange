@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendParentNotification;
 use App\Models\AttendanceRecord;
 use App\Models\BoardingSuspension;
 use App\Models\EveningStudyStatus;
@@ -670,12 +671,7 @@ class LeaveRequestController extends Controller
                 \Log::warning('WeChat push failed', ['error' => $e->getMessage()]);
             }
 
-            try {
-                app(\App\Services\ParentEmailNotificationService::class)
-                    ->sendLeaveRequestNotification($firstRecord);
-            } catch (\Throwable $e) {
-                \Log::warning('Parent email notification failed', ['error' => $e->getMessage()]);
-            }
+            SendParentNotification::dispatchAfterResponse($firstRecord->id, 'leave_request');
         }
         
         return response()->json([

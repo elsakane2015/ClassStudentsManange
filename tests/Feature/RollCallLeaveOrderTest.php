@@ -205,7 +205,7 @@ class RollCallLeaveOrderTest extends TestCase
         $this->assertSame(1, RollCall::findOrFail($rollCallId)->on_leave_count);
     }
 
-    public function test_teacher_calendar_hides_future_attendance_but_keeps_planned_leave(): void
+    public function test_teacher_calendar_only_shows_valid_future_leave_requests(): void
     {
         Carbon::setTestNow('2026-10-09 12:00:00');
         $data = $this->setupData('future-calendar');
@@ -218,9 +218,8 @@ class RollCallLeaveOrderTest extends TestCase
             'period_id' => 1,
             'status' => 'leave',
             'leave_type_id' => $data['absentLeaveType']->id,
-            'source_type' => 'self_applied',
-            'is_self_applied' => true,
-            'approval_status' => 'approved',
+            'source_type' => 'roll_call',
+            'is_self_applied' => false,
         ]);
         $plannedLeave = AttendanceRecord::create([
             'student_id' => $data['student']->id,
@@ -234,12 +233,12 @@ class RollCallLeaveOrderTest extends TestCase
             'is_self_applied' => true,
             'approval_status' => 'approved',
         ]);
-        AttendanceRecord::create([
+        $rejectedLeave = AttendanceRecord::create([
             'student_id' => $data['student']->id,
             'school_id' => $data['school']->id,
             'class_id' => $data['class']->id,
-            'date' => '2026-10-09',
-            'period_id' => 1,
+            'date' => '2026-10-10',
+            'period_id' => 3,
             'status' => 'leave',
             'leave_type_id' => $data['leaveType']->id,
             'source_type' => 'self_applied',
@@ -253,10 +252,12 @@ class RollCallLeaveOrderTest extends TestCase
             ->json();
 
         $futureRecords = $calendar['2026-10-10'] ?? [];
-        $this->assertCount(1, $futureRecords);
-        $this->assertSame($plannedLeave->id, $futureRecords[0]['id']);
-        $this->assertNotSame($futureAbsence->id, $futureRecords[0]['id']);
-        $this->assertArrayNotHasKey('2026-10-09', $calendar);
+        $this->assertCount(2, $futureRecords);
+        $this->assertEqualsCanonicalizing(
+            [$plannedLeave->id, $rejectedLeave->id],
+            collect($futureRecords)->pluck('id')->all()
+        );
+        $this->assertNotContains($futureAbsence->id, collect($futureRecords)->pluck('id')->all());
 
         Carbon::setTestNow();
     }

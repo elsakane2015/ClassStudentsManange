@@ -944,17 +944,15 @@ class AttendanceController extends Controller
             ->where(function ($query) {
                 $query->where('is_self_applied', false)
                     ->orWhereNull('is_self_applied')
-                    ->orWhereIn('approval_status', ['pending', 'approved']);
+                    ->orWhereIn('approval_status', ['pending', 'approved', 'rejected']);
             })
             ->where(function ($query) use ($today) {
                 $query->whereDate('date', '<=', $today)
                     ->orWhere(function ($futureQuery) use ($today) {
                         $futureQuery->whereDate('date', '>', $today)
                             ->where('is_self_applied', true)
-                            ->whereIn('approval_status', ['pending', 'approved'])
-                            ->whereHas('leaveType', function ($leaveTypeQuery) {
-                                $leaveTypeQuery->whereNotIn('slug', ['absent', 'late', 'early_leave']);
-                            });
+                            ->whereIn('approval_status', ['pending', 'approved', 'rejected'])
+                            ->whereIn('source_type', ['self_applied', 'leave_request']);
                     });
             })
             ->where(function ($query) {

@@ -2,10 +2,9 @@
 
 namespace App\Observers;
 
+use App\Jobs\SendParentNotification;
 use App\Models\AttendanceRecord;
-use App\Services\ParentEmailNotificationService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class AttendanceRecordObserver
 {
@@ -23,7 +22,9 @@ class AttendanceRecordObserver
 
     private function scheduleNotification(AttendanceRecord $record): void
     {
-        if ($record->scene === 'evening_study') {
+        if ($record->scene === 'evening_study'
+            || $record->is_self_applied
+            || in_array($record->source_type, ['self_applied', 'leave_request'], true)) {
             return;
         }
 
@@ -31,17 +32,7 @@ class AttendanceRecordObserver
         $connection = DB::connection($record->getConnectionName());
 
         $connection->afterCommit(function () use ($recordId) {
-            try {
-                $freshRecord = AttendanceRecord::find($recordId);
-                if ($freshRecord) {
-                    app(ParentEmailNotificationService::class)->sendAttendanceNotification($freshRecord);
-                }
-            } catch (\Throwable $e) {
-                Log::warning('Parent email attendance observer failed', [
-                    'attendance_record_id' => $recordId,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            SendParentNotification::dispatchAfterResponse($recordId, 'attendance');
         });
     }
 }
