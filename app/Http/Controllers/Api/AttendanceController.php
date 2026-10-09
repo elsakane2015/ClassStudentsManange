@@ -950,9 +950,13 @@ class AttendanceController extends Controller
                 $query->whereDate('date', '<=', $today)
                     ->orWhere(function ($futureQuery) use ($today) {
                         $futureQuery->whereDate('date', '>', $today)
-                            ->where('is_self_applied', true)
-                            ->whereIn('approval_status', ['pending', 'approved', 'rejected'])
-                            ->whereIn('source_type', ['self_applied', 'leave_request']);
+                            ->whereIn('source_type', [
+                                'self_applied',
+                                'leave_request',
+                                'manual',
+                                'manual_bulk',
+                                'teacher_evening_leave',
+                            ]);
                     });
             })
             ->where(function ($query) {

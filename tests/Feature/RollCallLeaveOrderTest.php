@@ -205,7 +205,7 @@ class RollCallLeaveOrderTest extends TestCase
         $this->assertSame(1, RollCall::findOrFail($rollCallId)->on_leave_count);
     }
 
-    public function test_teacher_calendar_only_shows_valid_future_leave_requests(): void
+    public function test_teacher_calendar_shows_future_applications_and_manual_marks(): void
     {
         Carbon::setTestNow('2026-10-09 12:00:00');
         $data = $this->setupData('future-calendar');
@@ -245,6 +245,17 @@ class RollCallLeaveOrderTest extends TestCase
             'is_self_applied' => true,
             'approval_status' => 'rejected',
         ]);
+        $teacherMarkedLeave = AttendanceRecord::create([
+            'student_id' => $data['student']->id,
+            'school_id' => $data['school']->id,
+            'class_id' => $data['class']->id,
+            'date' => '2026-10-10',
+            'period_id' => 4,
+            'status' => 'leave',
+            'leave_type_id' => $data['leaveType']->id,
+            'source_type' => 'manual_bulk',
+            'is_self_applied' => false,
+        ]);
 
         Sanctum::actingAs($data['teacherUser']);
         $calendar = $this->getJson('/api/attendance/calendar-summary?month=2026-10')
@@ -252,9 +263,9 @@ class RollCallLeaveOrderTest extends TestCase
             ->json();
 
         $futureRecords = $calendar['2026-10-10'] ?? [];
-        $this->assertCount(2, $futureRecords);
+        $this->assertCount(3, $futureRecords);
         $this->assertEqualsCanonicalizing(
-            [$plannedLeave->id, $rejectedLeave->id],
+            [$plannedLeave->id, $rejectedLeave->id, $teacherMarkedLeave->id],
             collect($futureRecords)->pluck('id')->all()
         );
         $this->assertNotContains($futureAbsence->id, collect($futureRecords)->pluck('id')->all());
