@@ -631,19 +631,19 @@ class RollCallController extends Controller
                             continue;
                         }
 
-                        AttendanceRecord::updateOrCreate(
+                        AttendanceRecord::withoutGlobalScope('day_attendance')->updateOrCreate(
                             [
                                 'student_id' => $record->student_id,
                                 'date' => $rollCall->roll_call_time->toDateString(),
                                 'period_id' => $periodId,
-                                'source_type' => 'roll_call',
-                                'source_id' => $rollCall->id,
                             ],
                             [
                                 'school_id' => $rollCall->school_id,
                                 'class_id' => $rollCall->class_id,
                                 'status' => 'leave',
                                 'leave_type_id' => $type->leave_type_id,
+                                'source_type' => 'roll_call',
+                                'source_id' => $rollCall->id,
                                 'is_self_applied' => false,
                                 'approval_status' => null,
                                 'details' => [
@@ -735,7 +735,12 @@ class RollCallController extends Controller
             return response()->json($rollCall->fresh()->load('rollCallType', 'records'));
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => $e->getMessage()], 500);
+            \Log::error('Failed to complete roll call', [
+                'roll_call_id' => $rollCall->id,
+                'exception' => $e,
+            ]);
+
+            return response()->json(['error' => '点名完成失败，请刷新后重试'], 500);
         }
     }
 
@@ -939,19 +944,19 @@ class RollCallController extends Controller
                             continue;
                         }
 
-                        AttendanceRecord::updateOrCreate(
+                        AttendanceRecord::withoutGlobalScope('day_attendance')->updateOrCreate(
                             [
                                 'student_id' => $record->student_id,
                                 'date' => $rollCall->roll_call_time->toDateString(),
                                 'period_id' => $periodId,
-                                'source_type' => 'roll_call',
-                                'source_id' => $rollCall->id,
                             ],
                             [
                                 'school_id' => $rollCall->school_id,
                                 'class_id' => $rollCall->class_id,
                                 'status' => 'leave',
                                 'leave_type_id' => $type->leave_type_id,
+                                'source_type' => 'roll_call',
+                                'source_id' => $rollCall->id,
                                 'is_self_applied' => false,
                                 'approval_status' => null,
                                 'details' => [

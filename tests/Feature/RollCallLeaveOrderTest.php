@@ -145,6 +145,42 @@ class RollCallLeaveOrderTest extends TestCase
         $this->assertNotNull($fullDayLeave->details['roll_call_pending'] ?? null);
     }
 
+    public function test_roll_call_updates_existing_period_record_without_duplicate_key_error(): void
+    {
+        $data = $this->setupData('existing-period-record');
+
+        AttendanceRecord::create([
+            'student_id' => $data['student']->id,
+            'school_id' => $data['school']->id,
+            'class_id' => $data['class']->id,
+            'date' => '2026-10-29',
+            'period_id' => 2,
+            'status' => 'late',
+            'source_type' => 'manual_bulk',
+            'is_self_applied' => false,
+        ]);
+
+        Sanctum::actingAs($data['rollCallAdminUser']);
+        $rollCallId = $this->postJson('/api/roll-calls', [
+            'class_id' => $data['class']->id,
+            'roll_call_type_id' => $data['rollCallType']->id,
+            'roll_call_time' => '2026-10-29 08:00:00',
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/roll-calls/{$rollCallId}/complete", [])->assertOk();
+
+        $records = AttendanceRecord::withoutGlobalScope('day_attendance')
+            ->where('student_id', $data['student']->id)
+            ->whereDate('date', '2026-10-29')
+            ->where('period_id', 2)
+            ->get();
+
+        $this->assertCount(1, $records);
+        $this->assertSame('roll_call', $records->first()->source_type);
+        $this->assertSame($rollCallId, $records->first()->source_id);
+        $this->assertSame('leave', $records->first()->status);
+    }
+
     public function test_teacher_leave_replaces_overlapping_roll_call_absence(): void
     {
         $data = $this->setupData('teacher-leave');
