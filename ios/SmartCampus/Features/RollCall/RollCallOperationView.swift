@@ -375,49 +375,58 @@ private struct RollCallStudentTile: View {
         }
     }
 
+    private var watermarkColor: Color {
+        switch record.status {
+        case "present": return Color.white.opacity(0.26)
+        case "on_leave": return Color.blue.opacity(0.22)
+        case "absent": return Color.red.opacity(0.22)
+        default: return SCTheme.primary.opacity(0.16)
+        }
+    }
+
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-                HStack(spacing: compact ? 4 : 6) {
-                    if let shortNo = record.student?.shortStudentNo {
-                        Text(shortNo)
-                            .font((compact ? Font.caption2 : Font.caption).monospacedDigit().weight(.bold))
-                            .foregroundStyle(record.status == "present" ? .white : (record.status == "pending" ? SCTheme.primary : tileColor))
-                            .padding(.horizontal, compact ? 5 : 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                record.status == "present"
-                                    ? Color.white.opacity(0.24)
-                                    : (record.status == "pending" ? SCTheme.primary.opacity(0.12) : tileColor.opacity(0.16))
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    Text(record.student?.name ?? "学生 #\(record.studentId)")
-                        .font(compact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
-                        .foregroundStyle(record.status == "present" ? .white : .primary)
+            ZStack(alignment: .bottomTrailing) {
+                if let shortNo = record.student?.shortStudentNo {
+                    Text(shortNo)
+                        .font(.system(size: compact ? 28 : 36, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(watermarkColor)
                         .lineLimit(1)
-                    Spacer(minLength: 2)
-                    if record.status == "present" {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.white)
-                    }
+                        .padding(.trailing, compact ? 6 : 8)
+                        .padding(.bottom, compact ? 1 : 2)
+                        .allowsHitTesting(false)
                 }
 
-                if !compact, let no = record.student?.studentNo, !no.isEmpty {
-                    Text(no)
-                        .font(.caption2)
-                        .foregroundStyle(record.status == "present" ? .white.opacity(0.85) : .secondary)
+                VStack(alignment: .leading, spacing: compact ? 4 : 6) {
+                    HStack(spacing: 4) {
+                        Text(record.student?.name ?? "学生 #\(record.studentId)")
+                            .font(compact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
+                            .foregroundStyle(record.status == "present" ? .white : .primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 2)
+                        if record.status == "present" {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.white)
+                        }
+                    }
+
+                    if !compact, let no = record.student?.studentNo, !no.isEmpty {
+                        Text(no)
+                            .font(.caption2)
+                            .foregroundStyle(record.status == "present" ? .white.opacity(0.85) : .secondary)
+                            .lineLimit(1)
+                    }
+
+                    Text(statusText)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(record.status == "present" ? .white.opacity(0.95) : tileColor)
                         .lineLimit(1)
                 }
-
-                Text(statusText)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(record.status == "present" ? .white.opacity(0.95) : tileColor)
-                    .lineLimit(1)
+                .padding(compact ? 10 : 12)
+                .frame(maxWidth: .infinity, minHeight: compact ? 58 : 74, alignment: .topLeading)
             }
-            .padding(compact ? 10 : 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 record.status == "present"
                     ? Color.green

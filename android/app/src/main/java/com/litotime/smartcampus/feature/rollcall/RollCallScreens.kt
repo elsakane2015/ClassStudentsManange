@@ -65,6 +65,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.litotime.smartcampus.SmartCampusApp
 import com.litotime.smartcampus.core.database.RollCallDraftEntity
@@ -576,61 +577,63 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                 }
                             }
                         ) {
-                            Column(modifier = Modifier.padding(if (compact) 10.dp else 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)) {
-                                    rec.shortStudentNo?.let { shortNo ->
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = when {
-                                                isPresent -> Color.White.copy(alpha = 0.24f)
-                                                rec.status == "pending" -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                                else -> tileColor.copy(alpha = 0.16f)
-                                            }
-                                        ) {
-                                            Text(
-                                                text = shortNo,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = when {
-                                                    isPresent -> Color.White
-                                                    rec.status == "pending" -> MaterialTheme.colorScheme.primary
-                                                    else -> tileColor
-                                                },
-                                                modifier = Modifier.padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp)
-                                            )
+                            Box(modifier = Modifier.fillMaxWidth().height(if (compact) 62.dp else 78.dp)) {
+                                rec.shortStudentNo?.let { shortNo ->
+                                    Text(
+                                        text = shortNo,
+                                        fontSize = if (compact) 28.sp else 36.sp,
+                                        lineHeight = if (compact) 28.sp else 36.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = when {
+                                            isPresent -> Color.White.copy(alpha = 0.26f)
+                                            rec.status == "on_leave" -> Color(0xFF2563EB).copy(alpha = 0.22f)
+                                            rec.status == "absent" -> Color(0xFFDC2626).copy(alpha = 0.22f)
+                                            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                        },
+                                        maxLines = 1,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(end = if (compact) 6.dp else 8.dp, bottom = if (compact) 1.dp else 2.dp)
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(if (compact) 10.dp else 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            rec.studentName,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (isPresent) Color.White else MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        if (isPresent) {
+                                            Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                                         }
                                     }
-                                    Text(
-                                        rec.studentName,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isPresent) Color.White else MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (isPresent) {
-                                        Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    if (!compact && !rec.studentNo.isNullOrBlank()) {
+                                        Text(
+                                            rec.studentNo,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isPresent) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
                                     }
-                                }
-                                if (!compact && !rec.studentNo.isNullOrBlank()) {
+                                    Spacer(Modifier.weight(1f))
                                     Text(
-                                        rec.studentNo,
+                                        when (rec.status) {
+                                            "present" -> rec.markedAtLocal ?: "已到"
+                                            "on_leave" -> rec.leaveTypeName ?: "请假"
+                                            "absent" -> "缺勤"
+                                            else -> "未点"
+                                        },
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (isPresent) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isPresent) Color.White else tileColor
                                     )
                                 }
-                                Text(
-                                    when (rec.status) {
-                                        "present" -> rec.markedAtLocal ?: "已到"
-                                        "on_leave" -> rec.leaveTypeName ?: "请假"
-                                        "absent" -> "缺勤"
-                                        else -> "未点"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (isPresent) Color.White else tileColor
-                                )
                             }
                         }
                     }
