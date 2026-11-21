@@ -22,10 +22,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -94,6 +96,10 @@ fun EveningStudyHubContent(
     var showDatePicker by remember { mutableStateOf(false) }
     var periodMenuOpen by remember { mutableStateOf(false) }
     var showHistoryModal by remember { mutableStateOf(false) }
+    var deletingSession by remember { mutableStateOf<EveningStudySession?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+
+    fun canDeleteSession(s: EveningStudySession): Boolean = canTake || s.createdBy == user.id
 
     fun loadClasses() {
         if (selectedPeriodId <= 0) return
@@ -128,6 +134,13 @@ fun EveningStudyHubContent(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         error?.let { item { ErrorBanner(message = it, onRetry = { loadClasses() }) } }
+        notice?.let { msg ->
+            item {
+                Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFFDCFCE7), modifier = Modifier.fillMaxWidth()) {
+                    Text(msg, style = MaterialTheme.typography.bodySmall, color = Color(0xFF166534), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
+                }
+            }
+        }
 
         item {
             SCCard {
@@ -226,6 +239,14 @@ fun EveningStudyHubContent(
                         val session = cls.session
                         if (session != null) {
                             StatusBadge(if (session.isCompleted) "已完成" else "点名中", if (session.isCompleted) Color(0xFF16A34A) else Color(0xFFEA580C))
+                            if (canDeleteSession(session)) {
+                                IconButton(
+                                    onClick = { deletingSession = session },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Delete, contentDescription = "删除点名", tint = Color(0xFFDC2626), modifier = Modifier.size(18.dp))
+                                }
+                            }
                         } else {
                             StatusBadge(if (canTake) "开始点名" else "未点名", if (canTake) MaterialTheme.colorScheme.primary else Color(0xFF64748B))
                         }
@@ -259,8 +280,36 @@ fun EveningStudyHubContent(
         ) { DatePicker(state = state) }
     }
 
+    deletingSession?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deletingSession = null },
+            title = { Text("删除夜自习点名？") },
+            text = {
+                Text("确定删除「${target.className ?: "该班级"}」的本场夜自习点名吗？该场产生的学生点名标记记录将一并删除（学生请假记录会保留）。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val sid = target.id
+                    deletingSession = null
+                    scope.launch {
+                        error = null
+                        notice = null
+                        runCatching { repo.deleteEveningSession(sid) }
+                            .onSuccess { res ->
+                                notice = if (res.deletedRecordCount > 0) "已删除本场点名及 ${res.deletedRecordCount} 条学生点名记录" else res.message
+                                loadClasses()
+                            }
+                            .onFailure { error = it.localizedMessage }
+                    }
+                }) { Text("确认删除", color = Color(0xFFDC2626)) }
+            },
+            dismissButton = { TextButton(onClick = { deletingSession = null }) { Text("取消") } }
+        )
+    }
+
     if (showHistoryModal) {
         EveningStudyHistoryModal(
+            currentUserId = user.id,
             isTakeView = forceTakeView,
             statuses = statuses,
             canModify = canTake,
@@ -268,7 +317,8 @@ fun EveningStudyHubContent(
             onSelectSession = { payload ->
                 showHistoryModal = false
                 onOpenSession(payload, statuses, canTake)
-            }
+            },
+            onChanged = { loadClasses() }
         )
     }
 }
@@ -284,16 +334,24 @@ private fun EveningMiniMetric(label: String, value: String, color: Color, modifi
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EveningStudyHistoryModal(
+    currentUserId: Int,
     isTakeView: Boolean,
     statuses: List<EveningStudyStatus>,
     canModify: Boolean,
     onDismiss: () -> Unit,
-    onSelectSession: (EveningStudySessionPayload) -> Unit
+    onSelectSession: (EveningStudySessionPayload) -> Unit,
+    onChanged: () -> Unit
 ) {
     val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
     var history by remember { mutableStateOf<List<EveningStudySession>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var deleting by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var deletingTarget by remember { mutableStateOf<EveningStudySession?>(null) }
+
+    fun canDelete(s: EveningStudySession): Boolean = canModify || s.createdBy == currentUserId
 
     LaunchedEffect(Unit) {
         history = runCatching { repo.fetchEveningHistory(isTakeView) }.getOrDefault(emptyList())
@@ -301,9 +359,14 @@ private fun EveningStudyHistoryModal(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("夜自习历史记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(12.dp))
+            error?.let { ErrorBanner(message = it) }
+            notice?.let { msg ->
+                Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFDCFCE7), modifier = Modifier.fillMaxWidth()) {
+                    Text(msg, style = MaterialTheme.typography.bodySmall, color = Color(0xFF166534), modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
+                }
+            }
             if (loading) {
                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else if (history.isEmpty()) {
@@ -317,20 +380,63 @@ private fun EveningStudyHistoryModal(
                             }
                         }) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${s.className ?: "班级 #${s.classId}"} · ${s.periodName.orEmpty()}", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                                StatusBadge(if (s.isCompleted) "已完成" else "点名中", if (s.isCompleted) Color(0xFF16A34A) else Color(0xFFEA580C))
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("${s.className ?: "班级 #${s.classId}"} · ${s.periodName.orEmpty()}", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                        StatusBadge(if (s.isCompleted) "已完成" else "点名中", if (s.isCompleted) Color(0xFF16A34A) else Color(0xFFEA580C))
+                                    }
+                                    val creatorSuffix = s.creatorName?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+                                    Text(
+                                        "${s.dateDisplay} · 正常 ${s.normalCount} / 异常 ${s.exceptionCount} / 总 ${s.totalStudents}$creatorSuffix",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (canDelete(s)) {
+                                    IconButton(
+                                        enabled = !deleting,
+                                        onClick = { deletingTarget = s }
+                                    ) {
+                                        Icon(Icons.Rounded.Delete, contentDescription = "删除点名", tint = Color(0xFFDC2626))
+                                    }
+                                }
                             }
-                            Text(
-                                "${s.dateDisplay} · 正常 ${s.normalCount} / 异常 ${s.exceptionCount} / 总 ${s.totalStudents}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
         }
+    }
+
+    deletingTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deletingTarget = null },
+            title = { Text("删除夜自习点名？") },
+            text = {
+                Text("确定删除「${target.className ?: "该班级"}」的本场夜自习点名吗？该场产生的学生点名标记记录将一并删除（学生请假记录会保留）。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val sid = target.id
+                    deletingTarget = null
+                    scope.launch {
+                        deleting = true
+                        error = null
+                        notice = null
+                        runCatching { repo.deleteEveningSession(sid) }
+                            .onSuccess { res ->
+                                history = history.filterNot { it.id == sid }
+                                notice = if (res.deletedRecordCount > 0) "已删除本场点名及 ${res.deletedRecordCount} 条学生点名记录" else res.message
+                                onChanged()
+                            }
+                            .onFailure { error = it.localizedMessage }
+                        deleting = false
+                    }
+                }) { Text("确认删除", color = Color(0xFFDC2626)) }
+            },
+            dismissButton = { TextButton(onClick = { deletingTarget = null }) { Text("取消") } }
+        )
     }
 }
 
@@ -351,9 +457,12 @@ fun EveningStudyTakeScreen(
     var notes by remember { mutableStateOf(initialPayload.session.notes.orEmpty()) }
     var searchText by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var banner by remember { mutableStateOf<String?>(null) }
 
+    val currentUserId = SmartCampusApp.container.sessionManager.currentUser.value?.id
+    val canDelete = canModify || (currentUserId != null && session.createdBy == currentUserId)
     val editable = canModify && !session.isCompleted
     val fallbackStatusId = statuses.firstOrNull { it.isDefault }?.id ?: statuses.firstOrNull()?.id ?: 0
 
@@ -367,7 +476,14 @@ fun EveningStudyTakeScreen(
         topBar = {
             TopAppBar(
                 title = { Text(session.className ?: "夜自习巡查") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回") } }
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回") } },
+                actions = {
+                    if (canDelete) {
+                        IconButton(enabled = !saving, onClick = { showDeleteConfirm = true }) {
+                            Icon(Icons.Rounded.Delete, contentDescription = "删除本场点名", tint = Color(0xFFDC2626))
+                        }
+                    }
+                }
             )
         },
         bottomBar = {
@@ -539,5 +655,29 @@ fun EveningStudyTakeScreen(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除本场夜自习点名？") },
+            text = {
+                Text("确定删除「${session.className ?: "该班级"}」的本场夜自习点名吗？该场产生的学生点名标记记录将一并删除（学生请假记录会保留）。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    scope.launch {
+                        saving = true
+                        error = null
+                        runCatching { repo.deleteEveningSession(session.id) }
+                            .onSuccess { onBack() }
+                            .onFailure { error = it.localizedMessage }
+                        saving = false
+                    }
+                }) { Text("确认删除", color = Color(0xFFDC2626)) }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") } }
+        )
     }
 }

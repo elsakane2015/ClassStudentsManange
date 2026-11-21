@@ -62,9 +62,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.litotime.smartcampus.BuildConfig
 import com.litotime.smartcampus.SmartCampusApp
 import com.litotime.smartcampus.core.designsystem.ErrorBanner
 import com.litotime.smartcampus.core.designsystem.SCCard
@@ -310,6 +312,14 @@ fun ProfileScreen(
                 Spacer(Modifier.width(8.dp))
                 Text("退出登录", fontWeight = FontWeight.SemiBold)
             }
+
+            Text(
+                text = "智慧校园 ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp)
+            )
         }
     }
 

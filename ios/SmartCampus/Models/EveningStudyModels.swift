@@ -88,6 +88,7 @@ struct EveningStudySession: Decodable, Identifiable, Hashable {
     let classId: Int
     let departmentId: Int?
     let periodId: Int
+    let createdBy: Int?
     let periodNameSnapshot: String?
     let attendanceDate: String?
     let status: String // in_progress, completed
@@ -107,6 +108,7 @@ struct EveningStudySession: Decodable, Identifiable, Hashable {
         case classId = "class_id"
         case departmentId = "department_id"
         case periodId = "period_id"
+        case createdBy = "created_by"
         case periodNameSnapshot = "period_name_snapshot"
         case attendanceDate = "attendance_date"
         case totalStudents = "total_students"
@@ -120,6 +122,18 @@ struct EveningStudySession: Decodable, Identifiable, Hashable {
 
     var isCompleted: Bool { status == "completed" }
     var dateDisplay: String { String((attendanceDate ?? "").prefix(10)) }
+}
+
+struct EveningStudyDeleteResponse: Decodable {
+    let message: String?
+    let deletedRecordCount: Int?
+    let retainedLeaveCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case message
+        case deletedRecordCount = "deleted_record_count"
+        case retainedLeaveCount = "retained_leave_count"
+    }
 }
 
 struct EveningStudyClassItem: Decodable, Identifiable, Hashable {

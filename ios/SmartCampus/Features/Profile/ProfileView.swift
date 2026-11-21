@@ -178,6 +178,15 @@ struct ProfileView: View {
                             Spacer()
                         }
                     }
+                } footer: {
+                    HStack {
+                        Spacer()
+                        Text("智慧校园 \(appVersionDisplay)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.top, 12)
                 }
             }
             .navigationTitle("我的")
@@ -223,6 +232,12 @@ struct ProfileView: View {
             return "本机已拿 Token（\(envLabel)）"
         }
         return "站内消息模式"
+    }
+
+    private var appVersionDisplay: String {
+        let shortVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let buildVer = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(shortVer)(\(buildVer))"
     }
 
     private func loadDevices() async {

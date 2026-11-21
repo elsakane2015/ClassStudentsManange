@@ -27,8 +27,14 @@ struct EveningStudyContentView: View {
 
     @State private var activeSessionPayload: EveningStudySessionPayload?
     @State private var showHistorySheet = false
+    @State private var deletingSession: EveningStudySession?
+    @State private var deleteNotice: String?
 
     private var canTake: Bool { forceTakeView && user.canTakeEveningStudy }
+
+    private func canDeleteSession(_ session: EveningStudySession) -> Bool {
+        canTake || session.createdBy == user.id || session.creator?.id == user.id
+    }
 
     var body: some View {
         List {
@@ -36,6 +42,17 @@ struct EveningStudyContentView: View {
                 Section {
                     ErrorBannerView(message: errorMessage) {
                         Task { await loadClassesAndSummary() }
+                    }
+                }
+            }
+
+            if let deleteNotice {
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text(deleteNotice)
+                            .font(.subheadline)
                     }
                 }
             }
@@ -140,6 +157,15 @@ struct EveningStudyContentView: View {
                             .padding(.vertical, 4)
                         }
                         .disabled(cls.session == nil && !canTake)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if let session = cls.session, canDeleteSession(session) {
+                                Button(role: .destructive) {
+                                    deletingSession = session
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -154,6 +180,19 @@ struct EveningStudyContentView: View {
         .onChange(of: selectedPeriodId) { _, _ in
             Task { await loadClassesAndSummary() }
         }
+        .alert("删除夜自习点名？", isPresented: Binding(
+            get: { deletingSession != nil },
+            set: { if !$0 { deletingSession = nil } }
+        )) {
+            Button("取消", role: .cancel) {}
+            Button("确认删除", role: .destructive) {
+                if let target = deletingSession {
+                    Task { await deleteClassSession(target) }
+                }
+            }
+        } message: {
+            Text("确定删除「\(deletingSession?.schoolClass?.name ?? "该班级")」的本场夜自习点名吗？该场产生的学生点名标记记录将一并删除（学生请假记录会保留）。")
+        }
         .navigationDestination(item: Binding(
             get: { activeSessionPayload.map { EveningStudyNavPayload(payload: $0) } },
             set: { if $0 == nil { activeSessionPayload = nil; Task { await loadClassesAndSummary() } } }
@@ -161,12 +200,26 @@ struct EveningStudyContentView: View {
             EveningStudyTakeView(
                 initialPayload: nav.payload,
                 statuses: statuses,
-                canModify: canTake
+                canModify: canTake,
+                canDelete: canDeleteSession(nav.payload.session),
+                onDeleted: { msg in
+                    deleteNotice = msg
+                    activeSessionPayload = nil
+                    Task { await loadClassesAndSummary() }
+                }
             )
         }
         .sheet(isPresented: $showHistorySheet) {
             NavigationStack {
-                EveningStudyHistoryView(isTakeView: forceTakeView, statuses: statuses, canModify: canTake)
+                EveningStudyHistoryView(
+                    currentUserId: user.id,
+                    isTakeView: forceTakeView,
+                    statuses: statuses,
+                    canModify: canTake,
+                    onChanged: {
+                        Task { await loadClassesAndSummary() }
+                    }
+                )
             }
         }
         .task {
@@ -229,6 +282,21 @@ struct EveningStudyContentView: View {
             errorMessage = error.localizedDescription
         }
     }
+
+    private func deleteClassSession(_ session: EveningStudySession) async {
+        errorMessage = nil
+        deleteNotice = nil
+        do {
+            let res = try await EveningStudyRepository.deleteSession(sessionId: session.id)
+            let count = res.deletedRecordCount ?? 0
+            deleteNotice = count > 0
+                ? "已删除本场点名及 \(count) 条学生点名记录"
+                : (res.message ?? "点名记录已删除")
+            await loadClassesAndSummary()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 }
 
 private struct EveningStudyNavPayload: Hashable {
@@ -265,14 +333,24 @@ private struct MiniMetric: View {
 }
 
 struct EveningStudyHistoryView: View {
+    let currentUserId: Int
     let isTakeView: Bool
     let statuses: [EveningStudyStatus]
     let canModify: Bool
+    let onChanged: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var sessions: [EveningStudySession] = []
     @State private var isLoading = true
+    @State private var isDeleting = false
+    @State private var errorMessage: String?
+    @State private var successMessage: String?
+    @State private var deletingSession: EveningStudySession?
     @State private var selectedPayload: EveningStudySessionPayload?
+
+    private func canDelete(_ s: EveningStudySession) -> Bool {
+        canModify || s.createdBy == currentUserId || s.creator?.id == currentUserId
+    }
 
     var body: some View {
         Group {
@@ -281,33 +359,88 @@ struct EveningStudyHistoryView: View {
             } else if sessions.isEmpty {
                 ContentUnavailableView("暂无历史记录", systemImage: "moon.zzz")
             } else {
-                List(sessions) { s in
-                    Button {
-                        Task {
-                            if let payload = try? await EveningStudyRepository.fetchSession(id: s.id) {
-                                selectedPayload = payload
-                            }
+                List {
+                    if let errorMessage {
+                        Section {
+                            ErrorBannerView(message: errorMessage)
                         }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(s.schoolClass?.name ?? "班级 #\(s.classId)")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                if let period = s.periodNameSnapshot {
-                                    Text("· \(period)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                StatusBadge(text: s.isCompleted ? "已完成" : "点名中", color: s.isCompleted ? .green : .orange)
-                            }
-                            Text("\(s.dateDisplay) · 正常 \(s.normalCount) / 异常 \(s.exceptionCount) / 总 \(s.totalStudents)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 4)
                     }
+                    if let successMessage {
+                        Section {
+                            HStack(spacing: 8) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text(successMessage)
+                                    .font(.subheadline)
+                            }
+                        }
+                    }
+
+                    Section {
+                        ForEach(sessions) { s in
+                            HStack(spacing: 10) {
+                                Button {
+                                    Task {
+                                        if let payload = try? await EveningStudyRepository.fetchSession(id: s.id) {
+                                            selectedPayload = payload
+                                        }
+                                    }
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            Text(s.schoolClass?.name ?? "班级 #\(s.classId)")
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                            if let period = s.periodNameSnapshot {
+                                                Text("· \(period)")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            StatusBadge(text: s.isCompleted ? "已完成" : "点名中", color: s.isCompleted ? .green : .orange)
+                                        }
+                                        HStack(spacing: 6) {
+                                            Text("\(s.dateDisplay) · 正常 \(s.normalCount) / 异常 \(s.exceptionCount) / 总 \(s.totalStudents)")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            if let creatorName = s.creator?.name, !creatorName.isEmpty {
+                                                Text("· \(creatorName)")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                                .buttonStyle(.plain)
+
+                                if canDelete(s) {
+                                    Button(role: .destructive) {
+                                        deletingSession = s
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.red)
+                                            .padding(8)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .disabled(isDeleting)
+                                }
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if canDelete(s) {
+                                    Button(role: .destructive) {
+                                        deletingSession = s
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .refreshable {
+                    await loadHistory()
                 }
             }
         }
@@ -318,18 +451,71 @@ struct EveningStudyHistoryView: View {
                 Button("关闭") { dismiss() }
             }
         }
+        .alert("删除夜自习点名？", isPresented: Binding(
+            get: { deletingSession != nil },
+            set: { if !$0 { deletingSession = nil } }
+        )) {
+            Button("取消", role: .cancel) {}
+            Button("确认删除", role: .destructive) {
+                if let target = deletingSession {
+                    Task { await deleteTarget(target) }
+                }
+            }
+        } message: {
+            Text("确定删除「\(deletingSession?.schoolClass?.name ?? "该班级")」的本场夜自习点名吗？该场产生的学生点名标记记录将一并删除（学生请假记录会保留）。")
+        }
         .navigationDestination(item: Binding(
             get: { selectedPayload.map { EveningStudyNavPayload(payload: $0) } },
             set: { if $0 == nil { selectedPayload = nil } }
         )) { nav in
-            EveningStudyTakeView(initialPayload: nav.payload, statuses: statuses, canModify: canModify)
+            EveningStudyTakeView(
+                initialPayload: nav.payload,
+                statuses: statuses,
+                canModify: canModify,
+                canDelete: canDelete(nav.payload.session),
+                onDeleted: { msg in
+                    successMessage = msg
+                    selectedPayload = nil
+                    Task {
+                        await loadHistory()
+                        onChanged()
+                    }
+                }
+            )
         }
         .task {
-            isLoading = true
-            defer { isLoading = false }
-            if let page = try? await EveningStudyRepository.fetchHistory(isTakeView: isTakeView) {
-                sessions = page.data
-            }
+            await loadHistory()
+        }
+    }
+
+    private func loadHistory() async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            let page = try await EveningStudyRepository.fetchHistory(isTakeView: isTakeView)
+            sessions = page.data
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteTarget(_ target: EveningStudySession) async {
+        isDeleting = true
+        errorMessage = nil
+        successMessage = nil
+        defer { isDeleting = false }
+
+        do {
+            let res = try await EveningStudyRepository.deleteSession(sessionId: target.id)
+            sessions.removeAll { $0.id == target.id }
+            let count = res.deletedRecordCount ?? 0
+            successMessage = count > 0
+                ? "已删除本场点名及 \(count) 条学生点名记录"
+                : (res.message ?? "点名记录已删除")
+            onChanged()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

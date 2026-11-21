@@ -836,6 +836,8 @@ data class BoardingSuspension(
 data class EveningStudySession(
     val id: Int,
     val classId: Int,
+    val createdBy: Int?,
+    val creatorName: String?,
     val className: String?,
     val periodName: String?,
     val attendanceDate: String,
@@ -850,21 +852,32 @@ data class EveningStudySession(
     val dateDisplay: String get() = attendanceDate.take(10)
 
     companion object {
-        fun fromJson(o: JsonObject) = EveningStudySession(
-            id = o.intVal("id"),
-            classId = o.intVal("class_id"),
-            className = o.objOrNull("school_class")?.str("name"),
-            periodName = o.str("period_name_snapshot"),
-            attendanceDate = o.str("attendance_date").orEmpty(),
-            status = o.str("status").orEmpty(),
-            totalStudents = o.intVal("total_students"),
-            normalCount = o.intVal("normal_count"),
-            exceptionCount = o.intVal("exception_count"),
-            notes = o.str("notes"),
-            statusCounts = o.arrOrEmpty("status_counts").mapNotNull { it.asObjectOrNull()?.let(StatusCountItem::fromJson) }
-        )
+        fun fromJson(o: JsonObject): EveningStudySession {
+            val creator = o.objOrNull("creator")
+            return EveningStudySession(
+                id = o.intVal("id"),
+                classId = o.intVal("class_id"),
+                createdBy = o.intOrNull("created_by") ?: creator?.intOrNull("id"),
+                creatorName = creator?.str("name"),
+                className = o.objOrNull("school_class")?.str("name"),
+                periodName = o.str("period_name_snapshot"),
+                attendanceDate = o.str("attendance_date").orEmpty(),
+                status = o.str("status").orEmpty(),
+                totalStudents = o.intVal("total_students"),
+                normalCount = o.intVal("normal_count"),
+                exceptionCount = o.intVal("exception_count"),
+                notes = o.str("notes"),
+                statusCounts = o.arrOrEmpty("status_counts").mapNotNull { it.asObjectOrNull()?.let(StatusCountItem::fromJson) }
+            )
+        }
     }
 }
+
+data class EveningStudyDeleteResult(
+    val message: String,
+    val deletedRecordCount: Int,
+    val retainedLeaveCount: Int
+)
 
 data class EveningStudyClassItem(
     val id: Int,

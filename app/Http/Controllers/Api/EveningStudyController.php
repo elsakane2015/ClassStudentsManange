@@ -361,7 +361,9 @@ class EveningStudyController extends Controller
 
     public function destroy(Request $request, EveningStudySession $eveningStudySession)
     {
-        $this->authorizeModifyClass($request, $eveningStudySession->schoolClass);
+        if ((int) $eveningStudySession->created_by !== (int) $request->user()->id) {
+            $this->authorizeModifyClass($request, $eveningStudySession->schoolClass);
+        }
 
         $result = DB::transaction(function () use ($eveningStudySession) {
             $records = AttendanceRecord::withoutGlobalScope('day_attendance')

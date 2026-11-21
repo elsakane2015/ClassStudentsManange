@@ -86,8 +86,9 @@ enum EveningStudyRepository {
         )
     }
 
-    static func deleteSession(sessionId: Int) async throws {
-        let _: MessageResponse = try await APIClient.shared.request(
+    @discardableResult
+    static func deleteSession(sessionId: Int) async throws -> EveningStudyDeleteResponse {
+        try await APIClient.shared.request(
             "/evening-study/sessions/\(sessionId)",
             method: "DELETE"
         )

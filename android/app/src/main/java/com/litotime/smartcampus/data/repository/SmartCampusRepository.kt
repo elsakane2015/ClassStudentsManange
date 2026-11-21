@@ -448,6 +448,16 @@ class SmartCampusRepository(private val api: ApiClient) {
         return EveningStudySessionPayload.fromJson(obj)
     }
 
+    suspend fun deleteEveningSession(sessionId: Int): EveningStudyDeleteResult {
+        val obj = api.requestElement("/evening-study/sessions/$sessionId", method = "DELETE")
+            .asObjectOrNull()
+        return EveningStudyDeleteResult(
+            message = obj?.str("message") ?: "点名记录已删除",
+            deletedRecordCount = obj?.intVal("deleted_record_count", 0) ?: 0,
+            retainedLeaveCount = obj?.intVal("retained_leave_count", 0) ?: 0
+        )
+    }
+
     suspend fun fetchEveningHistory(isTakeView: Boolean): List<EveningStudySession> {
         val obj = api.requestElement("/evening-study/history", query = mapOf("take" to if (isTakeView) "1" else "0"))
             .asObjectOrNull()
