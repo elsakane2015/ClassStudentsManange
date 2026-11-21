@@ -14,6 +14,44 @@ const statusColors = {
     'early_leave': 'text-purple-500',
 };
 
+const isNormalPresentSummaryRecord = (record) => {
+    if (!record || record.status !== 'present') return false;
+    if (record.is_self_applied && record.approval_status) return false;
+    const typeText = (record.type || '').trim();
+    if (typeText && !['未知', '正常', '出勤'].includes(typeText)) return false;
+    return true;
+};
+
+const formatSummaryTypeLabel = (record) => {
+    const cleanType = (record.type || '').trim();
+    const cleanOption = (record.option || '').trim();
+    if (!cleanType || cleanType === '未知') {
+        if (cleanOption) return cleanOption;
+        const fallback = {
+            absent: '旷课',
+            late: '迟到',
+            early_leave: '早退',
+            excused: '请假',
+            leave: '请假',
+        }[record.status];
+        return fallback || cleanType || '考勤记录';
+    }
+    return `${cleanType}${cleanOption ? `(${cleanOption})` : ''}`;
+};
+
+const sanitizeCalendarSummaryMap = (data) => {
+    if (!data || typeof data !== 'object') return {};
+    const cleaned = {};
+    Object.entries(data).forEach(([dateKey, list]) => {
+        if (!Array.isArray(list)) return;
+        const filtered = list.filter(r => !isNormalPresentSummaryRecord(r));
+        if (filtered.length > 0) {
+            cleaned[dateKey] = filtered;
+        }
+    });
+    return cleaned;
+};
+
 // Detail Modal Component
 function CalendarDetailModal({ isOpen, onClose, date, records, loading }) {
     if (!isOpen) return null;
@@ -55,7 +93,7 @@ function CalendarDetailModal({ isOpen, onClose, date, records, loading }) {
                                         }
                                     }
 
-                                    const typeLabel = `${record.type}${record.option ? `(${record.option})` : ''}`;
+                                    const typeLabel = formatSummaryTypeLabel(record);
 
                                     return (
                                         <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded text-sm">
@@ -119,7 +157,7 @@ export default function AttendanceCalendar({ user }) {
         try {
             const month = format(currentDate, 'yyyy-MM');
             const res = await axios.get('/attendance/calendar-summary', { params: { month } });
-            setAttendanceData(res.data || {});
+            setAttendanceData(sanitizeCalendarSummaryMap(res.data));
         } catch (error) {
             console.error('Failed to fetch calendar data:', error);
             setAttendanceData({});
@@ -190,7 +228,7 @@ export default function AttendanceCalendar({ user }) {
             const month = format(day, 'yyyy-MM');
             const dateKey = format(day, 'yyyy-MM-dd');
             const res = await axios.get('/attendance/calendar-summary', { params: { month } });
-            const latestData = res.data || {};
+            const latestData = sanitizeCalendarSummaryMap(res.data);
             setAttendanceData(latestData);
             setDetailRecords(latestData[dateKey] || []);
         } catch (error) {
@@ -259,7 +297,7 @@ export default function AttendanceCalendar({ user }) {
                         }
                     }
 
-                    const typeLabel = `${record.type}${record.option ? `(${record.option})` : ''}`;
+                    const typeLabel = formatSummaryTypeLabel(record);
                     const displayText = `${statusPrefix}${typeLabel}: ${record.student_no ? record.student_no.slice(-2) + ' ' : ''}${record.student_name}`;
 
                     return (

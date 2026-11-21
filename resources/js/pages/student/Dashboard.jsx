@@ -293,8 +293,8 @@ export default function StudentDashboard() {
             // Including self-applied leaves with approval_status
             if (attendance && Array.isArray(attendance)) {
                 attendance.forEach(record => {
-                    // Skip present status
-                    if (record.status === 'present') return;
+                    // Skip pure present records (keep pending/processed self-applied evening study leaves)
+                    if (record.status === 'present' && !(record.is_self_applied && record.approval_status)) return;
 
                     // Use leave_type from backend if available, otherwise use status-based mapping
                     let title = '';

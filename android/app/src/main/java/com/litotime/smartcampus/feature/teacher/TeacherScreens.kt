@@ -191,7 +191,10 @@ fun TeacherDashboardScreen(
             }
             val merged = mutableMapOf<String, List<CalendarSummaryRecord>>()
             months.forEach { m ->
-                runCatching { repo.fetchCalendarSummary(m) }.getOrNull()?.let { merged.putAll(it) }
+                runCatching { repo.fetchCalendarSummary(m) }.getOrNull()?.forEach { (k, v) ->
+                    val filtered = v.filterNot { it.isNormalPresentRecord }
+                    if (filtered.isNotEmpty()) merged[k] = filtered
+                }
             }
             calendarSummary = merged
             loadingCalendar = false

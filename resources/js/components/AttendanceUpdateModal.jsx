@@ -110,9 +110,16 @@ const formatPeriodNames = (periodIds, periods, timeSlots = []) => {
     return `(${result.join('、')})`;
 };
 
-const isDisplayableAttendanceRecord = record => (
-    record.status !== 'present' || record.scene === 'evening_study'
-);
+const isDisplayableAttendanceRecord = record => {
+    if (record.status !== 'present') return true;
+    if (record.scene === 'evening_study') {
+        return Boolean(
+            record.leave_type_id
+            || (record.is_self_applied && ['pending', 'approved', 'rejected'].includes(record.approval_status))
+        );
+    }
+    return false;
+};
 
 const getAttendanceRecordDisplayLabel = (record, details = {}) => {
     if (record.scene === 'evening_study') {

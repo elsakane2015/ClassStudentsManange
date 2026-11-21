@@ -943,6 +943,53 @@ class EveningStudyAttendanceTest extends TestCase
             ->assertJsonCount(2, 'records');
     }
 
+    public function test_calendar_summary_excludes_normal_evening_study_records_and_formats_status_labels(): void
+    {
+        $data = $this->schoolData('calendar-normal-filter');
+        $teacher = $this->user('teacher.calendar.filter@example.com', 'teacher');
+        $data['class']->update(['teacher_id' => $teacher->id]);
+        $dutyTeacher = $this->user('duty.calendar.filter@example.com', 'duty_teacher');
+        $dutyTeacher->dutyDepartments()->attach($data['department']->id);
+        $normalStudent = $this->student($data, 'cal-normal', true);
+        $libraryStudent = $this->student($data, 'cal-library', true);
+        $libraryStatus = EveningStudyStatus::create([
+            'school_id' => $data['school']->id,
+            'name' => '在图书馆',
+            'color' => 'cyan',
+            'base_status' => 'excused',
+            'is_active' => true,
+            'sort_order' => 2,
+        ]);
+
+        Sanctum::actingAs($dutyTeacher);
+        $started = $this->postJson('/api/evening-study/sessions', [
+            'date' => '2026-07-24',
+            'period_id' => 10,
+            'class_id' => $data['class']->id,
+        ])->assertOk();
+        $records = collect($started->json('records'));
+        $libraryRecord = $records->firstWhere('student_id', $libraryStudent->id);
+
+        $this->postJson('/api/evening-study/sessions/'.$started->json('session.id').'/complete', [
+            'records' => [
+                [
+                    'id' => $libraryRecord['id'],
+                    'status_id' => $libraryStatus->id,
+                    'destination' => '校图书馆',
+                ],
+            ],
+        ])->assertOk();
+
+        Sanctum::actingAs($teacher);
+        $calendar = $this->getJson('/api/attendance/calendar-summary?month=2026-07')->assertOk();
+        $events = collect($calendar->json('2026-07-24'));
+        $this->assertCount(1, $events);
+        $this->assertSame($libraryStudent->user->name, $events->first()['student_name']);
+        $this->assertSame('在图书馆', $events->first()['type']);
+        $this->assertSame('夜自习', $events->first()['option']);
+        $this->assertFalse($events->contains(fn ($e) => $e['student_name'] === $normalStudent->user->name));
+    }
+
     private function schoolData(string $suffix): array
     {
         $school = School::create(['name' => "测试学校-$suffix"]);

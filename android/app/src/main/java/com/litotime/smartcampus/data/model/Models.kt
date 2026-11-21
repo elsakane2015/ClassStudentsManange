@@ -290,8 +290,34 @@ data class CalendarSummaryRecord(
             else -> ""
         }
 
+    /** 是否为正常出勤/夜自习正常点名记录（不应计入异常汇总，兼容旧版后端返回） */
+    val isNormalPresentRecord: Boolean
+        get() {
+            if (status != "present") return false
+            if (isSelfApplied && !approvalStatus.isNullOrBlank()) return false
+            val cleanType = type.trim()
+            if (cleanType.isNotEmpty() && cleanType !in setOf("未知", "正常", "出勤")) {
+                return false
+            }
+            return true
+        }
+
     val typeWithOption: String
-        get() = if (!option.isNullOrBlank()) "$type($option)" else type
+        get() {
+            val cleanType = type.trim()
+            val cleanOpt = option?.trim().orEmpty()
+            if (cleanType.isEmpty() || cleanType == "未知") {
+                if (cleanOpt.isNotEmpty()) return cleanOpt
+                return when (status) {
+                    "absent" -> "旷课"
+                    "late" -> "迟到"
+                    "early_leave" -> "早退"
+                    "excused", "leave" -> "请假"
+                    else -> cleanType.ifEmpty { "考勤记录" }
+                }
+            }
+            return if (cleanOpt.isNotEmpty()) "$cleanType($cleanOpt)" else cleanType
+        }
 
     val studentShortLabel: String
         get() = if (!studentNo.isNullOrBlank() && studentNo.length >= 2) {
@@ -329,9 +355,19 @@ data class AttendanceRecord(
     val eveningStudyLabel: String?,
     val recordTime: String?,
     val periodIdsInDetails: List<Int>,
-    val detailText: String
+    val detailText: String,
+    val isSelfApplied: Boolean = false,
+    val leaveTypeId: Int? = null
 ) {
     val dateKey: String get() = date?.take(10).orEmpty()
+
+    val isNormalPresentRecord: Boolean
+        get() {
+            if (status != "present") return false
+            if (isSelfApplied && !approvalStatus.isNullOrBlank()) return false
+            if (leaveTypeId != null || !leaveTypeName.isNullOrBlank()) return false
+            return true
+        }
 
     val titleText: String
         get() = when {
@@ -379,7 +415,9 @@ data class AttendanceRecord(
                 eveningStudyLabel = o.str("evening_study_label"),
                 recordTime = o.str("record_time"),
                 periodIdsInDetails = details?.intList("period_ids").orEmpty(),
-                detailText = detailCandidate
+                detailText = detailCandidate,
+                isSelfApplied = o.boolVal("is_self_applied"),
+                leaveTypeId = o.intOrNull("leave_type_id")
             )
         }
     }

@@ -615,7 +615,10 @@ struct TeacherDashboardView: View {
         for m in monthsToFetch {
             if let dict = try? await AttendanceRepository.fetchCalendarSummary(month: m) {
                 for (k, v) in dict {
-                    merged[k] = v
+                    let filtered = v.filter { !$0.isNormalPresentRecord }
+                    if !filtered.isEmpty {
+                        merged[k] = filtered
+                    }
                 }
             }
         }

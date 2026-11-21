@@ -141,7 +141,7 @@ fun StudentDashboardScreen(
             val start = displayedMonth.atDay(1).format(SCDateFormatter.yyyyMMdd)
             val end = displayedMonth.atEndOfMonth().format(SCDateFormatter.yyyyMMdd)
             runCatching { repo.fetchStudentCalendar(start, end) }
-                .onSuccess { monthRecords = it }
+                .onSuccess { list -> monthRecords = list.filterNot { it.isNormalPresentRecord } }
         }
     }
 
@@ -156,7 +156,9 @@ fun StudentDashboardScreen(
                 stats = repo.fetchStudentStats(selectedScope)
                 val start = displayedMonth.atDay(1).format(SCDateFormatter.yyyyMMdd)
                 val end = displayedMonth.atEndOfMonth().format(SCDateFormatter.yyyyMMdd)
-                monthRecords = runCatching { repo.fetchStudentCalendar(start, end) }.getOrDefault(emptyList())
+                monthRecords = runCatching { repo.fetchStudentCalendar(start, end) }
+                    .getOrDefault(emptyList())
+                    .filterNot { it.isNormalPresentRecord }
             }.onFailure { error = it.localizedMessage ?: "加载失败" }
             loading = false
         }

@@ -175,11 +175,38 @@ struct CalendarSummaryRecord: Decodable, Identifiable, Hashable {
         }
     }
 
-    var typeWithOption: String {
-        if let opt = option?.trimmingCharacters(in: .whitespacesAndNewlines), !opt.isEmpty {
-            return "\(type)(\(opt))"
+    /// 是否为正常出勤/夜自习正常点名记录（不应计入异常汇总，兼容旧版后端返回）
+    var isNormalPresentRecord: Bool {
+        guard status == "present" else { return false }
+        if isSelfApplied?.value == true, let ap = approvalStatus, !ap.isEmpty {
+            return false
         }
-        return type
+        let cleanType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanType.isEmpty && !["未知", "正常", "出勤"].contains(cleanType) {
+            return false
+        }
+        return true
+    }
+
+    var typeWithOption: String {
+        let cleanType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanOpt = option?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if cleanType.isEmpty || cleanType == "未知" {
+            if !cleanOpt.isEmpty {
+                return cleanOpt
+            }
+            switch status {
+            case "absent": return "旷课"
+            case "late": return "迟到"
+            case "early_leave": return "早退"
+            case "excused", "leave": return "请假"
+            default: return cleanType.isEmpty ? "考勤记录" : cleanType
+            }
+        }
+        if !cleanOpt.isEmpty {
+            return "\(cleanType)(\(cleanOpt))"
+        }
+        return cleanType
     }
 
     var studentShortLabel: String {
@@ -321,6 +348,18 @@ struct AttendanceRecord: Decodable, Identifiable, Hashable {
 
     var badgeColorKey: String {
         leaveType?.color ?? eveningStudyStatus?.color ?? status
+    }
+
+    /// 是否为纯正常出勤/夜自习正常点名记录（学生日历仅展示请假与异常记录）
+    var isNormalPresentRecord: Bool {
+        guard status == "present" else { return false }
+        if isSelfApplied?.value == true, let ap = approvalStatus, !ap.isEmpty {
+            return false
+        }
+        if leaveTypeId != nil || leaveType != nil {
+            return false
+        }
+        return true
     }
 }
 

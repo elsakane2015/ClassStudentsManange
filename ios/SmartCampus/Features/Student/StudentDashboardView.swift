@@ -327,7 +327,7 @@ struct StudentDashboardView: View {
         let start = SCDateFormatter.yyyyMMdd.string(from: firstDay)
         let end = SCDateFormatter.yyyyMMdd.string(from: lastDay)
         if let res = try? await AttendanceRepository.fetchStudentCalendar(start: start, end: end) {
-            monthRecords = res.attendance
+            monthRecords = res.attendance.filter { !$0.isNormalPresentRecord }
         }
     }
 }

@@ -899,6 +899,128 @@ class AttendanceController extends Controller
     }
 
     /**
+     * 判断考勤记录是否属于应在日历异常汇总/学生日历中展示的记录：
+     * 1. 所有非出勤状态（请假/旷课/迟到/早退）均展示；
+     * 2. 夜自习场景下，正常点名记录（status=present 且无请假类型、非自主请假）不应作为异常展示，
+     *    仅保留带请假类型的夜自习标记，或学生自主提交的待审/已审/驳回夜自习申请。
+     */
+    public static function shouldIncludeInCalendarSummary(AttendanceRecord $record): bool
+    {
+        if (in_array($record->status, ['leave', 'excused', 'absent', 'late', 'early_leave'], true)) {
+            return true;
+        }
+
+        if ($record->scene === 'evening_study') {
+            if (!empty($record->leave_type_id)) {
+                return true;
+            }
+
+            if ($record->is_self_applied && in_array($record->approval_status, ['pending', 'approved', 'rejected'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 为查询追加与 shouldIncludeInCalendarSummary 一致的 SQL 过滤条件。
+     */
+    private static function applyCalendarAnomalyFilter($query): void
+    {
+        $query->where(function ($subQuery) {
+            $subQuery->whereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave'])
+                ->orWhere(function ($eveningQuery) {
+                    $eveningQuery->where('scene', 'evening_study')
+                        ->where(function ($eveningSub) {
+                            $eveningSub->whereNotNull('leave_type_id')
+                                ->orWhere(function ($selfApplied) {
+                                    $selfApplied->where('is_self_applied', true)
+                                        ->whereIn('approval_status', ['pending', 'approved', 'rejected']);
+                                });
+                        });
+                });
+        });
+    }
+
+    /**
+     * 解析日历汇总中展示的类型标题与夜自习选项文案，避免无请假类型的夜自习状态落回“未知”。
+     *
+     * @param  AttendanceRecord  $record
+     * @param  \Illuminate\Support\Collection|array  $leaveTypes
+     * @return array{type: string, option: ?string}
+     */
+    public static function resolveCalendarSummaryLabels(AttendanceRecord $record, $leaveTypes = []): array
+    {
+        $leaveType = $record->relationLoaded('leaveType')
+            ? $record->getRelation('leaveType')
+            : ($record->leave_type_id ? $record->leaveType : null);
+        $leaveTypeName = $leaveType?->name;
+        if (!$leaveTypeName && $record->leave_type_id && isset($leaveTypes[$record->leave_type_id])) {
+            $leaveTypeName = $leaveTypes[$record->leave_type_id]->name;
+        }
+
+        if ($record->scene === 'evening_study') {
+            $periodName = $record->period_name_snapshot ?: '夜自习';
+            $requestedEveningStatus = $record->relationLoaded('requestedEveningStatus')
+                ? $record->getRelation('requestedEveningStatus')
+                : ($record->requested_evening_status_id ? $record->requestedEveningStatus : null);
+            $eveningStudyStatus = $record->relationLoaded('eveningStudyStatus')
+                ? $record->getRelation('eveningStudyStatus')
+                : ($record->evening_study_status_id ? $record->eveningStudyStatus : null);
+            $displayStatus = $record->is_self_applied
+                ? ($requestedEveningStatus ?? $eveningStudyStatus)
+                : ($eveningStudyStatus ?? $requestedEveningStatus);
+            $statusName = trim((string) ($displayStatus?->name
+                ?? ($record->is_self_applied
+                    ? ($record->requested_status_name_snapshot ?: $record->status_name_snapshot)
+                    : ($record->status_name_snapshot ?: $record->requested_status_name_snapshot))
+                ?? ''));
+
+            if ($leaveTypeName) {
+                return [
+                    'type' => $leaveTypeName,
+                    'option' => $periodName . '·' . ($statusName !== '' ? $statusName : '已标记'),
+                ];
+            }
+
+            if ($statusName !== '') {
+                return [
+                    'type' => $statusName,
+                    'option' => $periodName,
+                ];
+            }
+
+            $fallbackType = match ($record->status) {
+                'late' => '迟到',
+                'early_leave' => '早退',
+                'absent' => '旷课',
+                'excused', 'leave' => '请假',
+                default => $periodName,
+            };
+
+            return [
+                'type' => $fallbackType,
+                'option' => $fallbackType === $periodName ? '' : $periodName,
+            ];
+        }
+
+        $typeLabel = match (true) {
+            $record->status === 'late' => '迟到',
+            $record->status === 'early_leave' => '早退',
+            $record->status === 'absent' => '旷课',
+            (bool) $leaveTypeName => $leaveTypeName,
+            in_array($record->status, ['excused', 'leave'], true) => '请假',
+            default => '未知',
+        };
+
+        return [
+            'type' => $typeLabel,
+            'option' => null,
+        ];
+    }
+
+    /**
      * Get calendar summary for teacher dashboard
      * Returns attendance records grouped by date for calendar display
      */
@@ -959,10 +1081,7 @@ class AttendanceController extends Controller
                             ]);
                     });
             })
-            ->where(function ($query) {
-                $query->where('scene', 'evening_study')
-                    ->orWhereIn('status', ['leave', 'excused', 'absent', 'late', 'early_leave']);
-            })
+            ->tap(fn ($query) => self::applyCalendarAnomalyFilter($query))
             ->with([
                 'student.user',
                 'leaveType',
@@ -970,7 +1089,9 @@ class AttendanceController extends Controller
                 'eveningStudyStatus:id,name',
             ])
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->get()
+            ->filter(fn ($record) => self::shouldIncludeInCalendarSummary($record))
+            ->values();
         
         // Group by date and format for calendar display
         $result = [];
@@ -998,22 +1119,10 @@ class AttendanceController extends Controller
                 $result[$dateKey] = [];
             }
             
-            // Get type label
-            $typeLabel = '未知';
-            if ($record->scene === 'evening_study' && $record->leaveType) {
-                $typeLabel = $record->leaveType->name;
-            } elseif ($record->status === 'late') {
-                $typeLabel = '迟到';
-            } elseif ($record->status === 'early_leave') {
-                $typeLabel = '早退';
-            } elseif ($record->status === 'absent') {
-                $typeLabel = '旷课';
-            } elseif ($record->leaveType) {
-                $typeLabel = $record->leaveType->name;
-            } elseif ($record->leave_type_id && isset($leaveTypes[$record->leave_type_id])) {
-                $typeLabel = $leaveTypes[$record->leave_type_id]->name;
-            }
-            
+            // Get type & evening option label
+            $resolvedLabels = self::resolveCalendarSummaryLabels($record, $leaveTypes);
+            $typeLabel = $resolvedLabels['type'];
+
             // Get time option label
             $optionLabel = '';
             $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
@@ -1024,16 +1133,7 @@ class AttendanceController extends Controller
             
             // 优先使用自定义的显示标签（用户自定义选择节次时生成）
             if ($record->scene === 'evening_study') {
-                $periodName = $record->period_name_snapshot ?: '夜自习';
-                $displayStatus = $record->is_self_applied
-                    ? ($record->requestedEveningStatus ?? $record->eveningStudyStatus)
-                    : ($record->eveningStudyStatus ?? $record->requestedEveningStatus);
-                $statusName = $displayStatus?->name
-                    ?? ($record->is_self_applied
-                        ? ($record->requested_status_name_snapshot ?: $record->status_name_snapshot)
-                        : ($record->status_name_snapshot ?: $record->requested_status_name_snapshot))
-                    ?? '已标记';
-                $optionLabel = $periodName . '·' . $statusName;
+                $optionLabel = $resolvedLabels['option'] ?? '';
             } elseif ($isBatchPeriodRecord) {
                 $optionLabel = $periodMap->get((int) $record->period_id)['name'] ?? "第{$record->period_id}节";
             } elseif (isset($details['display_label'])) {
@@ -1097,8 +1197,8 @@ class AttendanceController extends Controller
             }
             
             // 创建合并键
-            // 对于有 period_id 但没有 time_slot_id 的记录，使用特殊键来收集所有节次
-            if ($isBatchPeriodRecord || ($record->period_id && !$timeSlotId && !isset($details['option_label']))) {
+            // 对于常规课中有 period_id 但没有 time_slot_id 的记录，使用特殊键来收集所有节次
+            if ($record->scene !== 'evening_study' && ($isBatchPeriodRecord || ($record->period_id && !$timeSlotId && !isset($details['option_label'])))) {
                 // 单独节次记录，需要合并
                 $batchKey = $isBatchPeriodRecord ? '_batch_' . $record->leave_batch_id : '';
                 $mergeKey = $record->student_id . '_individual_periods_' . $record->scene . $batchKey . '_' . $record->leave_type_id . '_' . $record->status . '_' . $record->approval_status;
@@ -1124,8 +1224,10 @@ class AttendanceController extends Controller
                     $result[$dateKey][$mergeKey]['_period_names'][] = $optionLabel;
                 }
             } else {
-                // 普通记录或已有 option_label 的记录
-                $mergeKey = $record->student_id . '_' . $record->scene . '_' . ($timeSlotId ?? $details['option_label'] ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
+                // 普通记录、夜自习记录或已有 option_label 的记录
+                $mergeKey = $record->scene === 'evening_study'
+                    ? $record->student_id . '_evening_' . ($record->period_id ?? 'no_p') . '_' . ($record->leave_type_id ?? 'no_lt') . '_' . ($record->evening_study_status_id ?? $record->requested_evening_status_id ?? 'no_es') . '_' . ($record->approval_status ?? 'none')
+                    : $record->student_id . '_' . $record->scene . '_' . ($timeSlotId ?? $details['option_label'] ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
                 
                 $result[$dateKey][$mergeKey] = [
                     'id' => $record->id,
@@ -1197,14 +1299,17 @@ class AttendanceController extends Controller
             $periodMap = collect($attendancePeriodsJson ? json_decode($attendancePeriodsJson, true) : [])
                 ->keyBy(fn ($period) => (int) ($period['id'] ?? 0));
 
-            // 学生日历需要同时读取日常考勤和不计入日常统计的夜自习记录。
+            // 学生日历需要同时读取日常考勤和不计入日常统计的夜自习异常/请假记录，排除纯正常点名记录。
             $attendance = AttendanceRecord::withoutGlobalScope('day_attendance')
                 ->where('student_id', $user->student->id)
                 ->whereBetween('date', [$start, $end])
+                ->tap(fn ($query) => self::applyCalendarAnomalyFilter($query))
                 ->with(['leaveType', 'requestedEveningStatus:id,name', 'eveningStudyStatus:id,name'])
                 ->orderBy('date')
                 ->orderBy('period_id')
                 ->get()
+                ->filter(fn ($record) => self::shouldIncludeInCalendarSummary($record))
+                ->values()
                 ->map(function($record) {
                     // Add detail_label for display
                     $detailLabel = '';
