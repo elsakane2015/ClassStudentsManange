@@ -14,6 +14,7 @@ class MobileDevice extends Model
         'user_id',
         'platform',
         'push_provider',
+        'push_environment',
         'device_identifier',
         'push_token',
         'device_name',

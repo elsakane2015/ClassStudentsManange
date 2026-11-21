@@ -1,0 +1,35 @@
+# 智慧校园 APNs 推送中转服务（Dokploy Raw Compose 专用配置）
+# 1. 请先在宿主机构建镜像（如 smartcampus-push-relay:20261121-v1）
+# 2. 在 Dokploy Environment 中配置必填环境变量
+# 3. 在 Dokploy Domains 中绑定域名 -> Service: relay -> Port: 8092 -> 开启 HTTPS (Let's Encrypt)
+services:
+  relay:
+    image: ${SMARTCAMPUS_RELAY_IMAGE:?exact prebuilt relay image required}
+    restart: unless-stopped
+    user: "10001:10001"
+    expose:
+      - "8092"
+    environment:
+      RELAY_LISTEN: "0.0.0.0:8092"
+      APNS_TEAM_ID: ${APNS_TEAM_ID:?Apple team ID required}
+      APNS_KEY_ID: ${APNS_KEY_ID:?Apple key ID required}
+      APNS_KEY_FILE: /run/secrets/apns-key.p8
+      APNS_ALLOWED_BUNDLE_IDS: ${APNS_ALLOWED_BUNDLE_IDS:?exact app bundle ID required}
+      RELAY_AUTH_TOKEN: ${RELAY_AUTH_TOKEN:?relay bearer token required}
+    volumes:
+      - type: bind
+        source: ${APNS_KEY_PATH:?persistent APNs p8 file path required}
+        target: /run/secrets/apns-key.p8
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8092/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

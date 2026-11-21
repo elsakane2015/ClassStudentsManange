@@ -8,6 +8,7 @@ struct ProfileView: View {
     @State private var showChangePassword = false
     @State private var showServerSwitch = false
     @State private var showLogoutAlert = false
+    @State private var copiedTokenNotice = false
     @State private var devices: [MobileDeviceItem] = []
 
     var body: some View {
@@ -78,7 +79,31 @@ struct ProfileView: View {
                         Spacer()
                         Text(pushGatewayStatusText)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(pushManager.apnsDeviceToken != nil ? .green : .secondary)
+                    }
+
+                    if let token = pushManager.apnsDeviceToken {
+                        Button {
+                            UIPasteboard.general.string = token
+                            copiedTokenNotice = true
+                            Task {
+                                try? await Task.sleep(for: .seconds(2))
+                                copiedTokenNotice = false
+                            }
+                        } label: {
+                            HStack {
+                                Label(copiedTokenNotice ? "已复制 APNs Token" : "复制本机 APNs Token", systemImage: copiedTokenNotice ? "checkmark.circle.fill" : "doc.on.doc")
+                                    .foregroundStyle(copiedTokenNotice ? .green : SCTheme.primary)
+                                Spacer()
+                                Text("\(String(token.prefix(8)))...\(String(token.suffix(6)))")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else if let regErr = pushManager.lastRegistrationError {
+                        Text("APNs 注册提示：\(regErr)")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
                     }
 
                     Button {
@@ -190,11 +215,12 @@ struct ProfileView: View {
     }
 
     private var pushGatewayStatusText: String {
+        let envLabel = pushManager.apnsEnvironment == "development" ? "开发" : "生产"
         if pushManager.pushGatewayConfiguredOnServer && pushManager.apnsDeviceToken != nil {
-            return "锁屏推送已就绪"
+            return "锁屏推送已就绪（\(envLabel)）"
         }
         if pushManager.apnsDeviceToken != nil {
-            return "设备已就绪（待服务端配证书）"
+            return "本机已拿 Token（\(envLabel)）"
         }
         return "站内消息模式"
     }

@@ -39,6 +39,7 @@ docker-compose*.yml
 README.md
 *.md
 
-# 移动端原生 App 目录（独立构建，不打入 Web/API 容器）
+# 移动端原生 App 与推送中转目录（独立构建，不打入 Web/API 容器）
 android
 ios
+push-relay

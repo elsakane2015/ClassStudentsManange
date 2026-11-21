@@ -257,12 +257,24 @@ class MobilePushService
     }
 
     /**
-     * Native Apple Push Notification service (APNs) HTTP/2 JWT (.p8) implementation.
+     * Native Apple Push Notification service (APNs):
+     * Supports centralized HTTPS APNs Relay (recommended for multi-school deployments)
+     * as well as direct HTTP/2 JWT (.p8) delivery.
      */
     protected function sendViaApns(MobileDevice $device, AppNotification $notification, int $badge): array
     {
         $cfg = config('mobile_push.apns', []);
-        if (empty($cfg['enabled']) || empty($cfg['key_id']) || empty($cfg['team_id']) || empty($cfg['private_key_path'])) {
+        if (empty($cfg['enabled'])) {
+            return ['status' => 'skipped_no_credentials'];
+        }
+
+        $environment = $this->resolveApnsEnvironment($device, $cfg);
+
+        if (!empty($cfg['relay_url']) && !empty($cfg['relay_token'])) {
+            return $this->sendViaApnsRelay($device, $notification, $badge, $cfg, $environment);
+        }
+
+        if (empty($cfg['key_id']) || empty($cfg['team_id']) || empty($cfg['private_key_path'])) {
             return ['status' => 'skipped_no_credentials'];
         }
 
@@ -276,7 +288,7 @@ class MobilePushService
             return ['status' => 'failed', 'error' => 'Unable to sign APNs JWT'];
         }
 
-        $host = !empty($cfg['sandbox'])
+        $host = $environment === 'development'
             ? 'https://api.sandbox.push.apple.com'
             : 'https://api.push.apple.com';
         $url = "{$host}/3/device/{$device->push_token}";
@@ -304,7 +316,7 @@ class MobilePushService
             CURLOPT_TIMEOUT => 10,
             CURLOPT_HTTPHEADER => [
                 "authorization: bearer {$jwt}",
-                'apns-topic: ' . ($cfg['bundle_id'] ?? 'com.smartcampus.ios'),
+                'apns-topic: ' . ($cfg['bundle_id'] ?? 'com.litotime.smartcampus'),
                 'apns-push-type: alert',
                 'apns-priority: 10',
                 'content-type: application/json',
@@ -329,6 +341,75 @@ class MobilePushService
         }
 
         return ['status' => 'failed', 'error' => $reason];
+    }
+
+    /**
+     * Resolve per-device APNs environment ('development' or 'production'),
+     * falling back to server-level APNS_SANDBOX config when device did not report one.
+     */
+    protected function resolveApnsEnvironment(MobileDevice $device, array $cfg): string
+    {
+        $reported = strtolower(trim((string) ($device->push_environment ?? '')));
+        if (in_array($reported, ['development', 'production'], true)) {
+            return $reported;
+        }
+
+        return !empty($cfg['sandbox']) ? 'development' : 'production';
+    }
+
+    /**
+     * Deliver iOS push through the centralized SmartCampus APNs Relay service.
+     */
+    protected function sendViaApnsRelay(
+        MobileDevice $device,
+        AppNotification $notification,
+        int $badge,
+        array $cfg,
+        string $environment
+    ): array {
+        $baseUrl = rtrim((string) $cfg['relay_url'], '/');
+        $endpoint = str_ends_with($baseUrl, '/v1/apns/send')
+            ? $baseUrl
+            : "{$baseUrl}/v1/apns/send";
+
+        try {
+            $response = Http::timeout(12)
+                ->acceptJson()
+                ->withToken((string) $cfg['relay_token'])
+                ->post($endpoint, [
+                    'device_token' => $device->push_token,
+                    'bundle_id' => $cfg['bundle_id'] ?? 'com.litotime.smartcampus',
+                    'environment' => $environment,
+                    'title' => $notification->title,
+                    'body' => $notification->body,
+                    'badge' => $badge,
+                    'sound' => 'default',
+                    'data' => array_merge(
+                        is_array($notification->data) ? $notification->data : [],
+                        [
+                            'notification_id' => $notification->id,
+                            'type' => $notification->type,
+                        ]
+                    ),
+                ]);
+        } catch (\Throwable $e) {
+            return ['status' => 'failed', 'error' => $e->getMessage()];
+        }
+
+        $json = $response->json();
+        if ($response->successful() && (!is_array($json) || ($json['ok'] ?? true) === true)) {
+            return ['status' => 'sent'];
+        }
+
+        if (is_array($json) && !empty($json['invalid_token'])) {
+            $device->update(['push_token' => null]);
+        }
+
+        $reason = is_array($json)
+            ? ($json['reason'] ?? "HTTP {$response->status()}")
+            : "HTTP {$response->status()}";
+
+        return ['status' => 'failed', 'error' => (string) $reason];
     }
 
     /**

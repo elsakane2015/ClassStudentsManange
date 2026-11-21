@@ -64,6 +64,7 @@ rsync -a --quiet \
     --exclude='build-release.sh' \
     --exclude='android' \
     --exclude='ios' \
+    --exclude='push-relay' \
     ./ "${TEMP_DIR}/"
 
 # 确保必要的空目录存在

@@ -11,7 +11,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "3"
+    CURRENT_PROJECT_VERSION: "4"
     TARGETED_DEVICE_FAMILY: "1,2"
     DEVELOPMENT_LANGUAGE: zh-Hans
     INFOPLIST_KEY_CFBundleDisplayName: "智慧校园"
@@ -52,8 +52,10 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-    # 注：如需开启系统级 APNs 锁屏推送，在 Xcode 的 Signing & Capabilities 中点击 "+ Capability" 添加 Push Notifications 即可自动生成显式 Profile
-    # （当前默认采用通配符 Team Profile，可立即无线安装到已登记设备，App 内通知中心与全部推送注册代码均已就绪）
+    entitlements:
+      path: SmartCampus/Resources/SmartCampus.entitlements
+      properties:
+        aps-environment: development
     settings:
       base:
         DEVELOPMENT_TEAM: HCDD4TQBT8

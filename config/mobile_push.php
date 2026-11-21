@@ -5,9 +5,11 @@ return [
 
     'apns' => [
         'enabled' => env('APNS_ENABLED', false),
+        'relay_url' => env('APNS_RELAY_URL'),
+        'relay_token' => env('APNS_RELAY_TOKEN'),
         'key_id' => env('APNS_KEY_ID'),
         'team_id' => env('APNS_TEAM_ID'),
-        'bundle_id' => env('APNS_BUNDLE_ID', 'com.smartcampus.ios'),
+        'bundle_id' => env('APNS_BUNDLE_ID', 'com.litotime.smartcampus'),
         'private_key_path' => env('APNS_PRIVATE_KEY_PATH'),
         'sandbox' => env('APNS_SANDBOX', true),
     ],

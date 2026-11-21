@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Models\MobileDevice;
 use App\Services\MobilePushService;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -33,5 +34,20 @@ class MobilePushServiceTest extends TestCase
         $method = new ReflectionMethod(MobilePushService::class, 'derToJoseEs256');
 
         $this->assertNull($method->invoke($service, 'not-a-der-signature'));
+    }
+
+    public function test_resolve_apns_environment_prefers_device_reported_value(): void
+    {
+        $service = new MobilePushService();
+        $method = new ReflectionMethod(MobilePushService::class, 'resolveApnsEnvironment');
+
+        $devDevice = new MobileDevice(['push_environment' => 'development']);
+        $prodDevice = new MobileDevice(['push_environment' => 'production']);
+        $legacyDevice = new MobileDevice();
+
+        $this->assertSame('development', $method->invoke($service, $devDevice, ['sandbox' => false]));
+        $this->assertSame('production', $method->invoke($service, $prodDevice, ['sandbox' => true]));
+        $this->assertSame('development', $method->invoke($service, $legacyDevice, ['sandbox' => true]));
+        $this->assertSame('production', $method->invoke($service, $legacyDevice, ['sandbox' => false]));
     }
 }

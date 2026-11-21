@@ -19,9 +19,33 @@ final class PushNotificationManager: NSObject {
 
     var authorizationStatus: UNAuthorizationStatus = .notDetermined
     var apnsDeviceToken: String?
+    var apnsEnvironment: String = PushNotificationManager.detectAPNsEnvironment()
+    var lastRegistrationError: String?
     var pushGatewayConfiguredOnServer: Bool = false
     var unreadCount: Int = 0
     var pendingDestination: PushDestination?
+
+    /// 读取安装包内 embedded.mobileprovision 中的 aps-environment，精准区分开发(sandbox)与生产环境
+    private static func detectAPNsEnvironment() -> String {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let raw = try? String(contentsOf: url, encoding: .isoLatin1),
+              let start = raw.range(of: "<plist"),
+              let end = raw.range(of: "</plist>") else {
+            #if DEBUG
+            return "development"
+            #else
+            return "production"
+            #endif
+        }
+        let plistStr = String(raw[start.lowerBound..<end.upperBound])
+        guard let data = plistStr.data(using: .utf8),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let entitlements = dict["Entitlements"] as? [String: Any],
+              let env = entitlements["aps-environment"] as? String else {
+            return "production"
+        }
+        return env == "development" ? "development" : "production"
+    }
 
     private override init() {
         super.init()
@@ -53,13 +77,16 @@ final class PushNotificationManager: NSObject {
     func handleRegisteredDeviceToken(_ tokenData: Data) {
         let tokenString = tokenData.map { String(format: "%02x", $0) }.joined()
         self.apnsDeviceToken = tokenString
+        self.lastRegistrationError = nil
+        self.apnsEnvironment = Self.detectAPNsEnvironment()
         Task {
             await syncDeviceWithBackend(pushToken: tokenString)
         }
     }
 
     func handleFailedRemoteRegistration(_ error: Error) {
-        // 模拟器或尚未开启 Push Notifications 签名能力时会进入此处，优雅降级不报错
+        // 模拟器或尚未开启 Push Notifications 签名能力时会进入此处，记录状态并优雅降级
+        self.lastRegistrationError = error.localizedDescription
         Task {
             await syncDeviceWithBackend(pushToken: nil)
         }
@@ -74,6 +101,7 @@ final class PushNotificationManager: NSObject {
         struct DeviceRegisterPayload: Encodable {
             let platform: String
             let push_provider: String
+            let push_environment: String
             let device_identifier: String
             let push_token: String?
             let device_name: String
@@ -91,6 +119,7 @@ final class PushNotificationManager: NSObject {
         let payload = DeviceRegisterPayload(
             platform: "ios",
             push_provider: "apns",
+            push_environment: apnsEnvironment,
             device_identifier: KeychainHelper.shared.getOrCreateDeviceIdentifier(),
             push_token: pushToken,
             device_name: UIDevice.current.name,
@@ -177,7 +206,7 @@ extension PushNotificationManager: UNUserNotificationCenterDelegate {
         let userInfo = response.notification.request.content.userInfo
         let dataDict = userInfo["data"] as? [String: Any]
         let route = dataDict?["route"] as? String
-        let type = userInfo["type"] as? String
+        let type = (userInfo["type"] as? String) ?? (dataDict?["type"] as? String)
 
         await MainActor.run {
             self.handleDeepLink(route: route, type: type)
