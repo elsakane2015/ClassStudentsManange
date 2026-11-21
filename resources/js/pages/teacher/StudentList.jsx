@@ -174,11 +174,11 @@ export default function StudentList() {
     const handleEdit = (student) => {
         setEditingStudent(student);
         setFormData({
-            name: student.name,
-            student_no: student.student_no,
-            gender: student.gender,
+            name: student.name || '',
+            student_no: student.student_no || '',
+            gender: student.gender || 'male',
             is_boarding: Boolean(student.is_boarding),
-            parent_contact: student.parent_contact,
+            parent_contact: student.parent_contact || '',
             parent_email: student.parent_email || '',
             class_id: student.class_id || '',
             email: student.email || '',
@@ -337,7 +337,7 @@ export default function StudentList() {
 
     const toggleClassAdmin = async (student) => {
         const action = student.is_class_admin ? '取消' : '指定';
-        if (!confirm(`确定要${action}"${student.name}"为班级学生管理员吗？`)) return;
+        if (!confirm(`确定要${action}"${student.name}"为班级考勤员吗？`)) return;
         try {
             await axios.post(`/students/${student.id}/toggle-class-admin`);
             fetchStudents(meta.current_page);
@@ -539,7 +539,27 @@ export default function StudentList() {
                                                         className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                                                     />
                                                 </td>
-                                                <td className="whitespace-nowrap py-4 pl-2 pr-3 text-sm font-medium text-gray-900">{student.name}</td>
+                                                <td className="whitespace-nowrap py-4 pl-2 pr-3 text-sm font-medium text-gray-900">
+                                                    <div className="flex items-center gap-1.5">
+                                                        {batchEditing ? (
+                                                            <span>{student.name}</span>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleEdit(student)}
+                                                                title="点击修改基础信息"
+                                                                className="text-left font-medium text-gray-900 hover:text-indigo-600 hover:underline focus:outline-none"
+                                                            >
+                                                                {student.name}
+                                                            </button>
+                                                        )}
+                                                        {student.is_class_admin && (
+                                                            <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                                                                考勤员
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.student_no}</td>
                                                 <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
                                                     {batchEditing ? (
@@ -577,7 +597,7 @@ export default function StudentList() {
                                                             {student.is_boarding && <button onClick={() => openSuspension(student)} className="text-orange-600 hover:text-orange-900">{student.active_boarding_suspension ? '查看暂停' : '暂停住宿'}</button>}
                                                             {student.is_boarding && !student.active_boarding_suspension && <button onClick={() => openEveningLeave(student)} className="text-cyan-700 hover:text-cyan-900">夜自习请假</button>}
                                                             <button onClick={() => toggleClassAdmin(student)} className={student.is_class_admin ? "text-orange-600 hover:text-orange-900" : "text-blue-600 hover:text-blue-900"}>
-                                                                {student.is_class_admin ? '取消班级管理员' : '指定班级管理员'}
+                                                                {student.is_class_admin ? '取消班级考勤员' : '指定班级考勤员'}
                                                             </button>
                                                             <button onClick={() => handleDelete(student.id)} className="text-red-600 hover:text-red-900">删除</button>
                                                         </>

@@ -43,6 +43,7 @@ class AuthController extends Controller
         $request->validate([
             'email' => 'required|string', // Can be email or student_id
             'password' => 'required',
+            'device_name' => 'nullable|string|max:120',
         ]);
 
         $loginId = $request->email;
@@ -81,7 +82,8 @@ class AuthController extends Controller
         // Optional: Revoke old tokens if single session policy
         // $user->tokens()->delete();
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $tokenName = trim((string) $request->input('device_name', 'auth_token')) ?: 'auth_token';
+        $token = $user->createToken($tokenName)->plainTextToken;
 
         return response()->json([
             'access_token' => $token,
@@ -114,9 +116,19 @@ class AuthController extends Controller
             $userData['student']['is_roll_call_admin'] = $isRollCallAdmin;
         }
         
+        $unreadNotificationsCount = 0;
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('app_notifications')) {
+                $unreadNotificationsCount = $user->appNotifications()->whereNull('read_at')->count();
+            }
+        } catch (\Throwable $e) {
+            $unreadNotificationsCount = 0;
+        }
+
         return response()->json([
             ...$userData,
-            'permissions' => $user->getPermissions()
+            'permissions' => $user->getPermissions(),
+            'unread_notifications_count' => $unreadNotificationsCount,
         ]);
     }
 

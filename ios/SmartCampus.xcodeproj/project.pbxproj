@@ -1,0 +1,621 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		008F83B801B2940FD5125CC3 /* PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B6AE906585038319C755D1C /* PushNotificationManager.swift */; };
+		0C9DA28EA04CC8312AA70A17 /* UserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB3C759DB3ADC4D3002F5DBE /* UserModels.swift */; };
+		1AA25C08B572729C2F80AEF5 /* StudentListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DEA9CEA3B1670B29DD3599B /* StudentListView.swift */; };
+		1D860B56F2D594AB5B658ECD /* NotificationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D96E4C661CE0527EFFAE0A /* NotificationRepository.swift */; };
+		1EC18359FA5F11049F0109E3 /* SmartCampusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68DDC8C72C5B236CB216BB6A /* SmartCampusApp.swift */; };
+		28166EA2FE833BE8650BCDD4 /* EveningStudyTakeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9475BB8B626AF4AB876778AE /* EveningStudyTakeView.swift */; };
+		39990CA1E1877264B35D014E /* EveningStudyRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A80872305F7DA57ABE6660 /* EveningStudyRepository.swift */; };
+		4778B7A77F38CEDA92732B92 /* AttendanceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E7D8B0D4B7A6528CB0C296D /* AttendanceRepository.swift */; };
+		4D2B8DA869AC2919471276DF /* EveningStudyHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19663CA91959B0F307388676 /* EveningStudyHubView.swift */; };
+		4E72F4331878398E580BDB1A /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A940CABE9EC74AB68AEB645E /* KeychainHelper.swift */; };
+		5E1167BB110BA471F2CEA1B4 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A53FEE19DAC39276727C14 /* ProfileView.swift */; };
+		5F1D208C57F1959BF1A36944 /* PeriodFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1948B56C3FF0B74F0AEF99 /* PeriodFormatter.swift */; };
+		5F62866A7A38431761C43EA6 /* LeaveRequestModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 253519043DE2C31146B43981 /* LeaveRequestModels.swift */; };
+		6AE68639BCA9C6E5BA15548A /* AttendanceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBBA4D42D31440BCAFE551E9 /* AttendanceModels.swift */; };
+		6F365A0F308FFE5F0A2726D8 /* EveningStudyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E1A7152769AEF676933083 /* EveningStudyModels.swift */; };
+		7071C5678F3C5D6EE272BA2D /* NotificationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 907922A1CCB7C7A60771BDAF /* NotificationsView.swift */; };
+		71942FB0A89ADC3ADDC3BA6E /* RollCallModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C7F528C2A3544C1E275DA29 /* RollCallModels.swift */; };
+		74C944396172CFFD6AB38186 /* RollCallRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3DADF74CE17900E2EB43C82 /* RollCallRepository.swift */; };
+		790C0CB03E6922510B831300 /* RollCallOperationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E35F874C09EFF6A1F11721C0 /* RollCallOperationView.swift */; };
+		79F9BAACC6A8C5683B7E2957 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B21A03D9CA5CCDF56D7E547 /* APIClient.swift */; };
+		8523F5C83E43ADB4EDB77C99 /* StudentDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96BC22BCFC9DF50EDBFDAC8F /* StudentDashboardView.swift */; };
+		88D39A8B97EF7A7D0BE1B02C /* TeacherDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1514A1B4C699735DE36FC61 /* TeacherDashboardView.swift */; };
+		A1CFCF5116428FAB3656D12B /* ServerSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE1AF5720AA8C82878A7A4F /* ServerSetupView.swift */; };
+		A579D6A06FDCE7E9FABAF66B /* LeaveRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD75C3DF1D6479B8239E2E5F /* LeaveRepository.swift */; };
+		AA17C70163AF285B7E81A905 /* ServerConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D1275359DC332B676D60843 /* ServerConfigManager.swift */; };
+		B60798DA99D70DB2A976BC93 /* RollCallHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADBBF313AAE0EA59A3DD7680 /* RollCallHubView.swift */; };
+		B7E143B18BB9824BD3E0977C /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB28DA5E59D1F521F6E7554 /* SessionManager.swift */; };
+		BDFB7A56012EE49B967B5FFE /* FlexibleDecoding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22B1A5F5BCF4169BCF5B9F96 /* FlexibleDecoding.swift */; };
+		C1F68DB1EF8B44D7C3AEAA7D /* LeaveRequestFormView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8DC22806923E14170F189CD /* LeaveRequestFormView.swift */; };
+		CA85A8DF7E2F9AC277BFADA9 /* LeaveHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D5A58924B7F92F039986934 /* LeaveHistoryView.swift */; };
+		D5F93AA1CA43C133EDCCB6C5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FFAB0B16BD620482A6AB1671 /* Assets.xcassets */; };
+		D88E1D7A88DCC10E1C998689 /* ClassAttendanceAdminView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5F130F472E34E4C60C11A3 /* ClassAttendanceAdminView.swift */; };
+		DBF53D21719ED76B12009721 /* RoleBasedTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B042AD34C7E841AD7B96FBF1 /* RoleBasedTabView.swift */; };
+		EAFEBF69A9A1C444A5D80ECB /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F2F30B90B9709FC737CBD64 /* Theme.swift */; };
+		F0C3EC414B822A63CAB1C924 /* LeaveApprovalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7032848A460CA22148B41FE1 /* LeaveApprovalsView.swift */; };
+		F791C87A110F1CB94FFF9C89 /* OfflineRollCallStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97FC65010320EB773761A494 /* OfflineRollCallStore.swift */; };
+		FF1542800F6EF4035A2C7677 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BFE56D7504629E702DCD99F /* LoginView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0BB28DA5E59D1F521F6E7554 /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
+		0F2F30B90B9709FC737CBD64 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		19663CA91959B0F307388676 /* EveningStudyHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveningStudyHubView.swift; sourceTree = "<group>"; };
+		22B1A5F5BCF4169BCF5B9F96 /* FlexibleDecoding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlexibleDecoding.swift; sourceTree = "<group>"; };
+		253519043DE2C31146B43981 /* LeaveRequestModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveRequestModels.swift; sourceTree = "<group>"; };
+		2D1275359DC332B676D60843 /* ServerConfigManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfigManager.swift; sourceTree = "<group>"; };
+		2F5F130F472E34E4C60C11A3 /* ClassAttendanceAdminView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassAttendanceAdminView.swift; sourceTree = "<group>"; };
+		37D96E4C661CE0527EFFAE0A /* NotificationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationRepository.swift; sourceTree = "<group>"; };
+		3BFE56D7504629E702DCD99F /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		48CF41D28AD62E84DA0FE4E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		5B6AE906585038319C755D1C /* PushNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationManager.swift; sourceTree = "<group>"; };
+		5D5A58924B7F92F039986934 /* LeaveHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveHistoryView.swift; sourceTree = "<group>"; };
+		68DDC8C72C5B236CB216BB6A /* SmartCampusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartCampusApp.swift; sourceTree = "<group>"; };
+		6D425FBE6F61024D7ACEE458 /* SmartCampus.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SmartCampus.entitlements; sourceTree = "<group>"; };
+		7032848A460CA22148B41FE1 /* LeaveApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveApprovalsView.swift; sourceTree = "<group>"; };
+		7B21A03D9CA5CCDF56D7E547 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		7E7D8B0D4B7A6528CB0C296D /* AttendanceRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttendanceRepository.swift; sourceTree = "<group>"; };
+		85A53FEE19DAC39276727C14 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		88A80872305F7DA57ABE6660 /* EveningStudyRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveningStudyRepository.swift; sourceTree = "<group>"; };
+		8C7F528C2A3544C1E275DA29 /* RollCallModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallModels.swift; sourceTree = "<group>"; };
+		907922A1CCB7C7A60771BDAF /* NotificationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationsView.swift; sourceTree = "<group>"; };
+		9475BB8B626AF4AB876778AE /* EveningStudyTakeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveningStudyTakeView.swift; sourceTree = "<group>"; };
+		96BC22BCFC9DF50EDBFDAC8F /* StudentDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudentDashboardView.swift; sourceTree = "<group>"; };
+		97FC65010320EB773761A494 /* OfflineRollCallStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineRollCallStore.swift; sourceTree = "<group>"; };
+		9DEA9CEA3B1670B29DD3599B /* StudentListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudentListView.swift; sourceTree = "<group>"; };
+		A940CABE9EC74AB68AEB645E /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		AB3C759DB3ADC4D3002F5DBE /* UserModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserModels.swift; sourceTree = "<group>"; };
+		ADBBF313AAE0EA59A3DD7680 /* RollCallHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallHubView.swift; sourceTree = "<group>"; };
+		AE1948B56C3FF0B74F0AEF99 /* PeriodFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeriodFormatter.swift; sourceTree = "<group>"; };
+		B042AD34C7E841AD7B96FBF1 /* RoleBasedTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleBasedTabView.swift; sourceTree = "<group>"; };
+		B0E1A7152769AEF676933083 /* EveningStudyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveningStudyModels.swift; sourceTree = "<group>"; };
+		B1514A1B4C699735DE36FC61 /* TeacherDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeacherDashboardView.swift; sourceTree = "<group>"; };
+		B680E6FD8F3716B03EF4F080 /* SmartCampus.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SmartCampus.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C3DADF74CE17900E2EB43C82 /* RollCallRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallRepository.swift; sourceTree = "<group>"; };
+		CBBA4D42D31440BCAFE551E9 /* AttendanceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttendanceModels.swift; sourceTree = "<group>"; };
+		E35F874C09EFF6A1F11721C0 /* RollCallOperationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallOperationView.swift; sourceTree = "<group>"; };
+		E8DC22806923E14170F189CD /* LeaveRequestFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveRequestFormView.swift; sourceTree = "<group>"; };
+		FD75C3DF1D6479B8239E2E5F /* LeaveRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveRepository.swift; sourceTree = "<group>"; };
+		FFAB0B16BD620482A6AB1671 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		FFE1AF5720AA8C82878A7A4F /* ServerSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSetupView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		046E5910C6BB54633BDCBF88 /* Navigation */ = {
+			isa = PBXGroup;
+			children = (
+				B042AD34C7E841AD7B96FBF1 /* RoleBasedTabView.swift */,
+			);
+			path = Navigation;
+			sourceTree = "<group>";
+		};
+		0A6995FD9E57F91DFFB744D9 = {
+			isa = PBXGroup;
+			children = (
+				971D1663278E643EDA884942 /* SmartCampus */,
+				B5D187B6AAAC52C17912BAB7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		2E06941633A5D71A84799F5B /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				7B21A03D9CA5CCDF56D7E547 /* APIClient.swift */,
+			);
+			path = Network;
+			sourceTree = "<group>";
+		};
+		4EB06382D386F11A6F6B1620 /* Push */ = {
+			isa = PBXGroup;
+			children = (
+				5B6AE906585038319C755D1C /* PushNotificationManager.swift */,
+			);
+			path = Push;
+			sourceTree = "<group>";
+		};
+		58868F30491CCD5ACA43421A /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				A940CABE9EC74AB68AEB645E /* KeychainHelper.swift */,
+				97FC65010320EB773761A494 /* OfflineRollCallStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		643520F1938B70939475B377 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				FFAB0B16BD620482A6AB1671 /* Assets.xcassets */,
+				48CF41D28AD62E84DA0FE4E0 /* Info.plist */,
+				6D425FBE6F61024D7ACEE458 /* SmartCampus.entitlements */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		669233F18EA14C3905BC77EB /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				0F2F30B90B9709FC737CBD64 /* Theme.swift */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		78814778A45BC65843D84ABD /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				82A1DFD2FBC7600A3F3E490E /* Auth */,
+				ED5A6DCE835FE208EE4C6E2F /* EveningStudy */,
+				A6614B49846BAB00FC6EADF4 /* Profile */,
+				A147579A2EBBBE2299ABB781 /* RollCall */,
+				AE402141D4CE2DF43486F312 /* Student */,
+				AA511227C1E1FC858822260F /* Teacher */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		82A1DFD2FBC7600A3F3E490E /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				3BFE56D7504629E702DCD99F /* LoginView.swift */,
+				FFE1AF5720AA8C82878A7A4F /* ServerSetupView.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		971D1663278E643EDA884942 /* SmartCampus */ = {
+			isa = PBXGroup;
+			children = (
+				68DDC8C72C5B236CB216BB6A /* SmartCampusApp.swift */,
+				AEDFB9A48BB7F86B9229134F /* Core */,
+				78814778A45BC65843D84ABD /* Features */,
+				FCF251EDAD12E0098A9B75CD /* Models */,
+				046E5910C6BB54633BDCBF88 /* Navigation */,
+				C6B1834CDFED4E79FBFB7E39 /* Repositories */,
+				643520F1938B70939475B377 /* Resources */,
+			);
+			path = SmartCampus;
+			sourceTree = "<group>";
+		};
+		A147579A2EBBBE2299ABB781 /* RollCall */ = {
+			isa = PBXGroup;
+			children = (
+				ADBBF313AAE0EA59A3DD7680 /* RollCallHubView.swift */,
+				E35F874C09EFF6A1F11721C0 /* RollCallOperationView.swift */,
+			);
+			path = RollCall;
+			sourceTree = "<group>";
+		};
+		A6614B49846BAB00FC6EADF4 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				907922A1CCB7C7A60771BDAF /* NotificationsView.swift */,
+				85A53FEE19DAC39276727C14 /* ProfileView.swift */,
+			);
+			path = Profile;
+			sourceTree = "<group>";
+		};
+		AA511227C1E1FC858822260F /* Teacher */ = {
+			isa = PBXGroup;
+			children = (
+				7032848A460CA22148B41FE1 /* LeaveApprovalsView.swift */,
+				9DEA9CEA3B1670B29DD3599B /* StudentListView.swift */,
+				B1514A1B4C699735DE36FC61 /* TeacherDashboardView.swift */,
+			);
+			path = Teacher;
+			sourceTree = "<group>";
+		};
+		AC6445F25BDE5A3B94A4DBDE /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				2D1275359DC332B676D60843 /* ServerConfigManager.swift */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		AE402141D4CE2DF43486F312 /* Student */ = {
+			isa = PBXGroup;
+			children = (
+				2F5F130F472E34E4C60C11A3 /* ClassAttendanceAdminView.swift */,
+				5D5A58924B7F92F039986934 /* LeaveHistoryView.swift */,
+				E8DC22806923E14170F189CD /* LeaveRequestFormView.swift */,
+				96BC22BCFC9DF50EDBFDAC8F /* StudentDashboardView.swift */,
+			);
+			path = Student;
+			sourceTree = "<group>";
+		};
+		AEDFB9A48BB7F86B9229134F /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				CD009953827975888237A7E6 /* Auth */,
+				AC6445F25BDE5A3B94A4DBDE /* Config */,
+				669233F18EA14C3905BC77EB /* DesignSystem */,
+				2E06941633A5D71A84799F5B /* Network */,
+				4EB06382D386F11A6F6B1620 /* Push */,
+				58868F30491CCD5ACA43421A /* Storage */,
+				E59640366BC50F43B4ED19A7 /* Utilities */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		B5D187B6AAAC52C17912BAB7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B680E6FD8F3716B03EF4F080 /* SmartCampus.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C6B1834CDFED4E79FBFB7E39 /* Repositories */ = {
+			isa = PBXGroup;
+			children = (
+				7E7D8B0D4B7A6528CB0C296D /* AttendanceRepository.swift */,
+				88A80872305F7DA57ABE6660 /* EveningStudyRepository.swift */,
+				FD75C3DF1D6479B8239E2E5F /* LeaveRepository.swift */,
+				37D96E4C661CE0527EFFAE0A /* NotificationRepository.swift */,
+				C3DADF74CE17900E2EB43C82 /* RollCallRepository.swift */,
+			);
+			path = Repositories;
+			sourceTree = "<group>";
+		};
+		CD009953827975888237A7E6 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				0BB28DA5E59D1F521F6E7554 /* SessionManager.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		E59640366BC50F43B4ED19A7 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				AE1948B56C3FF0B74F0AEF99 /* PeriodFormatter.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		ED5A6DCE835FE208EE4C6E2F /* EveningStudy */ = {
+			isa = PBXGroup;
+			children = (
+				19663CA91959B0F307388676 /* EveningStudyHubView.swift */,
+				9475BB8B626AF4AB876778AE /* EveningStudyTakeView.swift */,
+			);
+			path = EveningStudy;
+			sourceTree = "<group>";
+		};
+		FCF251EDAD12E0098A9B75CD /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				CBBA4D42D31440BCAFE551E9 /* AttendanceModels.swift */,
+				B0E1A7152769AEF676933083 /* EveningStudyModels.swift */,
+				22B1A5F5BCF4169BCF5B9F96 /* FlexibleDecoding.swift */,
+				253519043DE2C31146B43981 /* LeaveRequestModels.swift */,
+				8C7F528C2A3544C1E275DA29 /* RollCallModels.swift */,
+				AB3C759DB3ADC4D3002F5DBE /* UserModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0ED69A2B6F9934EF23C127C8 /* SmartCampus */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2F06540C5D9213B9B1BE4ED4 /* Build configuration list for PBXNativeTarget "SmartCampus" */;
+			buildPhases = (
+				6E0DEBD5A11DD369697DF80C /* Sources */,
+				8C4A643096314C9D318D2E95 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SmartCampus;
+			packageProductDependencies = (
+			);
+			productName = SmartCampus;
+			productReference = B680E6FD8F3716B03EF4F080 /* SmartCampus.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E53629E58C5FFB2ED9E94B8B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					0ED69A2B6F9934EF23C127C8 = {
+						DevelopmentTeam = HCDD4TQBT8;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = BA80A245C0FA8D6CC3330F90 /* Build configuration list for PBXProject "SmartCampus" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 0A6995FD9E57F91DFFB744D9;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B5D187B6AAAC52C17912BAB7 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0ED69A2B6F9934EF23C127C8 /* SmartCampus */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8C4A643096314C9D318D2E95 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D5F93AA1CA43C133EDCCB6C5 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6E0DEBD5A11DD369697DF80C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				79F9BAACC6A8C5683B7E2957 /* APIClient.swift in Sources */,
+				6AE68639BCA9C6E5BA15548A /* AttendanceModels.swift in Sources */,
+				4778B7A77F38CEDA92732B92 /* AttendanceRepository.swift in Sources */,
+				D88E1D7A88DCC10E1C998689 /* ClassAttendanceAdminView.swift in Sources */,
+				4D2B8DA869AC2919471276DF /* EveningStudyHubView.swift in Sources */,
+				6F365A0F308FFE5F0A2726D8 /* EveningStudyModels.swift in Sources */,
+				39990CA1E1877264B35D014E /* EveningStudyRepository.swift in Sources */,
+				28166EA2FE833BE8650BCDD4 /* EveningStudyTakeView.swift in Sources */,
+				BDFB7A56012EE49B967B5FFE /* FlexibleDecoding.swift in Sources */,
+				4E72F4331878398E580BDB1A /* KeychainHelper.swift in Sources */,
+				F0C3EC414B822A63CAB1C924 /* LeaveApprovalsView.swift in Sources */,
+				CA85A8DF7E2F9AC277BFADA9 /* LeaveHistoryView.swift in Sources */,
+				A579D6A06FDCE7E9FABAF66B /* LeaveRepository.swift in Sources */,
+				C1F68DB1EF8B44D7C3AEAA7D /* LeaveRequestFormView.swift in Sources */,
+				5F62866A7A38431761C43EA6 /* LeaveRequestModels.swift in Sources */,
+				FF1542800F6EF4035A2C7677 /* LoginView.swift in Sources */,
+				1D860B56F2D594AB5B658ECD /* NotificationRepository.swift in Sources */,
+				7071C5678F3C5D6EE272BA2D /* NotificationsView.swift in Sources */,
+				F791C87A110F1CB94FFF9C89 /* OfflineRollCallStore.swift in Sources */,
+				5F1D208C57F1959BF1A36944 /* PeriodFormatter.swift in Sources */,
+				5E1167BB110BA471F2CEA1B4 /* ProfileView.swift in Sources */,
+				008F83B801B2940FD5125CC3 /* PushNotificationManager.swift in Sources */,
+				DBF53D21719ED76B12009721 /* RoleBasedTabView.swift in Sources */,
+				B60798DA99D70DB2A976BC93 /* RollCallHubView.swift in Sources */,
+				71942FB0A89ADC3ADDC3BA6E /* RollCallModels.swift in Sources */,
+				790C0CB03E6922510B831300 /* RollCallOperationView.swift in Sources */,
+				74C944396172CFFD6AB38186 /* RollCallRepository.swift in Sources */,
+				AA17C70163AF285B7E81A905 /* ServerConfigManager.swift in Sources */,
+				A1CFCF5116428FAB3656D12B /* ServerSetupView.swift in Sources */,
+				B7E143B18BB9824BD3E0977C /* SessionManager.swift in Sources */,
+				1EC18359FA5F11049F0109E3 /* SmartCampusApp.swift in Sources */,
+				8523F5C83E43ADB4EDB77C99 /* StudentDashboardView.swift in Sources */,
+				1AA25C08B572729C2F80AEF5 /* StudentListView.swift in Sources */,
+				88D39A8B97EF7A7D0BE1B02C /* TeacherDashboardView.swift in Sources */,
+				EAFEBF69A9A1C444A5D80ECB /* Theme.swift in Sources */,
+				0C9DA28EA04CC8312AA70A17 /* UserModels.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2EDFC3D11A9062AF937C8159 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 3;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_LANGUAGE = "zh-Hans";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_KEY_CFBundleDisplayName = "智慧校园";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B0D2240854D0075FF0153D22 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HCDD4TQBT8;
+				ENABLE_PREVIEWS = YES;
+				INFOPLIST_FILE = SmartCampus/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.litotime.smartcampus;
+				PRODUCT_NAME = SmartCampus;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B9D084340DCB695A92FF86A0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 3;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_LANGUAGE = "zh-Hans";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_KEY_CFBundleDisplayName = "智慧校园";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		EA7B7DF5FBFFE18B6D1EAFC3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HCDD4TQBT8;
+				ENABLE_PREVIEWS = YES;
+				INFOPLIST_FILE = SmartCampus/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.litotime.smartcampus;
+				PRODUCT_NAME = SmartCampus;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2F06540C5D9213B9B1BE4ED4 /* Build configuration list for PBXNativeTarget "SmartCampus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B0D2240854D0075FF0153D22 /* Debug */,
+				EA7B7DF5FBFFE18B6D1EAFC3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BA80A245C0FA8D6CC3330F90 /* Build configuration list for PBXProject "SmartCampus" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9D084340DCB695A92FF86A0 /* Debug */,
+				2EDFC3D11A9062AF937C8159 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E53629E58C5FFB2ED9E94B8B /* Project object */;
+}

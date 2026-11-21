@@ -241,7 +241,7 @@ export default function PermissionsPage() {
                 <ul className="text-sm text-blue-800 space-y-1">
                     <li>• 系统管理员默认拥有所有权限，无法修改</li>
                     <li>• 点击图标可以切换权限的启用/禁用状态，<strong>即时生效</strong></li>
-                    <li>• 学生管理员的权限通过is_manager标志控制，不在此配置</li>
+                    <li>• 班级考勤员的本班考勤与请假审批权限由班主任在「学生管理」中授予，不在此配置</li>
                 </ul>
             </div>
         </Layout>

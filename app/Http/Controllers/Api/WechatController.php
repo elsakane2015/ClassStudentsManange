@@ -361,21 +361,21 @@ class WechatController extends Controller
     }
 
     /**
-     * 获取学生管理员的绑定状态
+     * 获取班级考勤员的绑定状态
      */
     public function getManagerBindStatus(Request $request)
     {
         try {
             $user = $request->user();
             
-            // 检查是否为学生管理员（班级管理员或学生管理员）
+            // 检查是否为班级考勤员
             $student = Student::where('user_id', $user->id)->first();
             if (!$student) {
                 return response()->json(['enabled' => false, 'message' => '非学生用户']);
             }
             
-            if (!$student->is_class_admin && !$student->is_manager) {
-                return response()->json(['enabled' => false, 'message' => '非班级管理员']);
+            if (!$student->is_class_admin) {
+                return response()->json(['enabled' => false, 'message' => '非班级考勤员']);
             }
 
             // 检查权限
@@ -431,7 +431,7 @@ class WechatController extends Controller
     }
 
     /**
-     * 学生管理员解除自己的绑定
+     * 班级考勤员解除自己的绑定
      */
     public function managerUnbind(Request $request)
     {
@@ -458,7 +458,7 @@ class WechatController extends Controller
         if ($user->role === 'teacher') {
             $config = WechatConfig::where('user_id', $user->id)->first();
         } else {
-            // 学生管理员使用班主任的配置
+            // 班级考勤员使用班主任的配置
             $config = WechatConfig::find($configId);
         }
 
@@ -767,7 +767,7 @@ class WechatController extends Controller
 
         if ($user->role === 'student') {
             $student = Student::where('user_id', $user->id)->first();
-            if ($student && ($student->is_class_admin || $student->is_manager) && $managerBindEnabled) {
+            if ($student && $student->is_class_admin && $managerBindEnabled) {
                 $showManagerBind = true;
             }
         }

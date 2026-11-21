@@ -24,6 +24,8 @@ use App\Http\Controllers\Api\SmsController;
 use App\Http\Controllers\Api\BoardingSuspensionController;
 use App\Http\Controllers\Api\EveningStudyController;
 use App\Http\Controllers\Api\EveningStudyStatusController;
+use App\Http\Controllers\Api\MobileDeviceController;
+use App\Http\Controllers\Api\AppNotificationController;
 use App\Http\Controllers\InstallController;
 
 // Installation routes (no auth required)
@@ -53,6 +55,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/user/change-password', [AuthController::class, 'changePassword']);
+
+    // Native Mobile Devices & Push / In-App Notifications
+    Route::get('/devices', [MobileDeviceController::class, 'index']);
+    Route::post('/devices/register', [MobileDeviceController::class, 'register']);
+    Route::post('/devices/unregister', [MobileDeviceController::class, 'unregister']);
+    Route::get('/notifications', [AppNotificationController::class, 'index']);
+    Route::get('/notifications/unread-count', [AppNotificationController::class, 'unreadCount']);
+    Route::post('/notifications/read-all', [AppNotificationController::class, 'markAllRead']);
+    Route::post('/notifications/{appNotification}/read', [AppNotificationController::class, 'markRead']);
+    Route::delete('/notifications/{appNotification}', [AppNotificationController::class, 'destroy']);
 
     // School Settings (Admin only)
     Route::put('/school/update', [\App\Http\Controllers\Api\SchoolController::class, 'update']);
@@ -168,7 +180,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/students/import', [StudentController::class, 'import']);
     Route::post('/students/bulk-update', [StudentController::class, 'bulkUpdate']);
     Route::apiResource('students', StudentController::class); // Added full CRUD for students
-    Route::post('/students/{id}/toggle-manager', [StudentController::class, 'toggleManager']);
     Route::get('/student/is-class-admin', [StudentController::class, 'isClassAdmin']);
     Route::post('/students/{id}/toggle-class-admin', [StudentController::class, 'toggleClassAdmin']);
     Route::post('/students/bulk-delete', [StudentController::class, 'bulkDestroy']);

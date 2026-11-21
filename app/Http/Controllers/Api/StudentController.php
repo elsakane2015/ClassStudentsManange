@@ -84,7 +84,6 @@ class StudentController extends Controller
                 'department_name' => $student->schoolClass?->department?->name ?? '-',
                 'enrollment_year' => $student->schoolClass?->enrollment_year ?? '-',
                 'email' => $student->user ? $student->user->email : null,
-                'is_manager' => $student->is_manager ?? false,
                 'is_class_admin' => $student->is_class_admin ?? false,
                 'active_boarding_suspension' => $student->boardingSuspensions->first(),
             ];
@@ -419,26 +418,6 @@ class StudentController extends Controller
             'all_students' => \App\Models\Student::all(),
             'all_users_student_role' => \App\Models\User::where('role', 'student')->get(),
             'total_students' => \App\Models\Student::count(),
-        ]);
-    }
-
-    /**
-     * Toggle the manager status of a student.
-     */
-    public function toggleManager(Request $request, string $id)
-    {
-        $student = \App\Models\Student::findOrFail($id);
-
-        // Authorization check: User must be a teacher or admin
-        // For simplicity, we assume the middleware handles basic auth, but strictly we should check if teacher owns the class.
-        // $request->user()->can('update', $student);
-
-        $student->is_manager = ! $student->is_manager;
-        $student->save();
-
-        return response()->json([
-            'message' => 'Student manager status updated.',
-            'is_manager' => $student->is_manager,
         ]);
     }
 

@@ -310,11 +310,11 @@ export default function AttendanceSettings() {
                         </div>
                     </div>
 
-                    {/* 班主任/学生管理员端配置 */}
+                    {/* 班主任/班级考勤员端配置 */}
                     <div className="border rounded-lg p-4">
                         <h4 className="font-medium text-gray-800 mb-3 flex items-center">
                             <span className="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
-                            班主任/学生管理员
+                            班主任/班级考勤员
                         </h4>
                         <div className="space-y-3">
                             <label className="flex items-center">
@@ -487,7 +487,7 @@ export default function AttendanceSettings() {
 
                 <div className="mt-4 p-3 bg-blue-50 rounded-lg">
                     <p className="text-sm text-blue-700">
-                        💡 <strong>待审批</strong>仅对有审核权限的用户（班主任、学生管理员）显示。
+                        💡 <strong>待审批</strong>仅对有审核权限的用户（班主任、班级考勤员）显示。
                         请假类型统计会根据已启用的请假类型自动生成。
                     </p>
                 </div>

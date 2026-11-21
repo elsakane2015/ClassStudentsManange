@@ -75,28 +75,6 @@ export default function TeacherDashboard() {
         setExpandedClasses(prev => ({ ...prev, [id]: !prev[id] }));
     };
 
-    const handleToggleManager = async (studentId, currentStatus, e) => {
-        e.stopPropagation(); // Prevent row click
-        if (!confirm(`确定要${currentStatus ? '取消' : '设置'}该学生为班级管理员吗？`)) return;
-
-        try {
-            const res = await axios.post(`/students/${studentId}/toggle-manager`);
-            // Update local state
-            setAttendanceOverview(prev => prev.map(dept => ({
-                ...dept,
-                classes: dept.classes.map(cls => ({
-                    ...cls,
-                    students: cls.students.map(s =>
-                        s.id === studentId ? { ...s, is_manager: res.data.is_manager } : s
-                    )
-                }))
-            })));
-        } catch (error) {
-            console.error("Failed to toggle manager", error);
-            alert("设置失败");
-        }
-    };
-
     // Fetch leave types and semesters on mount
     useEffect(() => {
         const fallbacks = [
@@ -929,18 +907,6 @@ export default function TeacherDashboard() {
                                                                                                 </td>
                                                                                                 <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center">
                                                                                                     {student.user ? student.user.name : <span className="text-gray-400 italic">No Name</span>}
-                                                                                                    {/* Manager Toggle Icon */}
-                                                                                                    {(user.role === 'teacher' || user.role === 'admin') && (
-                                                                                                        <button
-                                                                                                            onClick={(e) => handleToggleManager(student.id, student.is_manager, e)}
-                                                                                                            className={`ml-2 p-1 rounded-full hover:bg-gray-100 ${student.is_manager ? 'text-yellow-500' : 'text-gray-300'}`}
-                                                                                                            title={student.is_manager ? "取消管理员" : "设为管理员"}
-                                                                                                        >
-                                                                                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-                                                                                                                <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006z" clipRule="evenodd" />
-                                                                                                            </svg>
-                                                                                                        </button>
-                                                                                                    )}
                                                                                                 </td>
                                                                                                 <td className="px-3 py-2 whitespace-nowrap">
                                                                                                     <StatusBadge record={record} />

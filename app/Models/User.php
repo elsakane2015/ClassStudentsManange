@@ -68,11 +68,6 @@ class User extends Authenticatable
             return true;
         }
 
-        // Student managers get special permissions
-        if ($this->role === 'student' && $this->student?->is_manager) {
-            return $this->hasStudentManagerPermission($permission, $action);
-        }
-
         // Check role permissions
         $rolePermission = \App\Models\RolePermission::whereHas('permission', function($query) use ($permission) {
             $query->where('name', $permission);
@@ -92,42 +87,12 @@ class User extends Authenticatable
     }
 
     /**
-     * Check permissions for student managers
-     */
-    private function hasStudentManagerPermission(string $permission, string $action): bool
-    {
-        $allowedPermissions = [
-            'attendance.view_class',
-            'attendance.edit',
-            'leave_requests.view_class',
-            'leave_requests.approve',
-            'students.view_class',
-        ];
-
-        if (!in_array($permission, $allowedPermissions)) {
-            return false;
-        }
-
-        return in_array($action, ['read', 'update']);
-    }
-
-    /**
      * Get all permissions for this user
      */
     public function getPermissions(): array
     {
         if ($this->role === 'system_admin') {
             return \App\Models\Permission::pluck('name')->toArray();
-        }
-
-        if ($this->role === 'student' && $this->student?->is_manager) {
-            return [
-                'attendance.view_class',
-                'attendance.edit',
-                'leave_requests.view_class',
-                'leave_requests.approve',
-                'students.view_class',
-            ];
         }
 
         return \App\Models\RolePermission::where('role', $this->role)
@@ -182,5 +147,15 @@ class User extends Authenticatable
     public function emailNotificationPreference()
     {
         return $this->hasOne(EmailNotificationPreference::class);
+    }
+
+    public function mobileDevices()
+    {
+        return $this->hasMany(MobileDevice::class);
+    }
+
+    public function appNotifications()
+    {
+        return $this->hasMany(AppNotification::class);
     }
 }

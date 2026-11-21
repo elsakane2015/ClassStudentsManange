@@ -62,6 +62,8 @@ rsync -a --quiet \
     --exclude='Thumbs.db' \
     --exclude='docs/debug_logs' \
     --exclude='build-release.sh' \
+    --exclude='android' \
+    --exclude='ios' \
     ./ "${TEMP_DIR}/"
 
 # 确保必要的空目录存在

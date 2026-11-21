@@ -38,3 +38,7 @@ docker-compose*.yml
 # 其他
 README.md
 *.md
+
+# 移动端原生 App 目录（独立构建，不打入 Web/API 容器）
+android
+ios

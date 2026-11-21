@@ -361,7 +361,7 @@ export default function WechatPushPage() {
                                     <tr key={binding.id}>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{binding.user_name}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {binding.user_role === 'teacher' ? '班主任' : binding.user_role === 'student' ? '学生管理员' : binding.user_role}
+                                            {binding.user_role === 'teacher' ? '班主任' : binding.user_role === 'student' ? '班级考勤员' : binding.user_role}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.nickname}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.created_at}</td>

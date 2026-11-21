@@ -673,6 +673,15 @@ class LeaveRequestController extends Controller
 
             SendParentNotification::dispatchAfterResponse($firstRecord->id, 'leave_request');
         }
+
+        // Trigger native mobile in-app & push notification for approvers
+        if ($firstRecord) {
+            try {
+                app(\App\Services\MobilePushService::class)->notifyLeaveRequestSubmitted($firstRecord);
+            } catch (\Throwable $e) {
+                \Log::warning('Mobile leave submitted push failed', ['error' => $e->getMessage()]);
+            }
+        }
         
         return response()->json([
             'id' => $firstRecord?->id,
@@ -871,6 +880,16 @@ class LeaveRequestController extends Controller
             return ['processed' => $relatedRecords->count(), 'remaining' => $remainingPendingCount];
         });
 
+        try {
+            app(\App\Services\MobilePushService::class)->notifyLeaveRequestReviewed(
+                $record,
+                'approved',
+                $user->name
+            );
+        } catch (\Throwable $e) {
+            \Log::warning('Mobile leave approved push failed', ['error' => $e->getMessage()]);
+        }
+
         return response()->json([
             'message' => 'Approved',
             'approved_count' => $result['processed'],
@@ -983,6 +1002,17 @@ class LeaveRequestController extends Controller
 
             return ['processed' => $relatedRecords->count(), 'remaining' => $remainingPendingCount];
         });
+
+        try {
+            app(\App\Services\MobilePushService::class)->notifyLeaveRequestReviewed(
+                $record,
+                'rejected',
+                $user->name,
+                $request->input('reason')
+            );
+        } catch (\Throwable $e) {
+            \Log::warning('Mobile leave rejected push failed', ['error' => $e->getMessage()]);
+        }
 
         return response()->json([
             'message' => 'Rejected',
