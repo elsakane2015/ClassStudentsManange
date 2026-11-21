@@ -79,7 +79,7 @@
 		B042AD34C7E841AD7B96FBF1 /* RoleBasedTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleBasedTabView.swift; sourceTree = "<group>"; };
 		B0E1A7152769AEF676933083 /* EveningStudyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EveningStudyModels.swift; sourceTree = "<group>"; };
 		B1514A1B4C699735DE36FC61 /* TeacherDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeacherDashboardView.swift; sourceTree = "<group>"; };
-		B680E6FD8F3716B03EF4F080 /* SmartCampus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SmartCampus.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B680E6FD8F3716B03EF4F080 /* SmartCampus.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SmartCampus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3DADF74CE17900E2EB43C82 /* RollCallRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallRepository.swift; sourceTree = "<group>"; };
 		CBBA4D42D31440BCAFE551E9 /* AttendanceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttendanceModels.swift; sourceTree = "<group>"; };
 		E35F874C09EFF6A1F11721C0 /* RollCallOperationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallOperationView.swift; sourceTree = "<group>"; };
@@ -335,6 +335,7 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					0ED69A2B6F9934EF23C127C8 = {
+						DevelopmentTeam = HCDD4TQBT8;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -450,7 +451,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_LANGUAGE = "zh-Hans";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -536,7 +537,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_LANGUAGE = "zh-Hans";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

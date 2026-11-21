@@ -19,6 +19,62 @@ enum LeaveRepository {
         return response.data
     }
 
+    static func fetchLeaveRequestsPage(
+        status: String? = nil,
+        dateFrom: String? = nil,
+        dateTo: String? = nil,
+        search: String? = nil,
+        page: Int = 1,
+        perPage: Int = 20
+    ) async throws -> LeaveRequestsPageResult {
+        var query: [String: String?] = [
+            "page": String(max(1, page)),
+            "per_page": String(max(1, perPage))
+        ]
+        if let status, !status.isEmpty, status != "all" { query["status"] = status }
+        if let dateFrom, !dateFrom.isEmpty { query["date_from"] = dateFrom }
+        if let dateTo, !dateTo.isEmpty { query["date_to"] = dateTo }
+        let trimmedSearch = search?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedSearch.isEmpty { query["search"] = trimmedSearch }
+
+        let response: LeaveRequestsListResponse = try await APIClient.shared.request(
+            "/leave-requests",
+            query: query
+        )
+
+        if let meta = response.meta {
+            return LeaveRequestsPageResult(
+                items: response.data,
+                currentPage: meta.currentPage,
+                lastPage: meta.lastPage,
+                total: meta.total,
+                hasMore: meta.hasMore,
+                serverPaginated: true
+            )
+        }
+
+        // 兼容尚未升级分页字段的旧服务端：若传了 search 在本地兜底过滤，且不再循环翻页
+        let fallbackItems: [LeaveRequestGroup]
+        if trimmedSearch.isEmpty {
+            fallbackItems = response.data
+        } else {
+            let q = trimmedSearch.lowercased()
+            fallbackItems = response.data.filter { r in
+                (r.student?.name ?? "").lowercased().contains(q)
+                    || (r.student?.studentNo ?? "").lowercased().contains(q)
+                    || (r.schoolClass?.name ?? "").lowercased().contains(q)
+            }
+        }
+        return LeaveRequestsPageResult(
+            items: fallbackItems,
+            currentPage: 1,
+            lastPage: 1,
+            total: fallbackItems.count,
+            hasMore: false,
+            serverPaginated: false
+        )
+    }
+
     static func fetchImageSettings() async throws -> LeaveImageSettings {
         try await APIClient.shared.request("/leave-image/settings")
     }

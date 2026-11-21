@@ -73,18 +73,37 @@ class LeaveRequestController extends Controller
         }
         // Admin sees all
 
-        if ($request->has('status')) {
+        if ($request->filled('status') && $request->status !== 'all') {
             $query->where('approval_status', $request->status);
         }
-        if ($request->has('scene')) {
+        if ($request->filled('scene')) {
             $query->where('scene', $request->scene);
         }
+        if ($request->filled('class_id')) {
+            $query->where('class_id', (int) $request->class_id);
+        }
 
-        if ($request->has('date_from')) {
+        if ($request->filled('date_from')) {
             $query->whereDate('date', '>=', $request->date_from);
         }
-        if ($request->has('date_to')) {
+        if ($request->filled('date_to')) {
             $query->whereDate('date', '<=', $request->date_to);
+        }
+
+        if ($request->filled('search')) {
+            $keyword = trim((string) $request->input('search'));
+            if ($keyword !== '') {
+                $like = '%' . $keyword . '%';
+                $query->where(function ($sub) use ($like) {
+                    $sub->whereHas('student.user', function ($uq) use ($like) {
+                        $uq->where('name', 'like', $like);
+                    })->orWhereHas('student', function ($sq) use ($like) {
+                        $sq->where('student_no', 'like', $like);
+                    })->orWhereHas('class', function ($cq) use ($like) {
+                        $cq->where('name', 'like', $like);
+                    });
+                });
+            }
         }
 
         // 只获取有 leave_batch_id 的记录（新版请假申请）和无 batch_id 的旧记录
@@ -228,10 +247,41 @@ class LeaveRequestController extends Controller
             ];
         })->values();
 
+        if ($request->filled('per_page') || $request->filled('page')) {
+            $page = max(1, (int) $request->input('page', 1));
+            $perPage = max(1, min(100, (int) $request->input('per_page', 20)));
+
+            return response()->json(self::paginateGroupedRequests($groupedRequests, $page, $perPage));
+        }
+
         return response()->json([
             'data' => $groupedRequests,
             'total' => $groupedRequests->count(),
         ]);
+    }
+
+    /**
+     * Slice grouped leave requests into a standard pagination payload.
+     */
+    public static function paginateGroupedRequests(\Illuminate\Support\Collection $groupedRequests, int $page, int $perPage): array
+    {
+        $page = max(1, $page);
+        $perPage = max(1, min(100, $perPage));
+        $total = $groupedRequests->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $items = $groupedRequests->forPage($page, $perPage)->values();
+
+        return [
+            'data' => $items,
+            'total' => $total,
+            'meta' => [
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
+                'has_more' => $page < $lastPage,
+            ],
+        ];
     }
 
     /**

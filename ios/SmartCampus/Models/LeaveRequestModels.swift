@@ -115,9 +115,35 @@ struct LeaveRequestGroup: Decodable, Identifiable, Hashable {
     }
 }
 
+struct LeaveRequestsPaginationMeta: Decodable {
+    let currentPage: Int
+    let lastPage: Int
+    let perPage: Int
+    let total: Int
+    let hasMore: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case currentPage = "current_page"
+        case lastPage = "last_page"
+        case perPage = "per_page"
+        case total
+        case hasMore = "has_more"
+    }
+}
+
 struct LeaveRequestsListResponse: Decodable {
     let data: [LeaveRequestGroup]
     let total: Int?
+    let meta: LeaveRequestsPaginationMeta?
+}
+
+struct LeaveRequestsPageResult {
+    let items: [LeaveRequestGroup]
+    let currentPage: Int
+    let lastPage: Int
+    let total: Int
+    let hasMore: Bool
+    let serverPaginated: Bool
 }
 
 struct LeaveImageSettings: Decodable {

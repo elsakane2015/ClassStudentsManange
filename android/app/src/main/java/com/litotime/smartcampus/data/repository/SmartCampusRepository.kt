@@ -7,6 +7,7 @@ import com.litotime.smartcampus.core.util.asArrayOrEmpty
 import com.litotime.smartcampus.core.util.asObjectOrNull
 import com.litotime.smartcampus.core.util.boolVal
 import com.litotime.smartcampus.core.util.intVal
+import com.litotime.smartcampus.core.util.objOrNull
 import com.litotime.smartcampus.core.util.str
 import com.litotime.smartcampus.data.model.*
 import kotlinx.serialization.json.JsonArray
@@ -191,6 +192,59 @@ class SmartCampusRepository(private val api: ApiClient) {
         val q = if (status.isNullOrBlank() || status == "all") emptyMap() else mapOf("status" to status)
         val obj = api.requestElement("/leave-requests", query = q).asObjectOrNull()
         return obj?.arrOrEmpty("data")?.mapNotNull { it.asObjectOrNull()?.let(LeaveRequestGroup::fromJson) }.orEmpty()
+    }
+
+    suspend fun fetchLeaveRequestsPage(
+        status: String? = null,
+        dateFrom: String? = null,
+        dateTo: String? = null,
+        search: String? = null,
+        page: Int = 1,
+        perPage: Int = 20
+    ): LeaveRequestsPageResult {
+        val trimmedSearch = search?.trim().orEmpty()
+        val q = buildMap<String, String?> {
+            put("page", page.coerceAtLeast(1).toString())
+            put("per_page", perPage.coerceAtLeast(1).toString())
+            if (!status.isNullOrBlank() && status != "all") put("status", status)
+            if (!dateFrom.isNullOrBlank()) put("date_from", dateFrom)
+            if (!dateTo.isNullOrBlank()) put("date_to", dateTo)
+            if (trimmedSearch.isNotEmpty()) put("search", trimmedSearch)
+        }
+        val obj = api.requestElement("/leave-requests", query = q).asObjectOrNull()
+        val rawItems = obj?.arrOrEmpty("data")?.mapNotNull { it.asObjectOrNull()?.let(LeaveRequestGroup::fromJson) }.orEmpty()
+        val meta = obj?.objOrNull("meta")
+
+        if (meta != null) {
+            return LeaveRequestsPageResult(
+                items = rawItems,
+                currentPage = meta.intVal("current_page", page),
+                lastPage = meta.intVal("last_page", 1),
+                total = meta.intVal("total", rawItems.size),
+                hasMore = meta.boolVal("has_more", false),
+                serverPaginated = true
+            )
+        }
+
+        // 兼容尚未升级分页字段的旧服务端
+        val fallbackItems = if (trimmedSearch.isEmpty()) {
+            rawItems
+        } else {
+            val lower = trimmedSearch.lowercase()
+            rawItems.filter {
+                it.studentName.lowercase().contains(lower) ||
+                    (it.studentNo ?: "").lowercase().contains(lower) ||
+                    (it.className ?: "").lowercase().contains(lower)
+            }
+        }
+        return LeaveRequestsPageResult(
+            items = fallbackItems,
+            currentPage = 1,
+            lastPage = 1,
+            total = fallbackItems.size,
+            hasMore = false,
+            serverPaginated = false
+        )
     }
 
     suspend fun fetchLeaveImageSettings(): LeaveImageSettings {

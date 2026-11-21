@@ -639,6 +639,15 @@ data class LeaveRequestGroup(
     }
 }
 
+data class LeaveRequestsPageResult(
+    val items: List<LeaveRequestGroup>,
+    val currentPage: Int,
+    val lastPage: Int,
+    val total: Int,
+    val hasMore: Boolean,
+    val serverPaginated: Boolean
+)
+
 data class LeaveImageSettings(
     val enabled: Boolean = true,
     val maxCount: Int = 3,

@@ -77,6 +77,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -104,6 +105,7 @@ import com.litotime.smartcampus.core.designsystem.StatusBadge
 import com.litotime.smartcampus.core.designsystem.statusColor
 import com.litotime.smartcampus.core.util.SCDateFormatter
 import com.litotime.smartcampus.data.model.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.DayOfWeek
@@ -1142,17 +1144,49 @@ private fun shareExcelFile(context: Context, file: File) {
 
 // MARK: - Leave Approvals Screen
 
+private enum class ApprovalTimeScope(val label: String) {
+    RECENT_30("近30天"),
+    WEEK("教学周"),
+    MONTH("按月"),
+    SEMESTER("本学期"),
+    ALL("全部")
+}
+
+private data class ApprovalDateRange(
+    val from: String?,
+    val to: String?,
+    val summary: String
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LeaveApprovalsScreen() {
     val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
+    val pageSize = 20
     val filters = listOf("pending" to "待审批", "approved" to "已通过", "rejected" to "已驳回", "all" to "全部")
 
     var statusFilter by remember { mutableStateOf("pending") }
+    var timeScope by remember { mutableStateOf(ApprovalTimeScope.ALL) }
+    var lastHistoryScope by remember { mutableStateOf(ApprovalTimeScope.RECENT_30) }
+
+    var semesters by remember { mutableStateOf<List<Semester>>(emptyList()) }
+    var semestersLoaded by remember { mutableStateOf(false) }
+    var selectedWeek by remember { mutableIntStateOf(1) }
+    var selectedMonth by remember { mutableStateOf(YearMonth.now()) }
+    var weekMenuOpen by remember { mutableStateOf(false) }
+    var monthMenuOpen by remember { mutableStateOf(false) }
+
     var searchText by remember { mutableStateOf("") }
+    var debouncedSearch by remember { mutableStateOf("") }
+
     var requests by remember { mutableStateOf<List<LeaveRequestGroup>>(emptyList()) }
+    var currentPage by remember { mutableIntStateOf(1) }
+    var totalCount by remember { mutableIntStateOf(0) }
+    var hasMore by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var requestGen by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
 
     var rejectingTarget by remember { mutableStateOf<LeaveRequestGroup?>(null) }
@@ -1160,45 +1194,327 @@ fun LeaveApprovalsScreen() {
     var partialTarget by remember { mutableStateOf<LeaveRequestGroup?>(null) }
     var previewImage by remember { mutableStateOf<String?>(null) }
 
-    fun load() {
-        scope.launch {
-            loading = true
-            error = null
-            runCatching { repo.fetchLeaveRequests(statusFilter) }
-                .onSuccess { requests = it }
-                .onFailure { error = it.localizedMessage }
-            loading = false
+    val currentSemester = remember(semesters) {
+        semesters.firstOrNull { it.isCurrent } ?: semesters.firstOrNull()
+    }
+    val totalWeeks = (currentSemester?.totalWeeks ?: 20).coerceAtLeast(1)
+    val semesterBounds = remember(currentSemester, totalWeeks) {
+        val raw = currentSemester?.startDate?.take(10) ?: return@remember null
+        val start = runCatching { LocalDate.parse(raw) }.getOrNull() ?: return@remember null
+        val end = start.plusDays(totalWeeks.toLong() * 7L - 1L)
+        start to end
+    }
+    val availableMonths = remember(semesterBounds) {
+        val list = mutableListOf<YearMonth>()
+        if (semesterBounds != null) {
+            var cursor = YearMonth.from(semesterBounds.first)
+            val endMonth = YearMonth.from(semesterBounds.second)
+            while (!cursor.isAfter(endMonth)) {
+                list.add(cursor)
+                cursor = cursor.plusMonths(1)
+            }
+        }
+        if (list.isEmpty()) {
+            val now = YearMonth.now()
+            for (i in 5 downTo 0) list.add(now.minusMonths(i.toLong()))
+        }
+        list.toList()
+    }
+
+    fun weekBounds(week: Int): Pair<LocalDate, LocalDate>? {
+        val bounds = semesterBounds ?: return null
+        val clamped = week.coerceIn(1, totalWeeks)
+        val ws = bounds.first.plusDays((clamped - 1L) * 7L)
+        return ws to ws.plusDays(6)
+    }
+
+    fun weekLabel(week: Int): String {
+        val wb = weekBounds(week)
+        return if (wb != null) {
+            "第${week}周 (${wb.first.monthValue}/${wb.first.dayOfMonth}-${wb.second.monthValue}/${wb.second.dayOfMonth})"
+        } else {
+            "第${week}周"
         }
     }
 
-    LaunchedEffect(statusFilter) { load() }
+    fun monthLabel(ym: YearMonth): String = "${ym.year}年${ym.monthValue}月"
 
-    val filtered = remember(requests, searchText) {
-        val q = searchText.trim().lowercase()
-        if (q.isEmpty()) requests
-        else requests.filter {
-            it.studentName.lowercase().contains(q) ||
-                (it.studentNo ?: "").lowercase().contains(q) ||
-                (it.className ?: "").lowercase().contains(q)
+    val activeRange = remember(statusFilter, timeScope, selectedWeek, selectedMonth, semesterBounds, currentSemester) {
+        val today = LocalDate.now()
+        when (timeScope) {
+            ApprovalTimeScope.ALL -> ApprovalDateRange(
+                from = null,
+                to = null,
+                summary = if (statusFilter == "pending") "全部待审批（不限时间，防漏批）" else "全部历史记录"
+            )
+            ApprovalTimeScope.RECENT_30 -> {
+                val rawFrom = today.minusDays(29)
+                if (semesterBounds != null) {
+                    val effectiveFrom = if (today.isAfter(semesterBounds.second)) {
+                        maxOf(semesterBounds.first, semesterBounds.second.minusDays(29))
+                    } else {
+                        maxOf(semesterBounds.first, rawFrom)
+                    }
+                    ApprovalDateRange(
+                        from = effectiveFrom.toString(),
+                        to = semesterBounds.second.toString(),
+                        summary = "本学期近30天"
+                    )
+                } else {
+                    ApprovalDateRange(from = rawFrom.toString(), to = null, summary = "近30天")
+                }
+            }
+            ApprovalTimeScope.WEEK -> {
+                val wb = weekBounds(selectedWeek)
+                if (wb != null) {
+                    ApprovalDateRange(wb.first.toString(), wb.second.toString(), weekLabel(selectedWeek))
+                } else {
+                    ApprovalDateRange(today.minusDays(6).toString(), today.toString(), "近7天")
+                }
+            }
+            ApprovalTimeScope.MONTH -> {
+                ApprovalDateRange(
+                    from = selectedMonth.atDay(1).toString(),
+                    to = selectedMonth.atEndOfMonth().toString(),
+                    summary = monthLabel(selectedMonth)
+                )
+            }
+            ApprovalTimeScope.SEMESTER -> {
+                if (semesterBounds != null) {
+                    ApprovalDateRange(
+                        from = semesterBounds.first.toString(),
+                        to = semesterBounds.second.toString(),
+                        summary = currentSemester?.name ?: "本学期"
+                    )
+                } else {
+                    ApprovalDateRange(null, null, "本学期")
+                }
+            }
         }
+    }
+
+    fun loadFirstPage(
+        targetStatus: String = statusFilter,
+        targetRange: ApprovalDateRange = activeRange,
+        targetSearch: String = debouncedSearch
+    ) {
+        requestGen += 1
+        val gen = requestGen
+        scope.launch {
+            loading = true
+            loadingMore = false
+            error = null
+            runCatching {
+                repo.fetchLeaveRequestsPage(
+                    status = targetStatus,
+                    dateFrom = targetRange.from,
+                    dateTo = targetRange.to,
+                    search = targetSearch,
+                    page = 1,
+                    perPage = pageSize
+                )
+            }.onSuccess { res ->
+                if (gen == requestGen) {
+                    requests = res.items
+                    currentPage = res.currentPage
+                    totalCount = res.total
+                    hasMore = res.hasMore
+                }
+            }.onFailure {
+                if (gen == requestGen) error = it.localizedMessage
+            }
+            if (gen == requestGen) loading = false
+        }
+    }
+
+    fun loadMore() {
+        if (!hasMore || loading || loadingMore) return
+        val gen = requestGen
+        val nextPage = currentPage + 1
+        val targetStatus = statusFilter
+        val targetRange = activeRange
+        val targetSearch = debouncedSearch
+        scope.launch {
+            loadingMore = true
+            runCatching {
+                repo.fetchLeaveRequestsPage(
+                    status = targetStatus,
+                    dateFrom = targetRange.from,
+                    dateTo = targetRange.to,
+                    search = targetSearch,
+                    page = nextPage,
+                    perPage = pageSize
+                )
+            }.onSuccess { res ->
+                if (gen == requestGen) {
+                    val existing = requests.map { "${it.id}_${it.status}" }.toHashSet()
+                    val appended = res.items.filter { "${it.id}_${it.status}" !in existing }
+                    requests = requests + appended
+                    currentPage = res.currentPage
+                    totalCount = res.total
+                    hasMore = res.hasMore
+                }
+            }.onFailure {
+                if (gen == requestGen) error = it.localizedMessage
+            }
+            if (gen == requestGen) loadingMore = false
+        }
+    }
+
+    // 初始化当前学期与默认教学周/月份
+    LaunchedEffect(Unit) {
+        val list = runCatching { repo.fetchSemesters() }.getOrDefault(emptyList())
+        semesters = list
+        val cur = list.firstOrNull { it.isCurrent } ?: list.firstOrNull()
+        val rawStart = cur?.startDate?.take(10)
+        val start = rawStart?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val weeks = (cur?.totalWeeks ?: 20).coerceAtLeast(1)
+        val today = LocalDate.now()
+        if (start != null) {
+            val diffDays = ChronoUnit.DAYS.between(start, today).toInt()
+            selectedWeek = (diffDays / 7 + 1).coerceIn(1, weeks)
+            val end = start.plusDays(weeks.toLong() * 7L - 1L)
+            val nowYm = YearMonth.from(today)
+            val startYm = YearMonth.from(start)
+            val endYm = YearMonth.from(end)
+            selectedMonth = when {
+                nowYm.isBefore(startYm) -> startYm
+                nowYm.isAfter(endYm) -> endYm
+                else -> nowYm
+            }
+        }
+        semestersLoaded = true
+    }
+
+    // 搜索防抖 350ms
+    LaunchedEffect(searchText) {
+        delay(350)
+        val trimmed = searchText.trim()
+        if (trimmed != debouncedSearch) {
+            debouncedSearch = trimmed
+        }
+    }
+
+    // 任一筛选条件就绪或变动时拉取第 1 页
+    LaunchedEffect(semestersLoaded, statusFilter, activeRange.from, activeRange.to, debouncedSearch) {
+        if (!semestersLoaded) return@LaunchedEffect
+        loadFirstPage(statusFilter, activeRange, debouncedSearch)
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("请假审批") },
-                actions = { IconButton(onClick = { load() }) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新") } }
+                actions = { IconButton(onClick = { loadFirstPage() }) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新") } }
             )
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp)) {
                 filters.forEachIndexed { idx, (key, label) ->
                     SegmentedButton(
                         selected = statusFilter == key,
-                        onClick = { statusFilter = key },
+                        onClick = {
+                            val prev = statusFilter
+                            statusFilter = key
+                            if (key == "pending") {
+                                timeScope = ApprovalTimeScope.ALL
+                            } else if (prev == "pending") {
+                                timeScope = lastHistoryScope
+                            }
+                        },
                         shape = SegmentedButtonDefaults.itemShape(idx, filters.size)
                     ) { Text(label) }
+                }
+            }
+
+            // 时间筛选胶囊条
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ApprovalTimeScope.entries.forEach { item ->
+                    if (item == ApprovalTimeScope.WEEK && semesterBounds == null) return@forEach
+                    FilterChip(
+                        selected = timeScope == item,
+                        onClick = {
+                            timeScope = item
+                            if (statusFilter != "pending") {
+                                lastHistoryScope = item
+                            }
+                        },
+                        label = { Text(item.label, style = MaterialTheme.typography.labelMedium) }
+                    )
+                }
+            }
+
+            // 教学周 / 月份二级切换器
+            if (timeScope == ApprovalTimeScope.WEEK && semesterBounds != null) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(enabled = selectedWeek > 1, onClick = { selectedWeek -= 1 }) {
+                            Icon(Icons.Rounded.ChevronLeft, contentDescription = "上一周")
+                        }
+                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            TextButton(onClick = { weekMenuOpen = true }) {
+                                Text(weekLabel(selectedWeek), fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(expanded = weekMenuOpen, onDismissRequest = { weekMenuOpen = false }) {
+                                (1..totalWeeks).forEach { w ->
+                                    DropdownMenuItem(
+                                        text = { Text(weekLabel(w), fontWeight = if (w == selectedWeek) FontWeight.Bold else FontWeight.Normal) },
+                                        onClick = { selectedWeek = w; weekMenuOpen = false }
+                                    )
+                                }
+                            }
+                        }
+                        IconButton(enabled = selectedWeek < totalWeeks, onClick = { selectedWeek += 1 }) {
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = "下一周")
+                        }
+                    }
+                }
+            } else if (timeScope == ApprovalTimeScope.MONTH) {
+                val monthIdx = availableMonths.indexOf(selectedMonth).let { if (it >= 0) it else availableMonths.lastIndex.coerceAtLeast(0) }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(enabled = monthIdx > 0, onClick = { selectedMonth = availableMonths[monthIdx - 1] }) {
+                            Icon(Icons.Rounded.ChevronLeft, contentDescription = "上一月")
+                        }
+                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            TextButton(onClick = { monthMenuOpen = true }) {
+                                Text(monthLabel(selectedMonth), fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(expanded = monthMenuOpen, onDismissRequest = { monthMenuOpen = false }) {
+                                availableMonths.forEach { ym ->
+                                    DropdownMenuItem(
+                                        text = { Text(monthLabel(ym), fontWeight = if (ym == selectedMonth) FontWeight.Bold else FontWeight.Normal) },
+                                        onClick = { selectedMonth = ym; monthMenuOpen = false }
+                                    )
+                                }
+                            }
+                        }
+                        IconButton(enabled = monthIdx + 1 < availableMonths.size, onClick = { selectedMonth = availableMonths[monthIdx + 1] }) {
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = "下一月")
+                        }
+                    }
                 }
             }
 
@@ -1210,19 +1526,34 @@ fun LeaveApprovalsScreen() {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(10.dp))
 
-            error?.let { ErrorBanner(message = it, onRetry = { load() }); Spacer(Modifier.height(8.dp)) }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(activeRange.summary, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                Text(
+                    text = if (loading && requests.isEmpty()) "加载中..." else "共 $totalCount 条",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            error?.let { ErrorBanner(message = it, onRetry = { loadFirstPage() }); Spacer(Modifier.height(8.dp)) }
 
             if (loading && requests.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else if (filtered.isEmpty()) {
+            } else if (requests.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(if (statusFilter == "pending") "暂无待审批请假" else "暂无记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (statusFilter == "pending") "暂无待审批请假" else "当前筛选范围暂无记录",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(filtered, key = { it.id }) { req ->
+                    items(requests, key = { "${it.id}_${it.status}" }) { req ->
                         val pendingSubs = req.records.filter { it.approvalStatus == "pending" }
                         SCCard {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1275,7 +1606,7 @@ fun LeaveApprovalsScreen() {
                                         onClick = {
                                             scope.launch {
                                                 runCatching { repo.approveLeaveRequest(req.id) }
-                                                    .onSuccess { load() }
+                                                    .onSuccess { loadFirstPage() }
                                                     .onFailure { error = it.localizedMessage }
                                             }
                                         }
@@ -1289,7 +1620,34 @@ fun LeaveApprovalsScreen() {
                             }
                         }
                     }
-                    item { Spacer(Modifier.height(12.dp)) }
+
+                    // 方案 A：滚到底部自动加载下一页 + 总数进度提示
+                    item(key = "load_more_footer") {
+                        LaunchedEffect(requests.size, hasMore, loading, loadingMore) {
+                            if (hasMore && !loading && !loadingMore) {
+                                loadMore()
+                            }
+                        }
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            when {
+                                loadingMore -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Text("正在加载更多...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                hasMore -> TextButton(onClick = { loadMore() }) {
+                                    Text("点击加载更多（已显示 ${requests.size} / $totalCount 条）")
+                                }
+                                else -> Text(
+                                    "已显示全部 $totalCount 条记录",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1313,7 +1671,7 @@ fun LeaveApprovalsScreen() {
                     rejectingTarget = null
                     scope.launch {
                         runCatching { repo.rejectLeaveRequest(target.id, reasonText) }
-                            .onSuccess { load() }
+                            .onSuccess { loadFirstPage() }
                             .onFailure { error = it.localizedMessage }
                     }
                 }) { Text("确认驳回", color = Color(0xFFDC2626)) }
@@ -1354,7 +1712,7 @@ fun LeaveApprovalsScreen() {
                         partialTarget = null
                         scope.launch {
                             runCatching { repo.approveLeaveRequest(target.id, ids) }
-                                .onSuccess { load() }
+                                .onSuccess { loadFirstPage() }
                                 .onFailure { error = it.localizedMessage }
                         }
                     }
