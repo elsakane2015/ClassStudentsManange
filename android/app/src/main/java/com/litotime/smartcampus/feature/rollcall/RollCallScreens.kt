@@ -371,7 +371,7 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
             runCatching {
                 val detail = repo.fetchRollCallDetail(rollCallId)
                 rollCall = detail
-                var list = detail.records
+                var list = detail.records.sortedBy { it.studentNo.orEmpty() }
                 if (detail.status == "in_progress") {
                     val draftMap = draftDao.getByRollCall(rollCallId).associateBy { it.studentId }
                     if (draftMap.isNotEmpty()) {
@@ -577,7 +577,29 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                             }
                         ) {
                             Column(modifier = Modifier.padding(if (compact) 10.dp else 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)) {
+                                    rec.shortStudentNo?.let { shortNo ->
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = when {
+                                                isPresent -> Color.White.copy(alpha = 0.24f)
+                                                rec.status == "pending" -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                                else -> tileColor.copy(alpha = 0.16f)
+                                            }
+                                        ) {
+                                            Text(
+                                                text = shortNo,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = when {
+                                                    isPresent -> Color.White
+                                                    rec.status == "pending" -> MaterialTheme.colorScheme.primary
+                                                    else -> tileColor
+                                                },
+                                                modifier = Modifier.padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                     Text(
                                         rec.studentName,
                                         fontWeight = FontWeight.SemiBold,

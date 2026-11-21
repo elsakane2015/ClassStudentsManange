@@ -212,7 +212,9 @@ struct RollCallOperationView: View {
         do {
             let detail = try await RollCallRepository.fetchRollCallDetail(id: rollCallId)
             rollCall = detail
-            var loadedRecords = detail.records ?? []
+            var loadedRecords = (detail.records ?? []).sorted {
+                ($0.student?.studentNo ?? "").localizedStandardCompare($1.student?.studentNo ?? "") == .orderedAscending
+            }
 
             // 恢复本地 SwiftData 离线草稿（仅对进行中的点名生效，且不覆盖后端最新同步的请假状态）
             if detail.status == "in_progress" {
@@ -292,14 +294,11 @@ struct RollCallOperationView: View {
         defer { isSubmitting = false }
 
         let payloadRecords: [[String: Any]] = records.map { r in
-            var dict: [String: Any] = [
+            [
                 "student_id": r.studentId,
-                "status": r.status == "pending" ? "absent" : r.status
+                "status": r.status,
+                "marked_at": r.markedAt ?? NSNull()
             ]
-            if let markedAt = r.markedAt {
-                dict["marked_at"] = markedAt
-            }
-            return dict
         }
 
         do {
@@ -379,7 +378,20 @@ private struct RollCallStudentTile: View {
     var body: some View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-                HStack(spacing: 4) {
+                HStack(spacing: compact ? 4 : 6) {
+                    if let shortNo = record.student?.shortStudentNo {
+                        Text(shortNo)
+                            .font((compact ? Font.caption2 : Font.caption).monospacedDigit().weight(.bold))
+                            .foregroundStyle(record.status == "present" ? .white : (record.status == "pending" ? SCTheme.primary : tileColor))
+                            .padding(.horizontal, compact ? 5 : 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                record.status == "present"
+                                    ? Color.white.opacity(0.24)
+                                    : (record.status == "pending" ? SCTheme.primary.opacity(0.12) : tileColor.opacity(0.16))
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
                     Text(record.student?.name ?? "学生 #\(record.studentId)")
                         .font(compact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
                         .foregroundStyle(record.status == "present" ? .white : .primary)

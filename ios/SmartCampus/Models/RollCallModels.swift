@@ -51,6 +51,16 @@ struct RollCallStudentRef: Decodable, Identifiable, Hashable {
     }
 
     var name: String { user?.name ?? "学生 #\(id)" }
+
+    /// 两位数短学号（取尾号两位，一位数字补前导 0）
+    var shortStudentNo: String? {
+        let trimmed = (studentNo ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.count >= 2 {
+            return String(trimmed.suffix(2))
+        }
+        return trimmed.allSatisfy(\.isNumber) ? "0\(trimmed)" : trimmed
+    }
 }
 
 struct RollCallRecord: Decodable, Identifiable, Hashable {
@@ -85,9 +95,9 @@ struct RollCall: Decodable, Identifiable, Hashable {
     let rollCallTypeId: Int?
     let rollCallTime: String?
     let status: String // in_progress, completed, cancelled
-    let totalStudents: Int
-    let presentCount: Int
-    let onLeaveCount: Int
+    private let totalStudentsRaw: FlexibleInt?
+    private let presentCountRaw: FlexibleInt?
+    private let onLeaveCountRaw: FlexibleInt?
     let notes: String?
     let completedAt: String?
     let canModifyRecords: FlexibleBool?
@@ -101,14 +111,18 @@ struct RollCall: Decodable, Identifiable, Hashable {
         case classId = "class_id"
         case rollCallTypeId = "roll_call_type_id"
         case rollCallTime = "roll_call_time"
-        case totalStudents = "total_students"
-        case presentCount = "present_count"
-        case onLeaveCount = "on_leave_count"
+        case totalStudentsRaw = "total_students"
+        case presentCountRaw = "present_count"
+        case onLeaveCountRaw = "on_leave_count"
         case completedAt = "completed_at"
         case canModifyRecords = "can_modify_records"
         case rollCallType = "roll_call_type"
         case schoolClass = "class"
     }
+
+    var totalStudents: Int { totalStudentsRaw?.value ?? (records?.count ?? 0) }
+    var presentCount: Int { presentCountRaw?.value ?? 0 }
+    var onLeaveCount: Int { onLeaveCountRaw?.value ?? 0 }
 
     var absentCount: Int {
         max(0, totalStudents - presentCount - onLeaveCount)

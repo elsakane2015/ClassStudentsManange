@@ -690,6 +690,15 @@ data class RollCallRecord(
     val markedAt: String?,
     val markedAtLocal: String?
 ) {
+    /** 两位数短学号（取尾号两位，一位数字补前导 0） */
+    val shortStudentNo: String?
+        get() {
+            val trimmed = studentNo?.trim().orEmpty()
+            if (trimmed.isEmpty()) return null
+            if (trimmed.length >= 2) return trimmed.takeLast(2)
+            return if (trimmed.all { it.isDigit() }) "0$trimmed" else trimmed
+        }
+
     companion object {
         fun fromJson(o: JsonObject): RollCallRecord {
             val st = o.objOrNull("student")

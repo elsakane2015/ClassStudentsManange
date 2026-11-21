@@ -157,12 +157,20 @@ struct RollCallHubContentView: View {
         }
         .sheet(isPresented: $showStartSheet) {
             StartRollCallSheet(types: rollCallTypes) { created in
-                activeRollCallToNavigate = created
-                Task { await loadAll() }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(200))
+                    activeRollCallToNavigate = created
+                    await loadAll()
+                }
             }
         }
         .navigationDestination(item: $activeRollCallToNavigate) { created in
             RollCallOperationView(rollCallId: created.id)
+        }
+        .onAppear {
+            if !rollCallTypes.isEmpty || !inProgressCalls.isEmpty || !historyCalls.isEmpty {
+                Task { await loadAll() }
+            }
         }
         .task {
             await loadAll()

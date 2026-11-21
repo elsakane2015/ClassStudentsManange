@@ -289,6 +289,8 @@ class RollCallController extends Controller
                     'created_by' => $user->id,
                     'status' => 'in_progress',
                     'total_students' => $students->count(),
+                    'present_count' => 0,
+                    'on_leave_count' => 0,
                     'notes' => $validated['notes'] ?? null,
                 ]);
 
@@ -312,7 +314,7 @@ class RollCallController extends Controller
                     ->count();
                 $rollCall->update(['on_leave_count' => $onLeaveCount]);
                 
-                $createdRollCalls[] = $rollCall->load('rollCallType', 'class', 'records.student.user');
+                $createdRollCalls[] = $rollCall->refresh()->load('rollCallType', 'class', 'records.student.user');
             }
 
             DB::commit();
@@ -543,7 +545,7 @@ class RollCallController extends Controller
                         // Only update if not on_leave (preserve leave status)
                         // Parse marked_at and ensure it's in correct timezone
                         $markedAt = null;
-                        if ($recordData['marked_at']) {
+                        if (!empty($recordData['marked_at'])) {
                             $markedAt = Carbon::parse($recordData['marked_at'])->setTimezone('Asia/Shanghai');
                         }
                         $record->update([

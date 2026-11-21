@@ -322,8 +322,8 @@ class SmartCampusRepository(private val api: ApiClient) {
                 records.forEach { rec ->
                     add(buildJsonObject {
                         put("student_id", rec.studentId)
-                        put("status", if (rec.status == "pending") "absent" else rec.status)
-                        rec.markedAt?.let { put("marked_at", it) }
+                        put("status", rec.status)
+                        put("marked_at", rec.markedAt)
                     })
                 }
             })
