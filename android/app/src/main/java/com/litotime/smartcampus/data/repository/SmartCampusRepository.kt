@@ -108,11 +108,20 @@ class SmartCampusRepository(private val api: ApiClient) {
             .mapNotNull { it.asObjectOrNull()?.let(NonPresentDetailStudent::fromJson) }
     }
 
-    suspend fun fetchStudentRecords(studentId: Int, scope: String): List<AttendanceRecord> =
-        api.requestElement(
-            "/attendance/student-records",
-            query = mapOf("student_id" to studentId.toString(), "scope" to scope)
-        ).asArrayOrEmpty().mapNotNull { it.asObjectOrNull()?.let(AttendanceRecord::fromJson) }
+    suspend fun fetchStudentRecords(
+        studentId: Int,
+        scope: String,
+        startDate: String? = null,
+        endDate: String? = null
+    ): List<AttendanceRecord> {
+        val query = mutableMapOf("student_id" to studentId.toString(), "scope" to scope)
+        if (scope == "custom") {
+            startDate?.let { query["start_date"] = it }
+            endDate?.let { query["end_date"] = it }
+        }
+        return api.requestElement("/attendance/student-records", query = query)
+            .asArrayOrEmpty().mapNotNull { it.asObjectOrNull()?.let(AttendanceRecord::fromJson) }
+    }
 
     suspend fun submitBulkAttendance(
         date: String,

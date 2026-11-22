@@ -33,6 +33,10 @@ struct TeacherDashboardView: View {
 
     @State private var selectedStudent: AttendanceOverviewStudent?
     @State private var focusedRecordId: Int? = nil
+    @State private var openSwipeRecordId: Int? = nil
+    @State private var busySummaryRecordIds: Set<Int> = []
+    @State private var quickToastMessage: String? = nil
+    @State private var hapticCounter: Int = 0
     @State private var statDetailTarget: StatDetailTarget?
     @State private var showExportSheet = false
     @State private var showNotifications = false
@@ -75,6 +79,14 @@ struct TeacherDashboardView: View {
 
     private var selectedDaySummaryRecords: [CalendarSummaryRecord] {
         calendarSummary[selectedDateKey] ?? []
+    }
+
+    private var activeLeaveTypes: [LeaveType] {
+        leaveTypes.filter(\.isActiveFlag)
+    }
+
+    private var regularPeriods: [ClassPeriod] {
+        classPeriods.filter { ($0.scene ?? "regular") != "evening_study" }
     }
 
     private var flattenedRosterStudents: [AttendanceOverviewStudent] {
@@ -276,12 +288,34 @@ struct TeacherDashboardView: View {
                 Task { await loadCalendarSummary() }
             }
             .onChange(of: selectedDate) { _, newDate in
+                openSwipeRecordId = nil
                 // Keep anchor synced if user taps a trailing/leading day in another month
                 let cal = Calendar.current
                 if calendarViewMode == .month && !cal.isDate(newDate, equalTo: calendarAnchorDate, toGranularity: .month) {
                     calendarAnchorDate = newDate
                 }
                 Task { await loadOverview() }
+            }
+            .onChange(of: dayPanelMode) { _, _ in
+                openSwipeRecordId = nil
+            }
+            .sensoryFeedback(.impact(flexibility: .soft), trigger: hapticCounter)
+            .overlay(alignment: .bottom) {
+                if let toast = quickToastMessage {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text(toast)
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .sheet(item: $selectedStudent, onDismiss: {
                 focusedRecordId = nil
@@ -388,52 +422,30 @@ struct TeacherDashboardView: View {
                     } else {
                         VStack(spacing: 8) {
                             ForEach(selectedDaySummaryRecords) { rec in
-                                HStack(alignment: .center, spacing: 8) {
-                                    Circle()
-                                        .fill(SCTheme.color(for: rec.displayColorKey))
-                                        .frame(width: 8, height: 8)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        HStack(spacing: 4) {
-                                            if !rec.approvalPrefix.isEmpty {
-                                                Text(rec.approvalPrefix)
-                                                    .font(.caption.weight(.bold))
-                                                    .foregroundStyle(SCTheme.color(for: rec.approvalStatus))
+                                SummarySwipeableRecordRow(
+                                    record: rec,
+                                    activeLeaveTypes: activeLeaveTypes,
+                                    isBusy: busySummaryRecordIds.contains(rec.id),
+                                    isOpen: openSwipeRecordId == rec.id,
+                                    onSetOpen: { open in
+                                        withAnimation(.snappy(duration: 0.22)) {
+                                            if open {
+                                                openSwipeRecordId = rec.id
+                                            } else if openSwipeRecordId == rec.id {
+                                                openSwipeRecordId = nil
                                             }
-                                            Text(rec.typeWithOption)
-                                                .font(.subheadline.weight(.semibold))
-                                                .foregroundStyle(SCTheme.color(for: rec.displayColorKey))
-                                                .lineLimit(2)
                                         }
-                                        Text(rec.studentShortLabel)
-                                            .font(.caption)
-                                            .foregroundStyle(.primary)
+                                    },
+                                    onTap: {
+                                        openSummaryDetail(for: rec)
+                                    },
+                                    onQuickChangeType: { targetType in
+                                        Task { await quickChangeSummaryRecord(rec, to: targetType) }
+                                    },
+                                    onDelete: {
+                                        Task { await quickDeleteSummaryRecord(rec) }
                                     }
-
-                                    Spacer()
-
-                                    if let time = rec.time, !time.isEmpty {
-                                        Text(time)
-                                            .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .padding(10)
-                                .background(Color(.tertiarySystemFill).opacity(0.65))
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .onTapGesture {
-                                    // 快速定位该学生及具体标记进行修改/撤销
-                                    if let matched = overview
-                                        .flatMap({ $0.classes ?? [] })
-                                        .flatMap({ $0.students ?? [] })
-                                        .first(where: { $0.displayName == rec.studentName }) {
-                                        focusedRecordId = rec.id
-                                        selectedStudent = matched
-                                    }
-                                }
+                                )
                             }
                         }
                     }
@@ -678,6 +690,485 @@ struct TeacherDashboardView: View {
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Summary Row Quick Actions (Tap Detail / Long-Press Quick Edit / Swipe Delete)
+
+    private func matchedStudent(for rec: CalendarSummaryRecord) -> AttendanceOverviewStudent? {
+        let all = overview.flatMap { $0.classes ?? [] }.flatMap { $0.students ?? [] }
+        if let sid = rec.studentId, let exact = all.first(where: { $0.id == sid }) {
+            return exact
+        }
+        if let no = rec.studentNo, !no.isEmpty, let byNo = all.first(where: { $0.studentNo == no }) {
+            return byNo
+        }
+        return all.first(where: { $0.displayName == rec.studentName })
+    }
+
+    private func openSummaryDetail(for rec: CalendarSummaryRecord) {
+        if let matched = matchedStudent(for: rec) {
+            focusedRecordId = rec.id
+            selectedStudent = matched
+        }
+    }
+
+    private func resolveUnderlyingRecords(
+        for rec: CalendarSummaryRecord,
+        student: AttendanceOverviewStudent
+    ) async -> [AttendanceRecord] {
+        let idSet = Set(rec.allRecordIds)
+        var candidates = (student.attendance ?? []).filter { !$0.isNormalPresentRecord }
+        var matched = candidates.filter { idSet.contains($0.id) }
+
+        if matched.isEmpty {
+            if let fetched = try? await AttendanceRepository.fetchStudentRecords(
+                studentId: student.id,
+                scope: "custom",
+                startDate: selectedDateKey,
+                endDate: selectedDateKey
+            ) {
+                candidates = fetched.filter { !$0.isNormalPresentRecord }
+                matched = candidates.filter { idSet.contains($0.id) }
+            }
+        }
+
+        // 兼容老版后端未返回 record_ids 时，将同批次/同类型合并展示的独立节次记录一并匹配
+        if rec.recordIds == nil, matched.count == 1, let primary = matched.first,
+           primary.periodId != nil, (primary.scene ?? "regular") != "evening_study",
+           let opt = rec.option, (opt.contains("、") || opt.contains("-") || opt.contains("节)")) {
+            let groupMatches = candidates.filter { item in
+                item.periodId != nil
+                    && (item.scene ?? "regular") == (primary.scene ?? "regular")
+                    && item.leaveTypeId == primary.leaveTypeId
+                    && item.status == primary.status
+                    && item.approvalStatus == primary.approvalStatus
+                    && item.leaveBatchId == primary.leaveBatchId
+            }
+            if !groupMatches.isEmpty {
+                matched = groupMatches
+            }
+        }
+
+        return matched
+    }
+
+    private func quickChangeSummaryRecord(_ rec: CalendarSummaryRecord, to targetType: LeaveType) async {
+        openSwipeRecordId = nil
+        guard !busySummaryRecordIds.contains(rec.id) else { return }
+
+        guard let student = matchedStudent(for: rec) else {
+            errorMessage = "未找到学生「\(rec.studentName)」，请下拉刷新后重试"
+            return
+        }
+
+        busySummaryRecordIds.insert(rec.id)
+        errorMessage = nil
+        defer { busySummaryRecordIds.remove(rec.id) }
+
+        let oldRecords = await resolveUnderlyingRecords(for: rec, student: student)
+
+        if oldRecords.contains(where: { ($0.scene ?? "regular") == "evening_study" }) {
+            openSummaryDetail(for: rec)
+            return
+        }
+
+        // 合并提取原记录覆盖的节次与备注
+        var mergedPeriodIds = Set<Int>()
+        var existingNote: String? = nil
+        for item in oldRecords {
+            for pid in item.extractedPeriodIds(classPeriods: regularPeriods) {
+                mergedPeriodIds.insert(pid)
+            }
+            if existingNote == nil,
+               let text = item.details?.value?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !text.isEmpty {
+                existingNote = text
+            }
+        }
+
+        // 若原记录是已相同类型且状态一致，无需重复提交
+        let targetStatus = targetType.mappedAttendanceStatus
+        if !oldRecords.isEmpty,
+           oldRecords.allSatisfy({ $0.leaveTypeId == targetType.id && $0.status == targetStatus }) {
+            return
+        }
+
+        let sortedPeriodIds = mergedPeriodIds.sorted()
+        var payloadRecord: [String: Any] = [
+            "student_id": student.id,
+            "status": targetStatus,
+            "leave_type_id": targetType.id
+        ]
+
+        var details: [String: Any] = [:]
+        if !sortedPeriodIds.isEmpty {
+            let names = sortedPeriodIds.compactMap { pid in
+                regularPeriods.first(where: { $0.id == pid })?.name
+            }
+            details["period_ids"] = sortedPeriodIds
+            details["period_names"] = names
+            details["option_label"] = names.joined(separator: "、")
+            details["is_custom"] = true
+        }
+        if let existingNote, !existingNote.isEmpty {
+            details["text"] = existingNote
+        }
+        if !details.isEmpty {
+            payloadRecord["details"] = details
+        }
+
+        do {
+            try await AttendanceRepository.submitBulkAttendance(
+                date: selectedDateKey,
+                records: [payloadRecord]
+            )
+
+            // 清理不会被后端同位覆盖或自动替换点名旷课的旧记录
+            var deletedRollCallIds = Set<Int>()
+            var deletedSelfBatches = Set<String>()
+            for old in oldRecords {
+                let oldPeriodIds = old.extractedPeriodIds(classPeriods: regularPeriods)
+                let sameTarget = (old.leaveTypeId == targetType.id)
+                    && (old.status == targetStatus)
+                    && (oldPeriodIds == sortedPeriodIds)
+                    && (old.periodId == nil)
+                let autoReplacedRollCall = (old.sourceType == "roll_call")
+                    && (targetStatus == "leave")
+                    && (sortedPeriodIds.isEmpty || !Set(oldPeriodIds).isDisjoint(with: Set(sortedPeriodIds)))
+
+                if sameTarget || autoReplacedRollCall {
+                    continue
+                }
+                if old.sourceType == "roll_call", let sid = old.sourceId {
+                    if !deletedRollCallIds.insert(sid).inserted { continue }
+                }
+                let isSelfApplied = (old.isSelfApplied?.value == true) || (old.sourceType == "self_applied")
+                if isSelfApplied, let batch = old.leaveBatchId, !batch.isEmpty {
+                    let key = "\(batch)_\(old.scene ?? "regular")"
+                    if !deletedSelfBatches.insert(key).inserted { continue }
+                }
+
+                try? await AttendanceRepository.deleteAttendanceRecord(
+                    studentId: student.id,
+                    date: old.dateKey.isEmpty ? selectedDateKey : old.dateKey,
+                    recordId: old.id,
+                    periodId: old.periodId,
+                    leaveBatchId: old.leaveBatchId,
+                    sourceType: isSelfApplied ? "self_applied" : old.sourceType,
+                    scene: old.scene ?? "regular",
+                    deleteScope: isSelfApplied ? "scene_date" : "record"
+                )
+            }
+
+            hapticCounter += 1
+            showQuickToast("已将 \(rec.studentName) 改为 \(targetType.name)")
+            await loadStats()
+            await loadCalendarSummary()
+            await loadOverview()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func quickDeleteSummaryRecord(_ rec: CalendarSummaryRecord) async {
+        withAnimation(.snappy(duration: 0.2)) {
+            openSwipeRecordId = nil
+        }
+        guard !busySummaryRecordIds.contains(rec.id) else { return }
+
+        let student = matchedStudent(for: rec)
+        guard let targetStudentId = student?.id ?? rec.studentId else {
+            errorMessage = "未找到学生「\(rec.studentName)」，请下拉刷新后重试"
+            return
+        }
+
+        busySummaryRecordIds.insert(rec.id)
+        errorMessage = nil
+        defer { busySummaryRecordIds.remove(rec.id) }
+
+        do {
+            let oldRecords: [AttendanceRecord]
+            if let student {
+                oldRecords = await resolveUnderlyingRecords(for: rec, student: student)
+            } else {
+                oldRecords = []
+            }
+
+            if !oldRecords.isEmpty {
+                var deletedRollCallIds = Set<Int>()
+                var deletedSelfBatches = Set<String>()
+                for item in oldRecords {
+                    if item.sourceType == "roll_call", let sid = item.sourceId {
+                        if !deletedRollCallIds.insert(sid).inserted { continue }
+                    }
+                    let isSelfApplied = (item.isSelfApplied?.value == true) || (item.sourceType == "self_applied")
+                    if isSelfApplied, let batch = item.leaveBatchId, !batch.isEmpty {
+                        let key = "\(batch)_\(item.scene ?? "regular")"
+                        if !deletedSelfBatches.insert(key).inserted { continue }
+                    }
+
+                    try await AttendanceRepository.deleteAttendanceRecord(
+                        studentId: targetStudentId,
+                        date: item.dateKey.isEmpty ? selectedDateKey : item.dateKey,
+                        recordId: item.id,
+                        periodId: item.periodId,
+                        leaveBatchId: item.leaveBatchId,
+                        sourceType: isSelfApplied ? "self_applied" : item.sourceType,
+                        scene: item.scene ?? "regular",
+                        deleteScope: isSelfApplied ? "scene_date" : "record"
+                    )
+                }
+            } else {
+                let isSelfApplied = rec.isSelfApplied?.value == true
+                try await AttendanceRepository.deleteAttendanceRecord(
+                    studentId: targetStudentId,
+                    date: selectedDateKey,
+                    recordId: rec.id,
+                    sourceType: isSelfApplied ? "self_applied" : nil,
+                    scene: (rec.option?.contains("夜自习") == true) ? "evening_study" : "regular",
+                    deleteScope: isSelfApplied ? "scene_date" : "record"
+                )
+            }
+
+            withAnimation(.snappy(duration: 0.22)) {
+                calendarSummary[selectedDateKey]?.removeAll { $0.id == rec.id }
+            }
+            hapticCounter += 1
+            showQuickToast("已删除 \(rec.studentName) 的考勤记录")
+            await loadStats()
+            await loadCalendarSummary()
+            await loadOverview()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func showQuickToast(_ text: String) {
+        withAnimation(.snappy(duration: 0.22)) {
+            quickToastMessage = text
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            await MainActor.run {
+                if quickToastMessage == text {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        quickToastMessage = nil
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Swipeable & Context-Menu Summary Record Row
+
+private struct SummarySwipeableRecordRow: View {
+    let record: CalendarSummaryRecord
+    let activeLeaveTypes: [LeaveType]
+    let isBusy: Bool
+    let isOpen: Bool
+    let onSetOpen: (Bool) -> Void
+    let onTap: () -> Void
+    let onQuickChangeType: (LeaveType) -> Void
+    let onDelete: () -> Void
+
+    private let actionWidth: CGFloat = 78
+
+    @State private var dragDelta: CGFloat = 0
+    @State private var dragAxis: DragAxis? = nil
+
+    private enum DragAxis {
+        case horizontal
+        case vertical
+    }
+
+    private var currentOffset: CGFloat {
+        let base: CGFloat = isOpen ? -actionWidth : 0
+        return min(0, max(-actionWidth - 18, base + dragDelta))
+    }
+
+    private var isEveningStudyRecord: Bool {
+        record.option?.contains("夜自习") == true
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            // 底层红色删除按钮（仅在左滑揭开时展示，静止时完全隐藏避免透红）
+            if currentOffset < -1 || isOpen {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    VStack(spacing: 3) {
+                        if isBusy {
+                            ProgressView()
+                                .tint(.white)
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "trash.fill")
+                                .font(.subheadline)
+                            Text("删除")
+                                .font(.caption2.weight(.semibold))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .frame(width: actionWidth)
+                    .frame(maxHeight: .infinity)
+                    .background(Color.red)
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .allowsHitTesting(isOpen && !isBusy)
+            }
+
+            // 前景记录卡片（不透明底色 + 浅灰叠层，兼顾原有视觉与遮挡底层）
+            rowContent
+                .background(
+                    ZStack {
+                        SCTheme.cardBackground
+                        Color(.tertiarySystemFill).opacity(0.65)
+                    }
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .offset(x: currentOffset)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isOpen {
+                        onSetOpen(false)
+                    } else if !isBusy {
+                        onTap()
+                    }
+                }
+                .contextMenu {
+                    if !isEveningStudyRecord && !activeLeaveTypes.isEmpty {
+                        Section("快捷修改考勤类型") {
+                            ForEach(activeLeaveTypes) { lt in
+                                let isCurrent = (lt.name == record.type)
+                                Button {
+                                    if !isCurrent {
+                                        onQuickChangeType(lt)
+                                    }
+                                } label: {
+                                    if isCurrent {
+                                        Label("\(lt.name)（当前）", systemImage: "checkmark")
+                                    } else {
+                                        Label("改为 \(lt.name)", systemImage: iconName(for: lt))
+                                    }
+                                }
+                                .disabled(isCurrent || isBusy)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Button {
+                        onTap()
+                    } label: {
+                        Label("详细编辑（节次 / 备注）", systemImage: "slider.horizontal.3")
+                    }
+
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Label("删除此记录", systemImage: "trash")
+                    }
+                    .disabled(isBusy)
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 14, coordinateSpace: .global)
+                        .onChanged { value in
+                            guard !isBusy else { return }
+                            let tx = value.translation.width
+                            let ty = value.translation.height
+                            if dragAxis == nil {
+                                if abs(tx) > abs(ty) * 1.25 {
+                                    dragAxis = .horizontal
+                                } else if abs(ty) > abs(tx) {
+                                    dragAxis = .vertical
+                                    if isOpen {
+                                        onSetOpen(false)
+                                    }
+                                }
+                            }
+                            guard dragAxis == .horizontal else { return }
+                            // 未展开时只响应向左滑；已展开时响应左右微调
+                            if !isOpen && tx > 0 {
+                                dragDelta = 0
+                            } else {
+                                dragDelta = tx
+                            }
+                        }
+                        .onEnded { value in
+                            defer {
+                                dragAxis = nil
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    dragDelta = 0
+                                }
+                            }
+                            guard dragAxis == .horizontal, !isBusy else { return }
+                            let base: CGFloat = isOpen ? -actionWidth : 0
+                            let projected = base + value.predictedEndTranslation.width
+                            let ended = base + value.translation.width
+                            let shouldOpen = ended < -(actionWidth * 0.45) || projected < -(actionWidth * 0.7)
+                            onSetOpen(shouldOpen)
+                        }
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var rowContent: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Circle()
+                .fill(SCTheme.color(for: record.displayColorKey))
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    if !record.approvalPrefix.isEmpty {
+                        Text(record.approvalPrefix)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(SCTheme.color(for: record.approvalStatus))
+                    }
+                    Text(record.typeWithOption)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(SCTheme.color(for: record.displayColorKey))
+                        .lineLimit(2)
+                }
+                Text(record.studentShortLabel)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+            }
+
+            Spacer()
+
+            if isBusy {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                if let time = record.time, !time.isEmpty {
+                    Text(time)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(10)
+    }
+
+    private func iconName(for leaveType: LeaveType) -> String {
+        switch leaveType.slug {
+        case "absent": return "xmark.circle"
+        case "late": return "clock.badge.exclamationmark"
+        case "early_leave": return "figure.walk.departure"
+        default:
+            if leaveType.name.contains("病") { return "cross.case" }
+            if leaveType.name.contains("生理") { return "heart" }
+            return "doc.text"
         }
     }
 }

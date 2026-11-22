@@ -169,6 +169,8 @@ struct Semester: Decodable, Identifiable, Hashable {
 
 struct CalendarSummaryRecord: Decodable, Identifiable, Hashable {
     let id: Int
+    let recordIds: [Int]?
+    let studentId: Int?
     let type: String
     let option: String?
     let studentName: String
@@ -180,10 +182,19 @@ struct CalendarSummaryRecord: Decodable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, type, option, time, status
+        case recordIds = "record_ids"
+        case studentId = "student_id"
         case studentName = "student_name"
         case studentNo = "student_no"
         case isSelfApplied = "is_self_applied"
         case approvalStatus = "approval_status"
+    }
+
+    var allRecordIds: [Int] {
+        if let ids = recordIds, !ids.isEmpty {
+            return ids
+        }
+        return [id]
     }
 
     var approvalPrefix: String {
@@ -306,6 +317,7 @@ struct AttendanceRecord: Decodable, Identifiable, Hashable {
     let rejectionReason: String?
     let reason: String?
     let sourceType: String?
+    let sourceId: Int?
     let note: String?
     let destination: String?
     let leaveType: LeaveType?
@@ -331,6 +343,7 @@ struct AttendanceRecord: Decodable, Identifiable, Hashable {
         case approvalStatus = "approval_status"
         case rejectionReason = "rejection_reason"
         case sourceType = "source_type"
+        case sourceId = "source_id"
         case leaveType = "leave_type"
         case requestedEveningStatus = "requested_evening_status"
         case eveningStudyStatus = "evening_study_status"

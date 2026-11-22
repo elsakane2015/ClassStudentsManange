@@ -1206,6 +1206,8 @@ class AttendanceController extends Controller
                 if (!isset($result[$dateKey][$mergeKey])) {
                     $result[$dateKey][$mergeKey] = [
                         'id' => $record->id,
+                        'record_ids' => [$record->id],
+                        'student_id' => $record->student_id,
                         'type' => $typeLabel,
                         'option' => $optionLabel,
                         'student_name' => $record->student?->user?->name ?? '未知学生',
@@ -1219,7 +1221,8 @@ class AttendanceController extends Controller
                         '_include_period_count' => $isBatchPeriodRecord,
                     ];
                 } else {
-                    // 追加节次
+                    // 追加节次与关联记录ID
+                    $result[$dateKey][$mergeKey]['record_ids'][] = $record->id;
                     $result[$dateKey][$mergeKey]['_period_ids'][] = $record->period_id;
                     $result[$dateKey][$mergeKey]['_period_names'][] = $optionLabel;
                 }
@@ -1231,6 +1234,8 @@ class AttendanceController extends Controller
                 
                 $result[$dateKey][$mergeKey] = [
                     'id' => $record->id,
+                    'record_ids' => [$record->id],
+                    'student_id' => $record->student_id,
                     'type' => $typeLabel,
                     'option' => $optionLabel,
                     'student_name' => $record->student?->user?->name ?? '未知学生',

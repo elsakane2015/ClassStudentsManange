@@ -2,22 +2,29 @@ package com.litotime.smartcampus.feature.teacher
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -45,6 +53,7 @@ import androidx.compose.material.icons.rounded.Nightlight
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -69,6 +78,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -79,6 +90,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,11 +100,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -157,15 +174,20 @@ fun TeacherDashboardScreen(
 
     var selectedStudent by remember { mutableStateOf<OverviewStudent?>(null) }
     var focusedRecordId by remember { mutableStateOf<Int?>(null) }
+    var openSwipeRecordId by remember { mutableStateOf<Int?>(null) }
+    var busySummaryIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var statDetailTarget by remember { mutableStateOf<Triple<String, String?, Int?>?>(null) }
     var showExportModal by remember { mutableStateOf(false) }
     var semMenuOpen by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val haptic = LocalHapticFeedback.current
 
     val activeSemester = remember(semesters) { semesters.firstOrNull { it.isCurrent } ?: semesters.firstOrNull() }
     val canViewCalendarSummary = user.hasPermission("attendance.calendar_summary") || user.isTeacherOrAdmin
     val selectedDateKey = selectedDate.format(SCDateFormatter.yyyyMMdd)
     val selectedDayRecords = calendarSummary[selectedDateKey].orEmpty()
     val isSelectedHoliday = activeSemester?.holidays?.contains(selectedDateKey) == true
+    val regularPeriods = remember(classPeriods) { classPeriods.filter { (it.scene ?: "regular") != "evening_study" } }
 
     val filteredRoster = remember(overview, rosterSearch) {
         val all = overview.flatMap { it.classes }.flatMap { it.students }
@@ -238,13 +260,201 @@ fun TeacherDashboardScreen(
     LaunchedEffect(selectedScope, selectedSemesterId) { if (stats != null) loadStats() }
     LaunchedEffect(anchorDate, isWeekMode) { loadCalendarSummary() }
     LaunchedEffect(selectedDate) {
+        openSwipeRecordId = null
         if (YearMonth.from(selectedDate) != YearMonth.from(anchorDate) && !isWeekMode) {
             anchorDate = selectedDate
         }
         loadOverview()
     }
+    LaunchedEffect(dayPanelMode) { openSwipeRecordId = null }
+
+    fun matchedStudent(rec: CalendarSummaryRecord): OverviewStudent? {
+        val all = overview.flatMap { it.classes }.flatMap { it.students }
+        rec.studentId?.let { sid -> all.firstOrNull { it.id == sid }?.let { return it } }
+        rec.studentNo?.takeIf { it.isNotBlank() }?.let { no -> all.firstOrNull { it.studentNo == no }?.let { return it } }
+        return all.firstOrNull { it.name == rec.studentName }
+    }
+
+    suspend fun resolveUnderlyingRecords(rec: CalendarSummaryRecord, student: OverviewStudent): List<AttendanceRecord> {
+        val idSet = rec.allRecordIds.toSet()
+        var candidates = student.attendance.filterNot { it.isNormalPresentRecord }
+        var matched = candidates.filter { it.id in idSet }
+        if (matched.isEmpty()) {
+            val fetched = runCatching {
+                repo.fetchStudentRecords(student.id, "custom", selectedDateKey, selectedDateKey)
+            }.getOrDefault(emptyList())
+            candidates = fetched.filterNot { it.isNormalPresentRecord }
+            matched = candidates.filter { it.id in idSet }
+        }
+        if (rec.recordIds.isEmpty() && matched.size == 1) {
+            val primary = matched.first()
+            val opt = rec.option.orEmpty()
+            if (primary.periodId != null && (primary.scene ?: "regular") != "evening_study" &&
+                (opt.contains("、") || opt.contains("-") || opt.contains("节)"))
+            ) {
+                val group = candidates.filter { item ->
+                    item.periodId != null &&
+                        (item.scene ?: "regular") == (primary.scene ?: "regular") &&
+                        item.leaveTypeId == primary.leaveTypeId &&
+                        item.status == primary.status &&
+                        item.approvalStatus == primary.approvalStatus &&
+                        item.leaveBatchId == primary.leaveBatchId
+                }
+                if (group.isNotEmpty()) matched = group
+            }
+        }
+        return matched
+    }
+
+    fun quickChangeSummaryRecord(rec: CalendarSummaryRecord, targetType: LeaveType) {
+        openSwipeRecordId = null
+        if (rec.id in busySummaryIds) return
+        val student = matchedStudent(rec)
+        if (student == null) {
+            error = "未找到学生「${rec.studentName}」，请刷新后重试"
+            return
+        }
+        scope.launch {
+            busySummaryIds = busySummaryIds + rec.id
+            error = null
+            runCatching {
+                val oldRecords = resolveUnderlyingRecords(rec, student)
+                if (oldRecords.any { (it.scene ?: "regular") == "evening_study" }) {
+                    focusedRecordId = rec.id
+                    selectedStudent = student
+                    return@runCatching
+                }
+
+                val targetStatus = targetType.mappedAttendanceStatus
+                if (oldRecords.isNotEmpty() && oldRecords.all { it.leaveTypeId == targetType.id && it.status == targetStatus }) {
+                    return@runCatching
+                }
+
+                val mergedPeriodIds = oldRecords.flatMap { it.extractedPeriodIds(regularPeriods) }.distinct().sorted()
+                val existingNote = oldRecords.firstNotNullOfOrNull { it.detailsText?.trim()?.takeIf { t -> t.isNotEmpty() } }
+
+                repo.submitBulkAttendance(
+                    date = selectedDateKey,
+                    studentId = student.id,
+                    status = targetStatus,
+                    leaveTypeId = targetType.id,
+                    periodIds = mergedPeriodIds,
+                    note = existingNote
+                )
+
+                val deletedRollCallIds = mutableSetOf<Int>()
+                val deletedSelfBatches = mutableSetOf<String>()
+                oldRecords.forEach { old ->
+                    val oldPeriodIds = old.extractedPeriodIds(regularPeriods)
+                    val sameTarget = old.leaveTypeId == targetType.id &&
+                        old.status == targetStatus &&
+                        oldPeriodIds == mergedPeriodIds &&
+                        old.periodId == null
+                    val autoReplacedRollCall = old.sourceType == "roll_call" &&
+                        targetStatus == "leave" &&
+                        (mergedPeriodIds.isEmpty() || oldPeriodIds.any { it in mergedPeriodIds })
+                    if (sameTarget || autoReplacedRollCall) return@forEach
+
+                    if (old.sourceType == "roll_call" && old.sourceId != null) {
+                        if (!deletedRollCallIds.add(old.sourceId)) return@forEach
+                    }
+                    val isSelfApplied = old.isSelfApplied || old.sourceType == "self_applied"
+                    if (isSelfApplied && !old.leaveBatchId.isNullOrBlank()) {
+                        val key = "${old.leaveBatchId}_${old.scene ?: "regular"}"
+                        if (!deletedSelfBatches.add(key)) return@forEach
+                    }
+
+                    runCatching {
+                        repo.deleteAttendanceRecord(
+                            studentId = student.id,
+                            date = old.dateKey.ifEmpty { selectedDateKey },
+                            recordId = old.id,
+                            periodId = old.periodId,
+                            leaveBatchId = old.leaveBatchId,
+                            sourceType = if (isSelfApplied) "self_applied" else old.sourceType,
+                            scene = old.scene ?: "regular",
+                            deleteScope = if (isSelfApplied) "scene_date" else "record"
+                        )
+                    }
+                }
+
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                loadStats()
+                loadCalendarSummary()
+                loadOverview()
+                snackbarHostState.showSnackbar("已将 ${rec.studentName} 改为 ${targetType.name}")
+            }.onFailure { error = it.localizedMessage ?: "修改失败" }
+            busySummaryIds = busySummaryIds - rec.id
+        }
+    }
+
+    fun quickDeleteSummaryRecord(rec: CalendarSummaryRecord) {
+        openSwipeRecordId = null
+        if (rec.id in busySummaryIds) return
+        val student = matchedStudent(rec)
+        val targetStudentId = student?.id ?: rec.studentId
+        if (targetStudentId == null) {
+            error = "未找到学生「${rec.studentName}」，请刷新后重试"
+            return
+        }
+        scope.launch {
+            busySummaryIds = busySummaryIds + rec.id
+            error = null
+            runCatching {
+                val oldRecords = if (student != null) resolveUnderlyingRecords(rec, student) else emptyList()
+                if (oldRecords.isNotEmpty()) {
+                    val deletedRollCallIds = mutableSetOf<Int>()
+                    val deletedSelfBatches = mutableSetOf<String>()
+                    oldRecords.forEach { item ->
+                        if (item.sourceType == "roll_call" && item.sourceId != null) {
+                            if (!deletedRollCallIds.add(item.sourceId)) return@forEach
+                        }
+                        val isSelfApplied = item.isSelfApplied || item.sourceType == "self_applied"
+                        if (isSelfApplied && !item.leaveBatchId.isNullOrBlank()) {
+                            val key = "${item.leaveBatchId}_${item.scene ?: "regular"}"
+                            if (!deletedSelfBatches.add(key)) return@forEach
+                        }
+                        repo.deleteAttendanceRecord(
+                            studentId = targetStudentId,
+                            date = item.dateKey.ifEmpty { selectedDateKey },
+                            recordId = item.id,
+                            periodId = item.periodId,
+                            leaveBatchId = item.leaveBatchId,
+                            sourceType = if (isSelfApplied) "self_applied" else item.sourceType,
+                            scene = item.scene ?: "regular",
+                            deleteScope = if (isSelfApplied) "scene_date" else "record"
+                        )
+                    }
+                } else {
+                    val isSelfApplied = rec.isSelfApplied
+                    repo.deleteAttendanceRecord(
+                        studentId = targetStudentId,
+                        date = selectedDateKey,
+                        recordId = rec.id,
+                        periodId = null,
+                        leaveBatchId = null,
+                        sourceType = if (isSelfApplied) "self_applied" else null,
+                        scene = if (rec.option?.contains("夜自习") == true) "evening_study" else "regular",
+                        deleteScope = if (isSelfApplied) "scene_date" else "record"
+                    )
+                }
+
+                calendarSummary = calendarSummary.toMutableMap().apply {
+                    val remain = this[selectedDateKey].orEmpty().filterNot { it.id == rec.id }
+                    if (remain.isEmpty()) remove(selectedDateKey) else this[selectedDateKey] = remain
+                }
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                loadStats()
+                loadCalendarSummary()
+                loadOverview()
+                snackbarHostState.showSnackbar("已删除 ${rec.studentName} 的考勤记录")
+            }.onFailure { error = it.localizedMessage ?: "删除失败" }
+            busySummaryIds = busySummaryIds - rec.id
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("考勤看板") },
@@ -460,49 +670,31 @@ fun TeacherDashboardScreen(
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             selectedDayRecords.forEach { rec ->
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                                    modifier = Modifier.fillMaxWidth().clickable {
-                                        overview.flatMap { it.classes }.flatMap { it.students }
-                                            .firstOrNull { it.name == rec.studentName }
-                                            ?.let {
-                                                focusedRecordId = rec.id
-                                                selectedStudent = it
-                                            }
-                                    }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(statusColor(rec.displayColorKey)))
-                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                if (rec.approvalPrefix.isNotEmpty()) {
-                                                    Text(
-                                                        rec.approvalPrefix,
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = statusColor(rec.approvalStatus)
-                                                    )
-                                                }
-                                                Text(
-                                                    rec.typeWithOption,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = statusColor(rec.displayColorKey)
-                                                )
-                                            }
-                                            Text(rec.studentShortLabel, style = MaterialTheme.typography.labelMedium)
+                                SummarySwipeableRecordRow(
+                                    rec = rec,
+                                    activeLeaveTypes = leaveTypes,
+                                    isBusy = rec.id in busySummaryIds,
+                                    isOpen = openSwipeRecordId == rec.id,
+                                    onSetOpen = { open ->
+                                        openSwipeRecordId = when {
+                                            open -> rec.id
+                                            openSwipeRecordId == rec.id -> null
+                                            else -> openSwipeRecordId
                                         }
-                                        rec.time?.takeIf { it.isNotBlank() }?.let {
-                                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    },
+                                    onTap = {
+                                        matchedStudent(rec)?.let {
+                                            focusedRecordId = rec.id
+                                            selectedStudent = it
                                         }
-                                        Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                                    },
+                                    onQuickChangeType = { targetType ->
+                                        quickChangeSummaryRecord(rec, targetType)
+                                    },
+                                    onDelete = {
+                                        quickDeleteSummaryRecord(rec)
                                     }
-                                }
+                                )
                             }
                         }
                     }
@@ -702,6 +894,219 @@ fun TeacherDashboardScreen(
 
     if (showExportModal) {
         AttendanceExportModal(semesters = semesters, onDismiss = { showExportModal = false })
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SummarySwipeableRecordRow(
+    rec: CalendarSummaryRecord,
+    activeLeaveTypes: List<LeaveType>,
+    isBusy: Boolean,
+    isOpen: Boolean,
+    onSetOpen: (Boolean) -> Unit,
+    onTap: () -> Unit,
+    onQuickChangeType: (LeaveType) -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val actionWidthDp = 78.dp
+    val actionWidthPx = with(density) { actionWidthDp.toPx() }
+
+    var dragging by remember { mutableStateOf(false) }
+    var rawOffsetPx by remember { mutableFloatStateOf(0f) }
+    var quickMenuOpen by remember { mutableStateOf(false) }
+
+    val targetOffsetPx = if (dragging) rawOffsetPx else if (isOpen) -actionWidthPx else 0f
+    val animatedOffsetPx by animateFloatAsState(
+        targetValue = targetOffsetPx,
+        label = "summary_swipe_offset"
+    )
+    val effectiveOffsetPx = if (dragging) rawOffsetPx else animatedOffsetPx
+    val isEveningStudy = rec.option?.contains("夜自习") == true
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .clip(RoundedCornerShape(10.dp))
+    ) {
+        if (effectiveOffsetPx < -1f || isOpen) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(actionWidthDp)
+                    .fillMaxHeight()
+                    .background(Color(0xFFDC2626))
+                    .clickable(enabled = isOpen && !isBusy) { onDelete() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (isBusy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Delete,
+                            contentDescription = "删除",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            "删除",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(effectiveOffsetPx.roundToInt(), 0) }
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
+                .pointerInput(isOpen, isBusy) {
+                    if (isBusy) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            dragging = true
+                            rawOffsetPx = if (isOpen) -actionWidthPx else 0f
+                        },
+                        onDragEnd = {
+                            val shouldOpen = rawOffsetPx < -(actionWidthPx * 0.45f)
+                            dragging = false
+                            onSetOpen(shouldOpen)
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            onSetOpen(isOpen)
+                        },
+                        onHorizontalDrag = { _, dragAmount ->
+                            rawOffsetPx = (rawOffsetPx + dragAmount).coerceIn(-actionWidthPx - 24f, 0f)
+                        }
+                    )
+                }
+                .combinedClickable(
+                    enabled = !isBusy,
+                    onClick = {
+                        if (isOpen) {
+                            onSetOpen(false)
+                        } else {
+                            onTap()
+                        }
+                    },
+                    onLongClick = {
+                        if (isOpen) onSetOpen(false)
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        quickMenuOpen = true
+                    }
+                )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(statusColor(rec.displayColorKey)))
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (rec.approvalPrefix.isNotEmpty()) {
+                            Text(
+                                rec.approvalPrefix,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = statusColor(rec.approvalStatus)
+                            )
+                        }
+                        Text(
+                            rec.typeWithOption,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = statusColor(rec.displayColorKey)
+                        )
+                    }
+                    Text(rec.studentShortLabel, style = MaterialTheme.typography.labelMedium)
+                }
+                if (isBusy) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    rec.time?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(
+                        Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            DropdownMenu(
+                expanded = quickMenuOpen,
+                onDismissRequest = { quickMenuOpen = false }
+            ) {
+                if (!isEveningStudy && activeLeaveTypes.isNotEmpty()) {
+                    activeLeaveTypes.forEach { lt ->
+                        val isCurrent = lt.name == rec.type
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (isCurrent) "${lt.name}（当前）" else "改为 ${lt.name}",
+                                    color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else statusColor(lt.resolvedColorKey),
+                                    fontWeight = if (isCurrent) FontWeight.Normal else FontWeight.Medium
+                                )
+                            },
+                            leadingIcon = if (isCurrent) {
+                                { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            } else null,
+                            enabled = !isCurrent && !isBusy,
+                            onClick = {
+                                quickMenuOpen = false
+                                onQuickChangeType(lt)
+                            }
+                        )
+                    }
+                    HorizontalDivider()
+                }
+                DropdownMenuItem(
+                    text = { Text("详细编辑（节次 / 备注）") },
+                    leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    onClick = {
+                        quickMenuOpen = false
+                        onTap()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("删除此记录", color = Color(0xFFDC2626)) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.Delete,
+                            contentDescription = null,
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    enabled = !isBusy,
+                    onClick = {
+                        quickMenuOpen = false
+                        onDelete()
+                    }
+                )
+            }
+        }
     }
 }
 

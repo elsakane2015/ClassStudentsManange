@@ -295,6 +295,8 @@ data class Semester(
 
 data class CalendarSummaryRecord(
     val id: Int,
+    val recordIds: List<Int> = emptyList(),
+    val studentId: Int? = null,
     val type: String,
     val option: String?,
     val studentName: String,
@@ -304,6 +306,8 @@ data class CalendarSummaryRecord(
     val isSelfApplied: Boolean,
     val approvalStatus: String?
 ) {
+    val allRecordIds: List<Int>
+        get() = if (recordIds.isNotEmpty()) recordIds else listOf(id)
     val approvalPrefix: String
         get() = if (!isSelfApplied) "" else when (approvalStatus) {
             "pending" -> "待审:"
@@ -360,6 +364,8 @@ data class CalendarSummaryRecord(
     companion object {
         fun fromJson(o: JsonObject) = CalendarSummaryRecord(
             id = o.intVal("id"),
+            recordIds = o.intList("record_ids"),
+            studentId = o.intOrNull("student_id"),
             type = o.str("type").orEmpty(),
             option = o.str("option"),
             studentName = o.str("student_name").orEmpty(),
@@ -394,6 +400,7 @@ data class AttendanceRecord(
     val leaveTypeId: Int? = null,
     val scene: String? = null,
     val sourceType: String? = null,
+    val sourceId: Int? = null,
     val periodNameSnapshot: String? = null,
     val rollCallType: String? = null,
     val rollCallTime: String? = null,
@@ -532,6 +539,7 @@ data class AttendanceRecord(
                 leaveTypeId = o.intOrNull("leave_type_id"),
                 scene = o.str("scene"),
                 sourceType = o.str("source_type"),
+                sourceId = o.intOrNull("source_id"),
                 periodNameSnapshot = o.str("period_name_snapshot"),
                 rollCallType = details?.str("roll_call_type"),
                 rollCallTime = details?.str("roll_call_time"),
