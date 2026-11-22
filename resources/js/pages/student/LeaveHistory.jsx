@@ -3,6 +3,7 @@ import Layout from '../../components/Layout';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
+import { normalizeDateKey } from '../../utils/dateFormat';
 
 export default function LeaveHistory() {
     const [leaves, setLeaves] = useState([]);
@@ -100,7 +101,7 @@ export default function LeaveHistory() {
                                             {getTypeLabel(leave)}
                                             <span className="text-gray-400 mx-2">•</span>
                                             <span className="text-gray-600">
-                                                {leave.date_range_text || `${format(new Date(leave.start_date), 'yyyy-MM-dd')} 至 ${format(new Date(leave.end_date), 'yyyy-MM-dd')}`}
+                                                {leave.date_range_text || `${normalizeDateKey(leave.start_date)} 至 ${normalizeDateKey(leave.end_date)}`}
                                                 {leave.total_days > 1 && ` (共${leave.total_days}天)`}
                                             </span>
                                         </div>

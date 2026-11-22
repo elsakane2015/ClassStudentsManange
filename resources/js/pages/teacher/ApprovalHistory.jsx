@@ -7,6 +7,7 @@ import {
     PhotoIcon, ChevronDownIcon, ChevronUpIcon,
     XMarkIcon, CheckIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
+import { normalizeDateKey } from '../../utils/dateFormat';
 
 // ── 工具函数 ──────────────────────────────────────────────
 function semesterDateRange(semester) {
@@ -413,9 +414,9 @@ export default function ApprovalHistory() {
 
             <div className="mt-2 text-sm text-gray-700">
                 <p>
-                    日期: <span className="font-semibold">{format(new Date(request.start_date), 'yyyy-MM-dd')}</span>
-                    {request.start_date !== request.end_date && (
-                        <> - <span className="font-semibold">{format(new Date(request.end_date), 'yyyy-MM-dd')}</span></>
+                    日期: <span className="font-semibold">{normalizeDateKey(request.start_date)}</span>
+                    {normalizeDateKey(request.start_date) !== normalizeDateKey(request.end_date) && (
+                        <> - <span className="font-semibold">{normalizeDateKey(request.end_date)}</span></>
                     )}
                 </p>
                 {(() => { const r = reasonText(request); return r ? <p className="mt-1 italic">"{r}"</p> : null; })()}
@@ -480,9 +481,9 @@ export default function ApprovalHistory() {
                 </p>
                 <RequestScopeDetails request={request} compact />
                 <p className="text-xs text-gray-700">
-                    <span className="font-medium">{format(new Date(request.start_date), 'yyyy-MM-dd')}</span>
-                    {request.start_date !== request.end_date && (
-                        <> ~ <span className="font-medium">{format(new Date(request.end_date), 'yyyy-MM-dd')}</span></>
+                    <span className="font-medium">{normalizeDateKey(request.start_date)}</span>
+                    {normalizeDateKey(request.start_date) !== normalizeDateKey(request.end_date) && (
+                        <> ~ <span className="font-medium">{normalizeDateKey(request.end_date)}</span></>
                     )}
                 </p>
                 {r && <p className="text-xs text-gray-500 italic truncate">"{r}"</p>}

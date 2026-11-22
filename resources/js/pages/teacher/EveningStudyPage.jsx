@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns';
 import Layout from '../../components/Layout';
 import useAuthStore from '../../store/authStore';
 import { ArrowLeftIcon, CheckCircleIcon, ClockIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { normalizeDateKey } from '../../utils/dateFormat';
 
 const today = () => {
     const date = new Date();
@@ -139,7 +140,7 @@ export default function EveningStudyPage({ view = 'auto' }) {
     const openHistorySession = async (item) => {
         setMessage('');
         try {
-            setDate(String(item.attendance_date).slice(0, 10));
+            setDate(normalizeDateKey(item.attendance_date));
             setPeriodId(String(item.period_id));
             setMode('take');
             await openSession(item.id);

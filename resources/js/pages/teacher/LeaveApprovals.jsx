@@ -4,6 +4,7 @@ import axios from 'axios';
 import { CheckIcon, XMarkIcon, PhotoIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import { format } from 'date-fns';
+import { parseLocalDate } from '../../utils/dateFormat';
 
 export default function LeaveApprovals() {
     const [requests, setRequests] = useState([]);
@@ -88,7 +89,7 @@ export default function LeaveApprovals() {
                                     <div className="mt-2 text-sm text-gray-700">
                                         <p>
                                             日期: <span className="font-semibold">
-                                                {request.date_range_text || `${format(new Date(request.start_date), 'yyyy年MM月dd日')} - ${format(new Date(request.end_date), 'yyyy年MM月dd日')}`}
+                                                {request.date_range_text || `${format(parseLocalDate(request.start_date) || new Date(request.start_date), 'yyyy年MM月dd日')} - ${format(parseLocalDate(request.end_date) || new Date(request.end_date), 'yyyy年MM月dd日')}`}
                                             </span>
                                             {request.total_days > 1 && (
                                                 <span className="ml-2 text-gray-500">（共{request.total_days}天）</span>

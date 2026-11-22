@@ -8,6 +8,7 @@ import AttendanceUpdateModal from '../../components/AttendanceUpdateModal';
 import StudentCalendar from '../../components/StudentCalendar';
 import WechatBindCard from '../../components/WechatBindCard';
 import GroupedRecordsList from '../../components/GroupedRecordsList';
+import { formatDotDate } from '../../utils/dateFormat';
 
 /**
  * 格式化节次名称显示 - 将 period IDs 转换为可读的节次名称
@@ -697,7 +698,7 @@ export default function StudentDashboard() {
                                             <div className="flex-1">
                                                 <div className="flex items-center gap-2">
                                                     <span className="font-medium text-gray-800">
-                                                        {record.date?.split('T')[0]?.replace(/-/g, '.')}
+                                                        {formatDotDate(record.date)}
                                                     </span>
                                                     {record.time && (
                                                         <span className="text-gray-500 text-sm">{record.time}</span>

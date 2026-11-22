@@ -9,7 +9,7 @@ class EveningStudySession extends Model
     protected $guarded = [];
 
     protected $casts = [
-        'attendance_date' => 'date',
+        'attendance_date' => 'date:Y-m-d',
         'completed_at' => 'datetime',
     ];
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
+import { normalizeDateKey } from '../../utils/dateFormat';
 import {
     ArrowUpTrayIcon,
     CheckIcon,
@@ -727,7 +728,7 @@ export default function StudentList() {
                             <h3 className="text-lg font-semibold text-gray-900">{suspensionStudent.name} · 暂停住宿许可</h3>
                             {suspensionStudent.active_boarding_suspension ? (
                                 <div className="mt-4 space-y-3 text-sm text-gray-700">
-                                    <p><span className="text-gray-500">有效期：</span>{suspensionStudent.active_boarding_suspension.start_date} 至 {suspensionStudent.active_boarding_suspension.end_date}</p>
+                                    <p><span className="text-gray-500">有效期：</span>{normalizeDateKey(suspensionStudent.active_boarding_suspension.start_date)} 至 {normalizeDateKey(suspensionStudent.active_boarding_suspension.end_date)}</p>
                                     <p><span className="text-gray-500">原因：</span>{suspensionStudent.active_boarding_suspension.reason}</p>
                                     <p><span className="text-gray-500">去向：</span>{suspensionStudent.active_boarding_suspension.destination || '-'}</p>
                                     <div className="flex justify-end gap-3 pt-3"><button onClick={() => setSuspensionStudent(null)} className="rounded-md border border-gray-300 px-4 py-2">关闭</button><button onClick={revokeSuspension} className="rounded-md bg-red-600 px-4 py-2 text-white">撤销暂停</button></div>

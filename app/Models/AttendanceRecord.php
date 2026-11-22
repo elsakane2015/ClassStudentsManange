@@ -11,7 +11,7 @@ class AttendanceRecord extends Model
     protected $guarded = [];
 
     protected $casts = [
-        'date' => 'date',
+        'date' => 'date:Y-m-d',
         'informed_parent' => 'boolean',
         'details' => 'array',
         'images' => 'array',

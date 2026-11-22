@@ -12,8 +12,8 @@ class LeaveRequest extends Model
 
     protected $casts = [
         'sessions' => 'array',
-        'start_date' => 'date',
-        'end_date' => 'date',
+        'start_date' => 'date:Y-m-d',
+        'end_date' => 'date:Y-m-d',
         'approved_at' => 'datetime',
     ];
 

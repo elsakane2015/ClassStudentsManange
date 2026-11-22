@@ -9,7 +9,7 @@ class Semester extends Model
     protected $fillable = ['school_id', 'name', 'start_date', 'total_weeks', 'holidays', 'is_current'];
 
     protected $casts = [
-        'start_date' => 'date',
+        'start_date' => 'date:Y-m-d',
         'is_current' => 'boolean',
         'holidays' => 'array',
     ];

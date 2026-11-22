@@ -7,6 +7,7 @@ import useAuthStore from '../../store/authStore';
 import AttendanceCalendar from '../../components/AttendanceCalendar'; // Import
 import AttendanceExportModal from '../../components/AttendanceExportModal';
 import GroupedRecordsList from '../../components/GroupedRecordsList';
+import { formatDotDate } from '../../utils/dateFormat';
 
 export default function TeacherDashboard() {
     const navigate = useNavigate();
@@ -348,7 +349,7 @@ export default function TeacherDashboard() {
                 <thead><tr><th>日期</th><th>状态</th><th>详情</th></tr></thead>
                 <tbody>
                     ${chunk.map(r => {
-                        const dateStr = r.date ? r.date.split('T')[0].replace(/-/g, '.') : '-';
+                        const dateStr = formatDotDate(r.date);
                         const statusText = r.leave_type?.name || statusMap[r.status] || r.status;
                         const detail = r.detail || r.period_names_display || '';
                         let details = {};
@@ -447,7 +448,7 @@ export default function TeacherDashboard() {
                 : record.status === 'early_leave' ? 'bg-orange-100 text-orange-800'
                 : 'bg-blue-100 text-blue-800';
         }
-        const dateStr = record.date ? record.date.split('T')[0].replace(/-/g, '.') : '-';
+        const dateStr = formatDotDate(record.date);
         return (
             <div className="flex-1">
                 <div className="flex items-center gap-2 flex-wrap">

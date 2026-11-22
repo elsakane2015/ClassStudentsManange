@@ -4,8 +4,13 @@ namespace Tests\Unit;
 
 use App\Http\Controllers\Api\AttendanceController;
 use App\Models\AttendanceRecord;
+use App\Models\BoardingSuspension;
+use App\Models\EveningStudySession;
 use App\Models\EveningStudyStatus;
+use App\Models\LeaveRequest;
 use App\Models\LeaveType;
+use App\Models\Semester;
+use App\Models\Student;
 use PHPUnit\Framework\TestCase;
 
 class CalendarSummaryEveningStudyTest extends TestCase
@@ -158,5 +163,32 @@ class CalendarSummaryEveningStudyTest extends TestCase
             ['type' => '请假', 'option' => null],
             AttendanceController::resolveCalendarSummaryLabels($regularExcused)
         );
+    }
+
+    public function test_date_only_models_serialize_as_ymd_without_utc_day_shift(): void
+    {
+        $prevTz = date_default_timezone_get();
+        date_default_timezone_set('Asia/Shanghai');
+
+        try {
+            $attendance = new AttendanceRecord(['date' => '2026-11-20']);
+            $evening = new EveningStudySession(['attendance_date' => '2026-11-20']);
+            $suspension = new BoardingSuspension(['start_date' => '2026-11-20', 'end_date' => '2026-11-22']);
+            $semester = new Semester(['start_date' => '2026-09-01']);
+            $leave = new LeaveRequest(['start_date' => '2026-11-20', 'end_date' => '2026-11-21']);
+            $student = new Student();
+            $student->birthdate = '2008-05-01';
+
+            $this->assertSame('2026-11-20', $attendance->toArray()['date']);
+            $this->assertSame('2026-11-20', $evening->toArray()['attendance_date']);
+            $this->assertSame('2026-11-20', $suspension->toArray()['start_date']);
+            $this->assertSame('2026-11-22', $suspension->toArray()['end_date']);
+            $this->assertSame('2026-09-01', $semester->toArray()['start_date']);
+            $this->assertSame('2026-11-20', $leave->toArray()['start_date']);
+            $this->assertSame('2026-11-21', $leave->toArray()['end_date']);
+            $this->assertSame('2008-05-01', $student->toArray()['birthdate']);
+        } finally {
+            date_default_timezone_set($prevTz);
+        }
     }
 }

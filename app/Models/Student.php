@@ -11,7 +11,7 @@ class Student extends Model
     protected $fillable = ['user_id', 'class_id', 'school_id', 'student_no', 'gender', 'is_boarding', 'parent_contact', 'parent_email', 'is_class_admin'];
 
     protected $casts = [
-        'birthdate' => 'date',
+        'birthdate' => 'date:Y-m-d',
         'is_boarding' => 'boolean',
         'is_class_admin' => 'boolean',
     ];

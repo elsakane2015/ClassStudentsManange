@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+import { parseLocalDate } from '../utils/dateFormat';
 
 /**
  * 按月份分组的记录列表组件
@@ -31,19 +32,11 @@ export default function GroupedRecordsList({
             if (!dateStr) return;
 
             try {
-                // 提取月份 key (YYYY-MM)
-                // 支持多种日期格式: 2025-12-30, 2025.12.30, 2025-12-30T10:00:00
-                let dateOnly = typeof dateStr === 'string' ? dateStr.split('T')[0] : dateStr;
-
-                // 将 2025.12.30 格式转换为 2025-12-30
-                if (typeof dateOnly === 'string' && dateOnly.includes('.')) {
-                    dateOnly = dateOnly.replace(/\./g, '-');
-                }
-
-                const date = typeof dateOnly === 'string' ? parseISO(dateOnly) : dateOnly;
+                // 提取本地时区日期（兼容 YYYY-MM-DD、YYYY.MM.DD 及 Laravel UTC ISO 字符串，避免跨日错月）
+                const date = parseLocalDate(dateStr);
 
                 // 验证日期是否有效
-                if (isNaN(date.getTime())) return;
+                if (!date || isNaN(date.getTime())) return;
 
                 const monthKey = format(date, 'yyyy-MM');
                 const monthLabel = format(date, 'yyyy年M月', { locale: zhCN });

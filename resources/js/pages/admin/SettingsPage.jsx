@@ -10,6 +10,7 @@ import AttendanceSettings from './AttendanceSettings';
 import EveningStudySettings from './EveningStudySettings';
 import ResendSettings from './ResendSettings';
 import MicrosoftMailSettings from './MicrosoftMailSettings';
+import { normalizeDateKey } from '../../utils/dateFormat';
 import SmsSettings from './SmsSettings';
 import useAuthStore from '../../store/authStore';
 
@@ -757,11 +758,8 @@ export default function SettingsPage() {
 
     const openSemesterEdit = (s) => {
         setEditingSemester(s);
-        // Convert start_date from ISO format to yyyy-MM-dd for the date input
-        let formattedStartDate = s.start_date || '';
-        if (formattedStartDate && formattedStartDate.includes('T')) {
-            formattedStartDate = formattedStartDate.split('T')[0];
-        }
+        // Convert start_date from ISO format to local yyyy-MM-dd for the date input
+        const formattedStartDate = normalizeDateKey(s.start_date);
         setSemesterForm({
             name: s.name,
             start_date: formattedStartDate,
