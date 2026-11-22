@@ -85,6 +85,27 @@ struct LeaveType: Decodable, Identifiable, Hashable {
     var isActiveFlag: Bool { isActive?.value ?? true }
     var isStudentRequestable: Bool { studentRequestable?.value ?? false }
     var options: [LeaveTypeOption] { inputConfig?.value?.options ?? [] }
+
+    /// 映射为后端 /attendance/bulk 所需的 status（对齐 Web AttendanceUpdateModal）
+    var mappedAttendanceStatus: String {
+        if ["late", "absent", "early_leave"].contains(slug) {
+            return slug
+        }
+        return "leave"
+    }
+
+    /// 考勤类型徽标色值（未配置时按类型语义给醒目默认色）
+    var resolvedColorKey: String {
+        if let c = color?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty {
+            return c
+        }
+        if slug == "absent" || name.contains("旷课") || name.contains("缺勤") { return "red" }
+        if slug == "late" || name.contains("迟到") { return "orange" }
+        if slug == "early_leave" || name.contains("早退") { return "orange" }
+        if name.contains("病假") { return "purple" }
+        if name.contains("生理") { return "pink" }
+        return "blue"
+    }
 }
 
 struct TimeSlot: Decodable, Identifiable, Hashable {
@@ -215,6 +236,16 @@ struct CalendarSummaryRecord: Decodable, Identifiable, Hashable {
         }
         return studentName
     }
+
+    /// 优先按具体异常类型语义取色（如点名旷课底层 status 为 leave，应醒目标红而非发灰）
+    var displayColorKey: String {
+        if type.contains("旷课") || type.contains("缺勤") { return "absent" }
+        if type.contains("迟到") { return "late" }
+        if type.contains("早退") { return "early_leave" }
+        if type.contains("病假") { return "purple" }
+        if type.contains("生理") { return "pink" }
+        return status
+    }
 }
 
 struct AttendanceDetails: Decodable, Hashable {
@@ -222,6 +253,7 @@ struct AttendanceDetails: Decodable, Hashable {
     let optionLabel: String?
     let optionPeriods: FlexibleInt?
     let periodIds: [Int]?
+    let periods: [Int]?
     let periodNames: [String]?
     let timeSlotId: FlexibleInt?
     let timeSlotName: String?
@@ -231,7 +263,7 @@ struct AttendanceDetails: Decodable, Hashable {
     let rollCallTime: String?
 
     enum CodingKeys: String, CodingKey {
-        case option, text
+        case option, text, periods
         case optionLabel = "option_label"
         case optionPeriods = "option_periods"
         case periodIds = "period_ids"
@@ -311,8 +343,7 @@ struct AttendanceRecord: Decodable, Identifiable, Hashable {
     }
 
     var dateKey: String {
-        guard let date else { return "" }
-        return String(date.prefix(10))
+        SCDateFormatter.normalizeDateKey(date)
     }
 
     var titleText: String {
@@ -347,10 +378,24 @@ struct AttendanceRecord: Decodable, Identifiable, Hashable {
     }
 
     var badgeColorKey: String {
-        leaveType?.color ?? eveningStudyStatus?.color ?? status
+        if let c = leaveType?.color?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty {
+            return c
+        }
+        if leaveType?.slug == "absent" || titleText.contains("旷课") || titleText.contains("缺勤") {
+            return "absent"
+        }
+        if leaveType?.slug == "late" || titleText.contains("迟到") {
+            return "late"
+        }
+        if leaveType?.slug == "early_leave" || titleText.contains("早退") {
+            return "early_leave"
+        }
+        if titleText.contains("病假") { return "purple" }
+        if titleText.contains("生理") { return "pink" }
+        return eveningStudyStatus?.color ?? status
     }
 
-    /// 是否为纯正常出勤/夜自习正常点名记录（学生日历仅展示请假与异常记录）
+    /// 是否为纯正常出勤/夜自习正常点名记录（学生日历与全班异常登记仅展示请假与异常记录）
     var isNormalPresentRecord: Bool {
         guard status == "present" else { return false }
         if isSelfApplied?.value == true, let ap = approvalStatus, !ap.isEmpty {
@@ -360,6 +405,136 @@ struct AttendanceRecord: Decodable, Identifiable, Hashable {
             return false
         }
         return true
+    }
+
+    var sourceBadgeText: String? {
+        if isSelfApplied?.value == true || sourceType == "self_applied" || sourceType == "leave_request" {
+            return "自请"
+        }
+        if sourceType == "roll_call" { return "点名" }
+        if sourceType == "manual" || sourceType == "manual_bulk" { return "登记" }
+        if sourceType == "teacher_evening_leave" { return "夜自习" }
+        return nil
+    }
+
+    var displayTimeText: String? {
+        if let t = details?.value?.rollCallTime, !t.isEmpty { return t }
+        if let t = recordTime, !t.isEmpty { return t }
+        return nil
+    }
+
+    /// 提取本条记录关联的节次 ID（兼容 period_id / details.period_ids / details.periods / 点名类型名匹配）
+    func extractedPeriodIds(classPeriods: [ClassPeriod]) -> [Int] {
+        var ids = Set<Int>()
+        if let pIds = details?.value?.periodIds, !pIds.isEmpty {
+            ids.formUnion(pIds)
+        }
+        if let pIds = details?.value?.periods, !pIds.isEmpty {
+            ids.formUnion(pIds)
+        }
+        if let pid = periodId {
+            ids.insert(pid)
+        }
+        if ids.isEmpty, let rcType = details?.value?.rollCallType?.trimmingCharacters(in: .whitespacesAndNewlines), !rcType.isEmpty {
+            if let matched = classPeriods.first(where: { $0.name == rcType || rcType.contains($0.name) }) {
+                ids.insert(matched.id)
+            }
+        }
+        return ids.sorted()
+    }
+
+    /// 生成精简课节/时段文案（如 "早操" / "第1-2节" / "上午" / "全天"），用于全班登记与当日标记卡片
+    func concisePeriodLabel(classPeriods: [ClassPeriod], timeSlots: [TimeSlot]) -> String {
+        if let rcType = details?.value?.rollCallType?.trimmingCharacters(in: .whitespacesAndNewlines), !rcType.isEmpty {
+            return rcType
+        }
+        let ids = extractedPeriodIds(classPeriods: classPeriods)
+        if !ids.isEmpty {
+            let formatted = PeriodFormatter.formatPeriodNames(periodIds: ids, periods: classPeriods, timeSlots: timeSlots)
+            if !formatted.isEmpty { return formatted }
+        }
+        if let pNames = details?.value?.periodNames, !pNames.isEmpty {
+            return PeriodFormatter.mergePeriodNames(pNames)
+        }
+        for candidate in [
+            details?.value?.timeSlotName,
+            details?.value?.optionLabel,
+            details?.value?.displayLabel,
+            displayLabel,
+            periodNameSnapshot
+        ] {
+            if let raw = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+                // 去掉类似 "旷课(早操)" 中重复的类型前缀
+                if raw.hasPrefix(titleText + "(") && raw.hasSuffix(")") {
+                    let inner = String(raw.dropFirst(titleText.count + 1).dropLast())
+                    if !inner.isEmpty { return inner }
+                }
+                return raw
+            }
+        }
+        if let opt = details?.value?.option {
+            switch opt {
+            case "morning_half": return "上午"
+            case "afternoon_half": return "下午"
+            case "full_day", "all_day": return "全天"
+            case "morning_exercise": return "早操"
+            case "evening_exercise": return "晚操"
+            default: break
+            }
+        }
+        return "全天"
+    }
+}
+
+/// 合并同一学生当日同类型的多条节次记录，用于「全班登记」清晰展示「类型 · 节次」
+struct DayAttendanceBadgeGroup: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let periodSummary: String
+    let colorKey: String
+
+    var badgeText: String {
+        periodSummary.isEmpty ? title : "\(title) · \(periodSummary)"
+    }
+
+    static func build(
+        from records: [AttendanceRecord],
+        classPeriods: [ClassPeriod],
+        timeSlots: [TimeSlot]
+    ) -> [DayAttendanceBadgeGroup] {
+        let valid = records.filter { !$0.isNormalPresentRecord }
+        guard !valid.isEmpty else { return [] }
+
+        var order: [String] = []
+        var grouped: [String: [AttendanceRecord]] = [:]
+        for rec in valid {
+            let key = "\(rec.titleText)|\(rec.leaveTypeId ?? -1)|\(rec.leaveBatchId ?? "")|\(rec.sourceType ?? "")"
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(rec)
+        }
+
+        return order.compactMap { key in
+            guard let items = grouped[key], let first = items.first else { return nil }
+            let allIds = Array(Set(items.flatMap { $0.extractedPeriodIds(classPeriods: classPeriods) })).sorted()
+            let periodText: String
+            if !allIds.isEmpty {
+                let formatted = PeriodFormatter.formatPeriodNames(periodIds: allIds, periods: classPeriods, timeSlots: timeSlots)
+                periodText = formatted.isEmpty ? first.concisePeriodLabel(classPeriods: classPeriods, timeSlots: timeSlots) : formatted
+            } else {
+                var labels: [String] = []
+                for item in items {
+                    let lbl = item.concisePeriodLabel(classPeriods: classPeriods, timeSlots: timeSlots)
+                    if !lbl.isEmpty && !labels.contains(lbl) { labels.append(lbl) }
+                }
+                periodText = labels.joined(separator: "、")
+            }
+            return DayAttendanceBadgeGroup(
+                id: key,
+                title: first.titleText,
+                periodSummary: periodText,
+                colorKey: first.badgeColorKey
+            )
+        }
     }
 }
 

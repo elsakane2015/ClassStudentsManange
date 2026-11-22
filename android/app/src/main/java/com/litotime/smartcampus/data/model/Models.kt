@@ -1,5 +1,7 @@
 package com.litotime.smartcampus.data.model
 
+import com.litotime.smartcampus.core.util.PeriodFormatter
+import com.litotime.smartcampus.core.util.SCDateFormatter
 import com.litotime.smartcampus.core.util.arrOrEmpty
 import com.litotime.smartcampus.core.util.asObjectOrNull
 import com.litotime.smartcampus.core.util.boolVal
@@ -179,6 +181,26 @@ data class LeaveType(
     val limitDays: Int?,
     val limitTimes: Int?
 ) {
+    /** 映射为后端 /attendance/bulk 所需的 status（对齐 Web AttendanceUpdateModal） */
+    val mappedAttendanceStatus: String
+        get() = if (slug in setOf("late", "absent", "early_leave")) slug else "leave"
+
+    /** 考勤类型徽标色值（未配置时按类型语义给醒目默认色） */
+    val resolvedColorKey: String
+        get() {
+            val c = color.trim()
+            if (c.isNotEmpty() && c != "blue") return c
+            return when {
+                slug == "absent" || name.contains("旷课") || name.contains("缺勤") -> "red"
+                slug == "late" || name.contains("迟到") -> "orange"
+                slug == "early_leave" || name.contains("早退") -> "orange"
+                name.contains("病假") -> "purple"
+                name.contains("生理") -> "pink"
+                c.isNotEmpty() -> c
+                else -> "blue"
+            }
+        }
+
     companion object {
         fun fromJson(o: JsonObject): LeaveType {
             val config = o.objOrNull("input_config")
@@ -324,6 +346,17 @@ data class CalendarSummaryRecord(
             "${studentNo.takeLast(2)} $studentName"
         } else studentName
 
+    /** 优先按具体异常类型语义取色（如点名旷课底层 status 为 leave，应醒目标红） */
+    val displayColorKey: String
+        get() = when {
+            type.contains("旷课") || type.contains("缺勤") -> "absent"
+            type.contains("迟到") -> "late"
+            type.contains("早退") -> "early_leave"
+            type.contains("病假") -> "purple"
+            type.contains("生理") -> "pink"
+            else -> status
+        }
+
     companion object {
         fun fromJson(o: JsonObject) = CalendarSummaryRecord(
             id = o.intVal("id"),
@@ -350,6 +383,7 @@ data class AttendanceRecord(
     val reason: String?,
     val note: String?,
     val leaveTypeName: String?,
+    val leaveTypeSlug: String? = null,
     val leaveTypeColor: String?,
     val eveningStudyStatusName: String?,
     val eveningStudyLabel: String?,
@@ -357,9 +391,21 @@ data class AttendanceRecord(
     val periodIdsInDetails: List<Int>,
     val detailText: String,
     val isSelfApplied: Boolean = false,
-    val leaveTypeId: Int? = null
+    val leaveTypeId: Int? = null,
+    val scene: String? = null,
+    val sourceType: String? = null,
+    val periodNameSnapshot: String? = null,
+    val rollCallType: String? = null,
+    val rollCallTime: String? = null,
+    val detailsText: String? = null,
+    val detailsOption: String? = null,
+    val detailsOptionLabel: String? = null,
+    val detailsTimeSlotName: String? = null,
+    val detailsDisplayLabel: String? = null,
+    val detailsPeriodNames: List<String> = emptyList(),
+    val detailsPeriods: List<Int> = emptyList()
 ) {
-    val dateKey: String get() = date?.take(10).orEmpty()
+    val dateKey: String get() = SCDateFormatter.normalizeDateKey(date)
 
     val isNormalPresentRecord: Boolean
         get() {
@@ -381,7 +427,72 @@ data class AttendanceRecord(
             else -> status
         }
 
-    val badgeColorKey: String get() = leaveTypeColor ?: status
+    val badgeColorKey: String
+        get() {
+            val c = leaveTypeColor?.trim()
+            if (!c.isNullOrEmpty()) return c
+            if (leaveTypeSlug == "absent" || titleText.contains("旷课") || titleText.contains("缺勤")) return "absent"
+            if (leaveTypeSlug == "late" || titleText.contains("迟到")) return "late"
+            if (leaveTypeSlug == "early_leave" || titleText.contains("早退")) return "early_leave"
+            if (titleText.contains("病假")) return "purple"
+            if (titleText.contains("生理")) return "pink"
+            return status
+        }
+
+    val sourceBadgeText: String?
+        get() = when {
+            isSelfApplied || sourceType == "self_applied" || sourceType == "leave_request" -> "自请"
+            sourceType == "roll_call" -> "点名"
+            sourceType == "manual" || sourceType == "manual_bulk" -> "登记"
+            sourceType == "teacher_evening_leave" -> "夜自习"
+            else -> null
+        }
+
+    val displayTimeText: String?
+        get() = rollCallTime?.takeIf { it.isNotBlank() } ?: recordTime?.takeIf { it.isNotBlank() }
+
+    fun extractedPeriodIds(classPeriods: List<ClassPeriod>): List<Int> {
+        val ids = linkedSetOf<Int>()
+        ids.addAll(periodIdsInDetails)
+        ids.addAll(detailsPeriods)
+        periodId?.let { ids.add(it) }
+        if (ids.isEmpty() && !rollCallType.isNullOrBlank()) {
+            val rc = rollCallType.trim()
+            classPeriods.firstOrNull { it.name == rc || rc.contains(it.name) }?.let { ids.add(it.id) }
+        }
+        return ids.sorted()
+    }
+
+    fun concisePeriodLabel(classPeriods: List<ClassPeriod>, timeSlots: List<TimeSlot>): String {
+        rollCallType?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val ids = extractedPeriodIds(classPeriods)
+        if (ids.isNotEmpty()) {
+            val formatted = PeriodFormatter.formatPeriodNames(ids, classPeriods, timeSlots)
+            if (formatted.isNotBlank()) return formatted
+        }
+        if (detailsPeriodNames.isNotEmpty()) {
+            val merged = PeriodFormatter.mergePeriodNames(detailsPeriodNames)
+            if (merged.isNotBlank()) return merged
+        }
+        for (candidate in listOf(detailsTimeSlotName, detailsOptionLabel, detailsDisplayLabel, periodNameSnapshot)) {
+            val raw = candidate?.trim().orEmpty()
+            if (raw.isNotEmpty()) {
+                if (raw.startsWith("$titleText(") && raw.endsWith(")")) {
+                    val inner = raw.removePrefix("$titleText(").removeSuffix(")")
+                    if (inner.isNotBlank()) return inner
+                }
+                return raw
+            }
+        }
+        return when (detailsOption) {
+            "morning_half" -> "上午"
+            "afternoon_half" -> "下午"
+            "full_day", "all_day" -> "全天"
+            "morning_exercise" -> "早操"
+            "evening_exercise" -> "晚操"
+            else -> "全天"
+        }
+    }
 
     companion object {
         fun fromJson(o: JsonObject): AttendanceRecord {
@@ -410,6 +521,7 @@ data class AttendanceRecord(
                 reason = o.str("reason"),
                 note = o.str("note"),
                 leaveTypeName = lt?.str("name"),
+                leaveTypeSlug = lt?.str("slug"),
                 leaveTypeColor = lt?.str("color") ?: es?.str("color"),
                 eveningStudyStatusName = es?.str("name"),
                 eveningStudyLabel = o.str("evening_study_label"),
@@ -417,8 +529,65 @@ data class AttendanceRecord(
                 periodIdsInDetails = details?.intList("period_ids").orEmpty(),
                 detailText = detailCandidate,
                 isSelfApplied = o.boolVal("is_self_applied"),
-                leaveTypeId = o.intOrNull("leave_type_id")
+                leaveTypeId = o.intOrNull("leave_type_id"),
+                scene = o.str("scene"),
+                sourceType = o.str("source_type"),
+                periodNameSnapshot = o.str("period_name_snapshot"),
+                rollCallType = details?.str("roll_call_type"),
+                rollCallTime = details?.str("roll_call_time"),
+                detailsText = details?.str("text"),
+                detailsOption = details?.str("option"),
+                detailsOptionLabel = details?.str("option_label"),
+                detailsTimeSlotName = details?.str("time_slot_name"),
+                detailsDisplayLabel = details?.str("display_label") ?: o.str("display_label"),
+                detailsPeriodNames = details?.strList("period_names").orEmpty(),
+                detailsPeriods = details?.intList("periods").orEmpty()
             )
+        }
+    }
+}
+
+/** 合并同一学生当日同类型的多条节次记录，用于「全班登记」清晰展示「类型 · 节次」 */
+data class DayAttendanceBadgeGroup(
+    val id: String,
+    val title: String,
+    val periodSummary: String,
+    val colorKey: String
+) {
+    val badgeText: String get() = if (periodSummary.isBlank()) title else "$title · $periodSummary"
+
+    companion object {
+        fun build(
+            records: List<AttendanceRecord>,
+            classPeriods: List<ClassPeriod>,
+            timeSlots: List<TimeSlot>
+        ): List<DayAttendanceBadgeGroup> {
+            val valid = records.filterNot { it.isNormalPresentRecord }
+            if (valid.isEmpty()) return emptyList()
+            val grouped = linkedMapOf<String, MutableList<AttendanceRecord>>()
+            valid.forEach { rec ->
+                val key = "${rec.titleText}|${rec.leaveTypeId ?: -1}|${rec.leaveBatchId.orEmpty()}|${rec.sourceType.orEmpty()}"
+                grouped.getOrPut(key) { mutableListOf() }.add(rec)
+            }
+            return grouped.map { (key, items) ->
+                val first = items.first()
+                val allIds = items.flatMap { it.extractedPeriodIds(classPeriods) }.distinct().sorted()
+                val periodText = if (allIds.isNotEmpty()) {
+                    PeriodFormatter.formatPeriodNames(allIds, classPeriods, timeSlots)
+                        .ifBlank { first.concisePeriodLabel(classPeriods, timeSlots) }
+                } else {
+                    items.map { it.concisePeriodLabel(classPeriods, timeSlots) }
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .joinToString("、")
+                }
+                DayAttendanceBadgeGroup(
+                    id = key,
+                    title = first.titleText,
+                    periodSummary = periodText,
+                    colorKey = first.badgeColorKey
+                )
+            }
         }
     }
 }
@@ -855,8 +1024,8 @@ data class BoardingSuspension(
     val revokedAt: String?
 ) {
     val isRevoked: Boolean get() = !revokedAt.isNullOrBlank()
-    val startDateDisplay: String get() = startDate.take(10)
-    val endDateDisplay: String get() = endDate.take(10)
+    val startDateDisplay: String get() = SCDateFormatter.normalizeDateKey(startDate)
+    val endDateDisplay: String get() = SCDateFormatter.normalizeDateKey(endDate)
 
     companion object {
         fun fromJson(o: JsonObject) = BoardingSuspension(
@@ -887,7 +1056,7 @@ data class EveningStudySession(
     val statusCounts: List<StatusCountItem>
 ) {
     val isCompleted: Boolean get() = status == "completed"
-    val dateDisplay: String get() = attendanceDate.take(10)
+    val dateDisplay: String get() = SCDateFormatter.normalizeDateKey(attendanceDate)
 
     companion object {
         fun fromJson(o: JsonObject): EveningStudySession {

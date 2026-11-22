@@ -14,6 +14,7 @@ import kotlinx.serialization.json.intOrNull
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -96,6 +97,32 @@ object SCDateFormatter {
     fun nowIso(): String = Instant.now().toString()
 
     fun nowHhmm(): String = LocalDateTime.now().format(hhmm)
+
+    /**
+     * 将后端返回的日期字符串（纯日期 `2026-11-20` 或 Laravel UTC ISO `2026-11-19T16:00:00.000000Z`）
+     * 统一规整为本地时区（东八区）的 `yyyy-MM-dd`，避免直接 take(10) 导致日期提前一天。
+     */
+    fun normalizeDateKey(raw: String?): String {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.contains("T")) {
+            val zonedDate = runCatching {
+                Instant.parse(trimmed).atZone(ZoneId.systemDefault()).toLocalDate()
+            }.recoverCatching {
+                OffsetDateTime.parse(trimmed).atZoneSameInstant(ZoneId.systemDefault()).toLocalDate()
+            }.getOrNull()
+            if (zonedDate != null) {
+                return zonedDate.format(yyyyMMdd)
+            }
+        }
+        return trimmed.take(10)
+    }
+
+    fun parseLocalDate(raw: String?): LocalDate? {
+        val key = normalizeDateKey(raw)
+        if (key.isBlank()) return null
+        return runCatching { LocalDate.parse(key) }.getOrNull()
+    }
 
     fun displayDateTime(raw: String?): String {
         if (raw.isNullOrBlank()) return "-"

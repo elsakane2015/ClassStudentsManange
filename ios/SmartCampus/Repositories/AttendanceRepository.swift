@@ -150,7 +150,10 @@ enum AttendanceRepository {
         date: String,
         recordId: Int? = nil,
         periodId: Int? = nil,
-        leaveBatchId: String? = nil
+        leaveBatchId: String? = nil,
+        sourceType: String? = nil,
+        scene: String? = nil,
+        deleteScope: String? = nil
     ) async throws {
         var payload: [String: Any] = [
             "student_id": studentId,
@@ -159,6 +162,9 @@ enum AttendanceRepository {
         if let recordId { payload["record_id"] = recordId }
         if let periodId { payload["period_id"] = periodId }
         if let leaveBatchId { payload["leave_batch_id"] = leaveBatchId }
+        if let sourceType { payload["source_type"] = sourceType }
+        if let scene { payload["scene"] = scene }
+        if let deleteScope { payload["delete_scope"] = deleteScope }
 
         let _: MessageResponse = try await APIClient.shared.requestWithJSONBody(
             "/attendance/records",

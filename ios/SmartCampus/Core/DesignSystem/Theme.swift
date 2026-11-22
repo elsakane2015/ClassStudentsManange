@@ -10,7 +10,7 @@ enum SCTheme {
         switch key?.lowercased() {
         case "green", "emerald", "present", "approved", "completed":
             return .green
-        case "blue", "sky", "excused":
+        case "blue", "sky", "excused", "leave":
             return .blue
         case "indigo":
             return .indigo
@@ -20,7 +20,7 @@ enum SCTheme {
             return .cyan
         case "red", "rose", "absent", "rejected", "cancelled":
             return .red
-        case "yellow", "amber", "late", "pending":
+        case "yellow", "amber", "late", "pending", "in_progress":
             return .orange
         case "orange", "early_leave":
             return .orange

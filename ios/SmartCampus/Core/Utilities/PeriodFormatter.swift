@@ -119,12 +119,25 @@ enum SCDateFormatter {
         yyyyMMdd.string(from: Date())
     }
 
+    /// 将后端返回的日期字符串（含纯日期 `2026-11-20` 或 Laravel UTC ISO `2026-11-19T16:00:00.000000Z`）
+    /// 统一规整为本地时区（东八区）的 `yyyy-MM-dd`，彻底避免直接截取前 10 位导致日期提前一天。
+    static func normalizeDateKey(_ raw: String?) -> String {
+        guard let raw else { return "" }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if trimmed.contains("T") {
+            if let d = iso8601WithFractional.date(from: trimmed) ?? iso8601Basic.date(from: trimmed) {
+                return yyyyMMdd.string(from: d)
+            }
+        }
+        return String(trimmed.prefix(10))
+    }
+
     static func parseDate(_ str: String?) -> Date? {
-        guard let str, !str.isEmpty else { return nil }
-        if let d = yyyyMMdd.date(from: String(str.prefix(10))) { return d }
-        if let d = iso8601WithFractional.date(from: str) { return d }
-        if let d = iso8601Basic.date(from: str) { return d }
-        return nil
+        let key = normalizeDateKey(str)
+        guard !key.isEmpty else { return nil }
+        return yyyyMMdd.date(from: key)
     }
 
     static func displayDateTime(_ raw: String?) -> String {

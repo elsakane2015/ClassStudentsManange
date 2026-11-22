@@ -13,9 +13,9 @@ struct TeacherDashboardView: View {
     @State private var timeSlots: [TimeSlot] = []
     @State private var classPeriods: [ClassPeriod] = []
 
-    // Calendar & Selected Date Panel (Scheme A)
+    // Calendar & Selected Date Panel (Scheme A: default to compact weekly calendar)
     @State private var calendarExpanded: Bool = true
-    @State private var calendarViewMode: CalendarViewMode = .month
+    @State private var calendarViewMode: CalendarViewMode = .week
     @State private var calendarAnchorDate: Date = Date()
     @State private var selectedDate: Date = Date()
     @State private var calendarSummary: [String: [CalendarSummaryRecord]] = [:]
@@ -32,6 +32,7 @@ struct TeacherDashboardView: View {
     @State private var errorMessage: String?
 
     @State private var selectedStudent: AttendanceOverviewStudent?
+    @State private var focusedRecordId: Int? = nil
     @State private var statDetailTarget: StatDetailTarget?
     @State private var showExportSheet = false
     @State private var showNotifications = false
@@ -277,18 +278,21 @@ struct TeacherDashboardView: View {
             .onChange(of: selectedDate) { _, newDate in
                 // Keep anchor synced if user taps a trailing/leading day in another month
                 let cal = Calendar.current
-                if !cal.isDate(newDate, equalTo: calendarAnchorDate, toGranularity: .month) {
+                if calendarViewMode == .month && !cal.isDate(newDate, equalTo: calendarAnchorDate, toGranularity: .month) {
                     calendarAnchorDate = newDate
                 }
                 Task { await loadOverview() }
             }
-            .sheet(item: $selectedStudent) { student in
+            .sheet(item: $selectedStudent, onDismiss: {
+                focusedRecordId = nil
+            }) { student in
                 StudentAttendanceActionSheet(
                     student: student,
                     date: selectedDate,
                     leaveTypes: leaveTypes,
                     timeSlots: timeSlots,
-                    classPeriods: classPeriods
+                    classPeriods: classPeriods,
+                    initialFocusRecordId: focusedRecordId
                 ) {
                     Task {
                         await loadStats()
@@ -386,7 +390,7 @@ struct TeacherDashboardView: View {
                             ForEach(selectedDaySummaryRecords) { rec in
                                 HStack(alignment: .center, spacing: 8) {
                                     Circle()
-                                        .fill(SCTheme.color(for: rec.status))
+                                        .fill(SCTheme.color(for: rec.displayColorKey))
                                         .frame(width: 8, height: 8)
 
                                     VStack(alignment: .leading, spacing: 2) {
@@ -398,7 +402,7 @@ struct TeacherDashboardView: View {
                                             }
                                             Text(rec.typeWithOption)
                                                 .font(.subheadline.weight(.semibold))
-                                                .foregroundStyle(SCTheme.color(for: rec.status))
+                                                .foregroundStyle(SCTheme.color(for: rec.displayColorKey))
                                                 .lineLimit(2)
                                         }
                                         Text(rec.studentShortLabel)
@@ -413,16 +417,20 @@ struct TeacherDashboardView: View {
                                             .font(.caption2.monospacedDigit())
                                             .foregroundStyle(.secondary)
                                     }
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
                                 }
                                 .padding(10)
                                 .background(Color(.tertiarySystemFill).opacity(0.65))
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .onTapGesture {
-                                    // 快速定位该学生进行补录/修改
+                                    // 快速定位该学生及具体标记进行修改/撤销
                                     if let matched = overview
                                         .flatMap({ $0.classes ?? [] })
                                         .flatMap({ $0.students ?? [] })
                                         .first(where: { $0.displayName == rec.studentName }) {
+                                        focusedRecordId = rec.id
                                         selectedStudent = matched
                                     }
                                 }
@@ -452,10 +460,16 @@ struct TeacherDashboardView: View {
                         } else {
                             LazyVStack(spacing: 0) {
                                 ForEach(flattenedRosterStudents) { student in
+                                    let badgeGroups = DayAttendanceBadgeGroup.build(
+                                        from: student.attendance ?? [],
+                                        classPeriods: classPeriods,
+                                        timeSlots: timeSlots
+                                    )
                                     Button {
+                                        focusedRecordId = nil
                                         selectedStudent = student
                                     } label: {
-                                        HStack {
+                                        HStack(alignment: .center, spacing: 8) {
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(student.displayName)
                                                     .font(.subheadline.weight(.medium))
@@ -466,11 +480,19 @@ struct TeacherDashboardView: View {
                                                         .foregroundStyle(.secondary)
                                                 }
                                             }
-                                            Spacer()
-                                            if let recs = student.attendance, !recs.isEmpty {
-                                                HStack(spacing: 4) {
-                                                    ForEach(recs.prefix(2)) { r in
-                                                        StatusBadge(text: r.titleText, color: SCTheme.color(for: r.badgeColorKey))
+                                            Spacer(minLength: 8)
+                                            if !badgeGroups.isEmpty {
+                                                VStack(alignment: .trailing, spacing: 4) {
+                                                    ForEach(badgeGroups.prefix(2)) { g in
+                                                        StatusBadge(
+                                                            text: g.badgeText,
+                                                            color: SCTheme.color(for: g.colorKey)
+                                                        )
+                                                    }
+                                                    if badgeGroups.count > 2 {
+                                                        Text("+\(badgeGroups.count - 2) 项")
+                                                            .font(.caption2)
+                                                            .foregroundStyle(.secondary)
                                                     }
                                                 }
                                             } else {
@@ -520,6 +542,8 @@ struct TeacherDashboardView: View {
                             department: dept,
                             isExpanded: expandedDepts.contains(dept.id),
                             expandedClasses: $expandedClasses,
+                            classPeriods: classPeriods,
+                            timeSlots: timeSlots,
                             onToggleDept: {
                                 if expandedDepts.contains(dept.id) {
                                     expandedDepts.remove(dept.id)
@@ -528,6 +552,7 @@ struct TeacherDashboardView: View {
                                 }
                             },
                             onSelectStudent: { student in
+                                focusedRecordId = nil
                                 selectedStudent = student
                             }
                         )
@@ -821,10 +846,10 @@ private struct TeacherAttendanceCalendarCard: View {
                 // Dots + Count Badge
                 if !records.isEmpty {
                     HStack(spacing: 2) {
-                        let distinctStatuses = Array(Set(records.map(\.status))).sorted().prefix(2)
-                        ForEach(distinctStatuses, id: \.self) { st in
+                        let distinctColors = Array(Set(records.map(\.displayColorKey))).sorted().prefix(2)
+                        ForEach(distinctColors, id: \.self) { ck in
                             Circle()
-                                .fill(SCTheme.color(for: st))
+                                .fill(SCTheme.color(for: ck))
                                 .frame(width: 4, height: 4)
                         }
                         Text("\(records.count)")
@@ -935,6 +960,8 @@ private struct DepartmentOverviewSection: View {
     let department: AttendanceOverviewDepartment
     let isExpanded: Bool
     @Binding var expandedClasses: Set<Int>
+    let classPeriods: [ClassPeriod]
+    let timeSlots: [TimeSlot]
     let onToggleDept: () -> Void
     let onSelectStudent: (AttendanceOverviewStudent) -> Void
 
@@ -961,7 +988,9 @@ private struct DepartmentOverviewSection: View {
                 ForEach(department.classes ?? []) { cls in
                     let clsExpanded = expandedClasses.contains(cls.id)
                     let students = cls.students ?? []
-                    let abnormalCount = students.filter { ($0.attendanceSummary?.hasRecords?.value ?? false) }.count
+                    let abnormalCount = students.filter {
+                        !(($0.attendance ?? []).filter { !$0.isNormalPresentRecord }).isEmpty
+                    }.count
 
                     VStack(alignment: .leading, spacing: 6) {
                         Button {
@@ -995,10 +1024,15 @@ private struct DepartmentOverviewSection: View {
 
                         if clsExpanded {
                             ForEach(students) { student in
+                                let badgeGroups = DayAttendanceBadgeGroup.build(
+                                    from: student.attendance ?? [],
+                                    classPeriods: classPeriods,
+                                    timeSlots: timeSlots
+                                )
                                 Button {
                                     onSelectStudent(student)
                                 } label: {
-                                    HStack {
+                                    HStack(alignment: .center, spacing: 8) {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(student.displayName)
                                                 .font(.subheadline)
@@ -1009,14 +1043,17 @@ private struct DepartmentOverviewSection: View {
                                                     .foregroundStyle(.secondary)
                                             }
                                         }
-                                        Spacer()
-                                        if let recs = student.attendance, !recs.isEmpty {
-                                            HStack(spacing: 4) {
-                                                ForEach(recs.prefix(2)) { r in
-                                                    StatusBadge(text: r.titleText, color: SCTheme.color(for: r.badgeColorKey))
+                                        Spacer(minLength: 8)
+                                        if !badgeGroups.isEmpty {
+                                            VStack(alignment: .trailing, spacing: 4) {
+                                                ForEach(badgeGroups.prefix(2)) { g in
+                                                    StatusBadge(
+                                                        text: g.badgeText,
+                                                        color: SCTheme.color(for: g.colorKey)
+                                                    )
                                                 }
-                                                if recs.count > 2 {
-                                                    Text("+\(recs.count - 2)")
+                                                if badgeGroups.count > 2 {
+                                                    Text("+\(badgeGroups.count - 2) 项")
                                                         .font(.caption2)
                                                         .foregroundStyle(.secondary)
                                                 }
@@ -1045,27 +1082,72 @@ private struct DepartmentOverviewSection: View {
     }
 }
 
-/// 单个学生的当日记录维护（手动补录/修改 + 查看该生历史 + 删除记录）
+/// 单个学生的当日记录维护（三段式：当日已有标记 → 一步选型补录/修改 → 近期历史异常）
 struct StudentAttendanceActionSheet: View {
     let student: AttendanceOverviewStudent
     let date: Date
     let leaveTypes: [LeaveType]
     let timeSlots: [TimeSlot]
     let classPeriods: [ClassPeriod]
+    var initialFocusRecordId: Int? = nil
     let onChanged: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var historyScope: String = "month"
-    @State private var historyRecords: [AttendanceRecord] = []
-    @State private var isLoadingHistory = false
 
-    // Manual Mark State
-    @State private var selectedStatus: String = "leave"
+    // 1. 当日已有标记
+    @State private var dayRecords: [AttendanceRecord] = []
+    @State private var isLoadingDayRecords = false
+    @State private var recordPendingDelete: AttendanceRecord?
+
+    // 2. 补录 / 修改表单（类 Web 一步点选后台配置的考勤类型）
+    @State private var editingRecord: AttendanceRecord?
     @State private var selectedLeaveTypeId: Int?
+    @State private var fallbackStatus: String = "leave"
     @State private var selectedPeriodIds: Set<Int> = []
     @State private var noteText: String = ""
     @State private var isSaving = false
     @State private var errorMessage: String?
+
+    // 3. 近期历史异常
+    @State private var historyScope: String = "month"
+    @State private var historyRecords: [AttendanceRecord] = []
+    @State private var isLoadingHistory = false
+
+    private var dateKey: String {
+        SCDateFormatter.yyyyMMdd.string(from: date)
+    }
+
+    private var activeLeaveTypes: [LeaveType] {
+        leaveTypes.filter(\.isActiveFlag)
+    }
+
+    private var regularPeriods: [ClassPeriod] {
+        let filtered = classPeriods.filter { $0.isActiveFlag && !$0.isEveningStudy }
+        return filtered.isEmpty ? classPeriods : filtered
+    }
+
+    private var validTimeSlots: [(slot: TimeSlot, periodIds: [Int])] {
+        let regularIdSet = Set(regularPeriods.map(\.id))
+        return timeSlots.compactMap { slot in
+            guard slot.isActive?.value ?? true else { return nil }
+            let ids = (slot.periodIds ?? []).filter { regularIdSet.contains($0) }
+            guard !ids.isEmpty else { return nil }
+            return (slot, Array(Set(ids)).sorted())
+        }
+    }
+
+    /// 已被当日其他记录占用的节次集合（用于节次网格小橙点提示）
+    private var occupiedPeriodIds: Set<Int> {
+        var result = Set<Int>()
+        for rec in dayRecords where rec.id != editingRecord?.id {
+            result.formUnion(rec.extractedPeriodIds(classPeriods: regularPeriods))
+        }
+        return result
+    }
+
+    private var selectedLeaveType: LeaveType? {
+        activeLeaveTypes.first { $0.id == selectedLeaveTypeId }
+    }
 
     var body: some View {
         NavigationStack {
@@ -1076,45 +1158,240 @@ struct StudentAttendanceActionSheet: View {
                     }
                 }
 
-                // Manual Record Entry
-                Section("为 \(student.displayName) 补录/登记考勤（\(SCDateFormatter.yyyyMMdd.string(from: date))）") {
-                    Picker("考勤状态", selection: $selectedStatus) {
-                        Text("出勤").tag("present")
-                        Text("请假").tag("leave")
-                        Text("旷课").tag("absent")
-                        Text("迟到").tag("late")
-                        Text("早退").tag("early_leave")
-                    }
+                // SECTION 1: 当日已有标记（置顶、可一键修改或撤销）
+                Section {
+                    if isLoadingDayRecords && dayRecords.isEmpty {
+                        ProgressView("加载当日标记...")
+                    } else if dayRecords.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                            Text("当日暂无异常，当前状态为正常出勤")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    } else {
+                        ForEach(dayRecords) { rec in
+                            let isFocused = (initialFocusRecordId == rec.id) || (editingRecord?.id == rec.id)
+                            let periodText = rec.concisePeriodLabel(classPeriods: regularPeriods, timeSlots: timeSlots)
+                            let remark = (rec.details?.value?.text ?? rec.reason ?? rec.note)?
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
 
-                    if selectedStatus != "present" && !leaveTypes.isEmpty {
-                        Picker("对应类型", selection: $selectedLeaveTypeId) {
-                            Text("默认").tag(Int?.none)
-                            ForEach(leaveTypes.filter(\.isActiveFlag)) { lt in
-                                Text(lt.name).tag(Int?.some(lt.id))
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    StatusBadge(text: rec.titleText, color: SCTheme.color(for: rec.badgeColorKey))
+                                    if let ap = rec.approvalStatus, !ap.isEmpty {
+                                        StatusBadge(
+                                            text: ap == "pending" ? "待审" : (ap == "approved" ? "已批" : "驳回"),
+                                            color: SCTheme.color(for: ap)
+                                        )
+                                    }
+                                    if let src = rec.sourceBadgeText {
+                                        Text(src)
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color(.tertiarySystemFill))
+                                            .clipShape(Capsule())
+                                    }
+                                    Spacer()
+                                    if let t = rec.displayTimeText {
+                                        Text(t)
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                HStack(spacing: 6) {
+                                    Image(systemName: "clock")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Text(periodText)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.primary)
+                                }
+
+                                if let remark, !remark.isEmpty {
+                                    Text("备注：\(remark)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                HStack(spacing: 10) {
+                                    Button {
+                                        beginEditing(rec)
+                                    } label: {
+                                        Label(editingRecord?.id == rec.id ? "修改中" : "修改", systemImage: "pencil")
+                                            .font(.caption.weight(.semibold))
+                                            .frame(maxWidth: .infinity)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(SCTheme.primary)
+                                    .controlSize(.small)
+
+                                    Button(role: .destructive) {
+                                        recordPendingDelete = rec
+                                    } label: {
+                                        Label("撤销", systemImage: "trash")
+                                            .font(.caption.weight(.semibold))
+                                            .frame(maxWidth: .infinity)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(.red)
+                                    .controlSize(.small)
+                                }
                             }
+                            .padding(.vertical, 4)
+                            .listRowBackground(
+                                isFocused
+                                    ? SCTheme.primary.opacity(0.08)
+                                    : Color(.secondarySystemGroupedBackground)
+                            )
                         }
                     }
+                } header: {
+                    HStack {
+                        Text("\(dateKey) 当日已有标记（\(dayRecords.count)）")
+                        Spacer()
+                        if isLoadingDayRecords {
+                            ProgressView().controlSize(.mini)
+                        }
+                    }
+                }
 
-                    if selectedStatus != "present" && !classPeriods.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("选择节次（留空代表全天）")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                // SECTION 2: 补录 / 修改考勤（类似 Web 端一步选考勤类型）
+                Section {
+                    if let editing = editingRecord {
+                        HStack(spacing: 8) {
+                            Image(systemName: "pencil.circle.fill")
+                                .foregroundStyle(SCTheme.primary)
+                            Text("正在修改：\(editing.titleText) · \(editing.concisePeriodLabel(classPeriods: regularPeriods, timeSlots: timeSlots))")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(SCTheme.primary)
+                            Spacer()
+                            Button("取消修改") {
+                                cancelEditing()
+                            }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    // 考勤类型一步点选
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("考勤类型（一步点选）")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if !activeLeaveTypes.isEmpty {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 8)], spacing: 8) {
+                                ForEach(activeLeaveTypes) { lt in
+                                    let selected = selectedLeaveTypeId == lt.id
+                                    let tint = SCTheme.color(for: lt.resolvedColorKey)
+                                    Button {
+                                        selectedLeaveTypeId = lt.id
+                                    } label: {
+                                        Text(lt.name)
+                                            .font(.caption.weight(.semibold))
+                                            .lineLimit(1)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 8)
+                                            .padding(.horizontal, 6)
+                                            .background(selected ? tint : tint.opacity(0.12))
+                                            .foregroundStyle(selected ? .white : tint)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        } else {
+                            Picker("考勤状态", selection: $fallbackStatus) {
+                                Text("请假").tag("leave")
+                                Text("旷课").tag("absent")
+                                Text("迟到").tag("late")
+                                Text("早退").tag("early_leave")
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                    }
+                    .padding(.vertical, 4)
+
+                    // 快捷时段 + 具体节次选择
+                    if !regularPeriods.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("选择节次（留空代表全天）")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if !selectedPeriodIds.isEmpty {
+                                    Button("清空(全天)") {
+                                        selectedPeriodIds.removeAll()
+                                    }
+                                    .font(.caption2.weight(.semibold))
+                                    .buttonStyle(.borderless)
+                                }
+                            }
+
+                            if !validTimeSlots.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 6) {
+                                        ForEach(validTimeSlots, id: \.slot.id) { item in
+                                            let slotSet = Set(item.periodIds)
+                                            let isExact = selectedPeriodIds == slotSet
+                                            Button {
+                                                selectedPeriodIds = isExact ? [] : slotSet
+                                            } label: {
+                                                Text(item.slot.name)
+                                                    .font(.caption2.weight(.semibold))
+                                                    .padding(.horizontal, 10)
+                                                    .padding(.vertical, 5)
+                                                    .background(isExact ? SCTheme.primary : SCTheme.primary.opacity(0.1))
+                                                    .foregroundStyle(isExact ? .white : SCTheme.primary)
+                                                    .clipShape(Capsule())
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                            }
+
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 6) {
-                                ForEach(classPeriods) { p in
+                                ForEach(regularPeriods) { p in
                                     let on = selectedPeriodIds.contains(p.id)
+                                    let occupied = occupiedPeriodIds.contains(p.id)
                                     Button {
                                         if on { selectedPeriodIds.remove(p.id) } else { selectedPeriodIds.insert(p.id) }
                                     } label: {
-                                        Text(p.name)
-                                            .font(.caption2.weight(.medium))
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 6)
-                                            .background(on ? SCTheme.primary : Color(.tertiarySystemFill))
-                                            .foregroundStyle(on ? .white : .primary)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        ZStack(alignment: .topTrailing) {
+                                            Text(p.name)
+                                                .font(.caption2.weight(.medium))
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 7)
+                                                .background(on ? SCTheme.primary : Color(.tertiarySystemFill))
+                                                .foregroundStyle(on ? .white : .primary)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                            if occupied {
+                                                Circle()
+                                                    .fill(Color.orange)
+                                                    .frame(width: 6, height: 6)
+                                                    .padding(3)
+                                            }
+                                        }
                                     }
                                     .buttonStyle(.plain)
+                                }
+                            }
+
+                            if !occupiedPeriodIds.isEmpty {
+                                HStack(spacing: 4) {
+                                    Circle().fill(Color.orange).frame(width: 6, height: 6)
+                                    Text("橙点表示该节次当日已有其他标记")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -1129,16 +1406,19 @@ struct StudentAttendanceActionSheet: View {
                         HStack {
                             Spacer()
                             if isSaving { ProgressView().tint(.white) }
-                            Text("保存考勤记录").font(.headline)
+                            Text(editingRecord == nil ? "保存考勤记录" : "保存修改")
+                                .font(.headline)
                             Spacer()
                         }
                     }
                     .listRowBackground(SCTheme.primary)
                     .foregroundStyle(.white)
-                    .disabled(isSaving)
+                    .disabled(isSaving || (!activeLeaveTypes.isEmpty && selectedLeaveTypeId == nil))
+                } header: {
+                    Text(editingRecord == nil ? "为 \(student.displayName) 补录考勤" : "修改 \(student.displayName) 的考勤标记")
                 }
 
-                // History Records
+                // SECTION 3: 近期历史异常（追溯参考）
                 Section {
                     Picker("历史范围", selection: $historyScope) {
                         Text("今日").tag("today")
@@ -1161,7 +1441,7 @@ struct StudentAttendanceActionSheet: View {
                                     HStack {
                                         StatusBadge(text: rec.titleText, color: SCTheme.color(for: rec.badgeColorKey))
                                         Text(rec.dateKey)
-                                            .font(.caption)
+                                            .font(.caption.monospacedDigit())
                                             .foregroundStyle(.secondary)
                                     }
                                     let detail = rec.resolvedDetailText
@@ -1183,7 +1463,7 @@ struct StudentAttendanceActionSheet: View {
                         }
                     }
                 } header: {
-                    Text("历史异常考勤（左滑可删除）")
+                    Text("近期历史异常（左滑可删除）")
                 }
             }
             .navigationTitle(student.displayName)
@@ -1193,11 +1473,66 @@ struct StudentAttendanceActionSheet: View {
                     Button("完成") { dismiss() }
                 }
             }
+            .alert("确认撤销该条标记？", isPresented: Binding(
+                get: { recordPendingDelete != nil },
+                set: { if !$0 { recordPendingDelete = nil } }
+            )) {
+                Button("取消", role: .cancel) { recordPendingDelete = nil }
+                Button("确认撤销", role: .destructive) {
+                    if let target = recordPendingDelete {
+                        recordPendingDelete = nil
+                        Task { await deleteRecord(target) }
+                    }
+                }
+            } message: {
+                if let target = recordPendingDelete {
+                    Text("将删除 \(dateKey)「\(target.titleText) · \(target.concisePeriodLabel(classPeriods: regularPeriods, timeSlots: timeSlots))」考勤记录。")
+                }
+            }
             .onChange(of: historyScope) { _, _ in
                 Task { await loadHistory() }
             }
             .task {
+                dayRecords = (student.attendance ?? []).filter { !$0.isNormalPresentRecord }
+                if selectedLeaveTypeId == nil {
+                    selectedLeaveTypeId = activeLeaveTypes.first?.id
+                }
+                await refreshDayRecords()
                 await loadHistory()
+            }
+        }
+    }
+
+    private func beginEditing(_ rec: AttendanceRecord) {
+        editingRecord = rec
+        if let ltId = rec.leaveTypeId, activeLeaveTypes.contains(where: { $0.id == ltId }) {
+            selectedLeaveTypeId = ltId
+        } else if let bySlug = activeLeaveTypes.first(where: { $0.slug == rec.status || $0.name == rec.titleText }) {
+            selectedLeaveTypeId = bySlug.id
+        } else {
+            selectedLeaveTypeId = activeLeaveTypes.first?.id
+            fallbackStatus = rec.status == "present" ? "leave" : rec.status
+        }
+        selectedPeriodIds = Set(rec.extractedPeriodIds(classPeriods: regularPeriods))
+        noteText = (rec.details?.value?.text ?? rec.note ?? rec.reason ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func cancelEditing() {
+        editingRecord = nil
+        selectedPeriodIds.removeAll()
+        noteText = ""
+    }
+
+    private func refreshDayRecords() async {
+        isLoadingDayRecords = true
+        defer { isLoadingDayRecords = false }
+        if let overview = try? await AttendanceRepository.fetchAttendanceOverview(date: dateKey) {
+            if let fresh = overview
+                .flatMap({ $0.classes ?? [] })
+                .flatMap({ $0.students ?? [] })
+                .first(where: { $0.id == student.id }) {
+                dayRecords = (fresh.attendance ?? []).filter { !$0.isNormalPresentRecord }
             }
         }
     }
@@ -1206,7 +1541,7 @@ struct StudentAttendanceActionSheet: View {
         isLoadingHistory = true
         defer { isLoadingHistory = false }
         if let list = try? await AttendanceRepository.fetchStudentRecords(studentId: student.id, scope: historyScope) {
-            historyRecords = list
+            historyRecords = list.filter { !$0.isNormalPresentRecord }
         }
     }
 
@@ -1215,50 +1550,110 @@ struct StudentAttendanceActionSheet: View {
         errorMessage = nil
         defer { isSaving = false }
 
+        let targetStatus: String
+        let targetLeaveTypeId: Int?
+        if let lt = selectedLeaveType {
+            targetStatus = lt.mappedAttendanceStatus
+            targetLeaveTypeId = lt.id
+        } else {
+            targetStatus = fallbackStatus
+            targetLeaveTypeId = nil
+        }
+
+        let sortedPeriodIds = Array(selectedPeriodIds).sorted()
         var record: [String: Any] = [
             "student_id": student.id,
-            "status": selectedStatus
+            "status": targetStatus
         ]
-        if let ltId = selectedLeaveTypeId {
+        if let ltId = targetLeaveTypeId {
             record["leave_type_id"] = ltId
         }
         var details: [String: Any] = [:]
-        if !selectedPeriodIds.isEmpty {
-            details["period_ids"] = Array(selectedPeriodIds).sorted()
-            details["is_custom"] = true
+        if !sortedPeriodIds.isEmpty {
+            details["period_ids"] = sortedPeriodIds
+            if let matchedSlot = validTimeSlots.first(where: { $0.periodIds == sortedPeriodIds }) {
+                details["time_slot_id"] = matchedSlot.slot.id
+                details["time_slot_name"] = matchedSlot.slot.name
+                details["is_custom"] = false
+            } else {
+                details["is_custom"] = true
+            }
         }
-        if !noteText.trimmingCharacters(in: .whitespaces).isEmpty {
-            details["text"] = noteText.trimmingCharacters(in: .whitespaces)
+        let trimmedNote = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedNote.isEmpty {
+            details["text"] = trimmedNote
         }
         if !details.isEmpty {
             record["details"] = details
         }
 
+        let oldRecord = editingRecord
         do {
             try await AttendanceRepository.submitBulkAttendance(
-                date: SCDateFormatter.yyyyMMdd.string(from: date),
+                date: dateKey,
                 records: [record]
             )
-            onChanged()
-            await loadHistory()
+
+            // 修改模式：若原记录不会被后端同位更新或点名转请假自动替换，则安全清理旧记录
+            if let old = oldRecord {
+                let oldPeriodIds = old.extractedPeriodIds(classPeriods: regularPeriods)
+                let sameTarget = (old.leaveTypeId == targetLeaveTypeId)
+                    && (old.status == targetStatus)
+                    && (oldPeriodIds == sortedPeriodIds)
+                    && (old.periodId == nil)
+                let autoReplacedRollCall = (old.sourceType == "roll_call")
+                    && (targetStatus == "leave")
+                    && (targetLeaveTypeId != nil)
+                    && (sortedPeriodIds.isEmpty || !Set(oldPeriodIds).isDisjoint(with: Set(sortedPeriodIds)))
+
+                if !sameTarget && !autoReplacedRollCall {
+                    let isSelfApplied = (old.isSelfApplied?.value == true) || (old.sourceType == "self_applied")
+                    try? await AttendanceRepository.deleteAttendanceRecord(
+                        studentId: student.id,
+                        date: old.dateKey.isEmpty ? dateKey : old.dateKey,
+                        recordId: old.id,
+                        periodId: old.periodId,
+                        leaveBatchId: old.leaveBatchId,
+                        sourceType: isSelfApplied ? "self_applied" : old.sourceType,
+                        scene: old.scene ?? "regular",
+                        deleteScope: isSelfApplied ? "scene_date" : "record"
+                    )
+                }
+            }
+
+            editingRecord = nil
             noteText = ""
             selectedPeriodIds.removeAll()
+            onChanged()
+            await refreshDayRecords()
+            await loadHistory()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     private func deleteRecord(_ rec: AttendanceRecord) async {
+        errorMessage = nil
         do {
+            let isSelfApplied = (rec.isSelfApplied?.value == true) || (rec.sourceType == "self_applied")
             try await AttendanceRepository.deleteAttendanceRecord(
                 studentId: student.id,
-                date: rec.dateKey,
+                date: rec.dateKey.isEmpty ? dateKey : rec.dateKey,
                 recordId: rec.id,
                 periodId: rec.periodId,
-                leaveBatchId: rec.leaveBatchId
+                leaveBatchId: rec.leaveBatchId,
+                sourceType: isSelfApplied ? "self_applied" : rec.sourceType,
+                scene: rec.scene ?? "regular",
+                deleteScope: isSelfApplied ? "scene_date" : "record"
             )
+            if editingRecord?.id == rec.id {
+                cancelEditing()
+            }
+            dayRecords.removeAll { $0.id == rec.id }
             historyRecords.removeAll { $0.id == rec.id }
             onChanged()
+            await refreshDayRecords()
+            await loadHistory()
         } catch {
             errorMessage = error.localizedDescription
         }

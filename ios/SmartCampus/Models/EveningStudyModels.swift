@@ -79,8 +79,8 @@ struct BoardingSuspension: Decodable, Identifiable, Hashable {
     }
 
     var isRevoked: Bool { revokedAt != nil && !(revokedAt?.isEmpty ?? true) }
-    var startDateDisplay: String { String(startDate.prefix(10)) }
-    var endDateDisplay: String { String(endDate.prefix(10)) }
+    var startDateDisplay: String { SCDateFormatter.normalizeDateKey(startDate) }
+    var endDateDisplay: String { SCDateFormatter.normalizeDateKey(endDate) }
 }
 
 struct EveningStudySession: Decodable, Identifiable, Hashable {
@@ -121,7 +121,7 @@ struct EveningStudySession: Decodable, Identifiable, Hashable {
     }
 
     var isCompleted: Bool { status == "completed" }
-    var dateDisplay: String { String((attendanceDate ?? "").prefix(10)) }
+    var dateDisplay: String { SCDateFormatter.normalizeDateKey(attendanceDate) }
 }
 
 struct EveningStudyDeleteResponse: Decodable {

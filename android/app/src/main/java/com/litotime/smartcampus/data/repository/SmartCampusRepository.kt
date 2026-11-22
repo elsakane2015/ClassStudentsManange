@@ -120,7 +120,9 @@ class SmartCampusRepository(private val api: ApiClient) {
         status: String,
         leaveTypeId: Int?,
         periodIds: List<Int>,
-        note: String?
+        note: String?,
+        timeSlotId: Int? = null,
+        timeSlotName: String? = null
     ) {
         val body = buildJsonObject {
             put("date", date)
@@ -133,7 +135,13 @@ class SmartCampusRepository(private val api: ApiClient) {
                         put("details", buildJsonObject {
                             if (periodIds.isNotEmpty()) {
                                 put("period_ids", JsonArray(periodIds.sorted().map { JsonPrimitive(it) }))
-                                put("is_custom", true)
+                                if (timeSlotId != null && !timeSlotName.isNullOrBlank()) {
+                                    put("time_slot_id", timeSlotId)
+                                    put("time_slot_name", timeSlotName)
+                                    put("is_custom", false)
+                                } else {
+                                    put("is_custom", true)
+                                }
                             }
                             if (!note.isNullOrBlank()) put("text", note.trim())
                         })
@@ -160,13 +168,25 @@ class SmartCampusRepository(private val api: ApiClient) {
         api.requestRaw("/attendance/batch", method = "POST", jsonBody = body.toString())
     }
 
-    suspend fun deleteAttendanceRecord(studentId: Int, date: String, recordId: Int, periodId: Int?, leaveBatchId: String?) {
+    suspend fun deleteAttendanceRecord(
+        studentId: Int,
+        date: String,
+        recordId: Int,
+        periodId: Int?,
+        leaveBatchId: String?,
+        sourceType: String? = null,
+        scene: String? = null,
+        deleteScope: String? = null
+    ) {
         val body = buildJsonObject {
             put("student_id", studentId)
             put("date", date)
             put("record_id", recordId)
             periodId?.let { put("period_id", it) }
             leaveBatchId?.let { put("leave_batch_id", it) }
+            sourceType?.let { put("source_type", it) }
+            scene?.let { put("scene", it) }
+            deleteScope?.let { put("delete_scope", it) }
         }
         api.requestRaw("/attendance/records", method = "DELETE", jsonBody = body.toString())
     }
