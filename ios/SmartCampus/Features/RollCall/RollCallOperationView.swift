@@ -8,6 +8,7 @@ struct RollCallOperationView: View {
     @State private var rollCall: RollCall?
     @State private var records: [RollCallRecord] = []
     @State private var searchText: String = ""
+    @State private var statusFilter: String? = nil // nil = 全部, "present", "on_leave", "pending", "absent"
     @State private var isLoading = false
     @State private var isSubmitting = false
     @State private var errorMessage: String?
@@ -22,11 +23,34 @@ struct RollCallOperationView: View {
 
     private var filteredRecords: [RollCallRecord] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return records }
         return records.filter { rec in
+            if let f = statusFilter, rec.status != f {
+                return false
+            }
+            guard !q.isEmpty else { return true }
             let name = (rec.student?.name ?? "").lowercased()
             let no = (rec.student?.studentNo ?? "").lowercased()
             return name.contains(q) || no.contains(q)
+        }
+    }
+
+    private var activeFilterLabel: String? {
+        switch statusFilter {
+        case "present": return "已到"
+        case "on_leave": return "请假"
+        case "pending": return "未点"
+        case "absent": return "缺勤"
+        default: return nil
+        }
+    }
+
+    private func toggleStatusFilter(_ target: String?) {
+        withAnimation(.snappy(duration: 0.2)) {
+            if target == nil || statusFilter == target {
+                statusFilter = nil
+            } else {
+                statusFilter = target
+            }
         }
     }
 
@@ -40,13 +64,48 @@ struct RollCallOperationView: View {
             // Summary Header Bar
             VStack(spacing: 10) {
                 HStack(spacing: 8) {
-                    SummaryChip(title: "总人数", value: records.count, color: .primary)
-                    SummaryChip(title: "已到", value: presentCount, color: .green)
-                    SummaryChip(title: "请假", value: onLeaveCount, color: .blue)
+                    SummaryChip(
+                        title: "总人数",
+                        value: records.count,
+                        color: .primary,
+                        isSelected: statusFilter == nil
+                    ) {
+                        toggleStatusFilter(nil)
+                    }
+                    SummaryChip(
+                        title: "已到",
+                        value: presentCount,
+                        color: .green,
+                        isSelected: statusFilter == "present"
+                    ) {
+                        toggleStatusFilter("present")
+                    }
+                    SummaryChip(
+                        title: "请假",
+                        value: onLeaveCount,
+                        color: .blue,
+                        isSelected: statusFilter == "on_leave"
+                    ) {
+                        toggleStatusFilter("on_leave")
+                    }
                     if isInProgress {
-                        SummaryChip(title: "未点", value: pendingCount, color: .orange)
+                        SummaryChip(
+                            title: "未点",
+                            value: pendingCount,
+                            color: .orange,
+                            isSelected: statusFilter == "pending"
+                        ) {
+                            toggleStatusFilter("pending")
+                        }
                     } else {
-                        SummaryChip(title: "缺勤", value: absentCount, color: .red)
+                        SummaryChip(
+                            title: "缺勤",
+                            value: absentCount,
+                            color: .red,
+                            isSelected: statusFilter == "absent"
+                        ) {
+                            toggleStatusFilter("absent")
+                        }
                     }
                 }
 
@@ -118,6 +177,26 @@ struct RollCallOperationView: View {
             if isLoading && records.isEmpty {
                 Spacer()
                 ProgressView("加载点名名单...")
+                Spacer()
+            } else if filteredRecords.isEmpty {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text(activeFilterLabel.map { "当前筛选「\($0)」暂无学生" } ?? "暂无匹配的学生")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    if statusFilter != nil || !searchText.isEmpty {
+                        Button("查看全部") {
+                            statusFilter = nil
+                            searchText = ""
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding()
                 Spacer()
             } else {
                 ScrollView {
@@ -305,6 +384,7 @@ struct RollCallOperationView: View {
             let updated = try await RollCallRepository.completeRollCall(id: rollCallId, records: payloadRecords)
             OfflineRollCallStore.shared.clearDrafts(for: rollCallId)
             hasRestoredOfflineDraft = false
+            if statusFilter == "pending" { statusFilter = nil }
             rollCall = updated
             await loadDetail()
         } catch {
@@ -335,20 +415,33 @@ private struct SummaryChip: View {
     let title: String
     let value: Int
     let color: Color
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    private var highlightColor: Color {
+        color == .primary ? SCTheme.primary : color
+    }
 
     var body: some View {
-        VStack(spacing: 2) {
-            Text("\(value)")
-                .font(.headline.monospacedDigit())
-                .foregroundStyle(color)
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        Button(action: onTap) {
+            VStack(spacing: 2) {
+                Text("\(value)")
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(color)
+                Text(title)
+                    .font(.caption2.weight(isSelected ? .bold : .regular))
+                    .foregroundStyle(isSelected ? highlightColor : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(highlightColor.opacity(isSelected ? 0.16 : 0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(isSelected ? highlightColor : Color.clear, lineWidth: 1.6)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .buttonStyle(.plain)
     }
 }
 
@@ -399,18 +492,11 @@ private struct RollCallStudentTile: View {
                 }
 
                 VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-                    HStack(spacing: 4) {
-                        Text(record.student?.name ?? "学生 #\(record.studentId)")
-                            .font(compact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
-                            .foregroundStyle(record.status == "present" ? .white : .primary)
-                            .lineLimit(1)
-                        Spacer(minLength: 2)
-                        if record.status == "present" {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.white)
-                        }
-                    }
+                    Text(record.student?.name ?? "学生 #\(record.studentId)")
+                        .font(compact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
+                        .foregroundStyle(record.status == "present" ? .white : .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
 
                     if !compact, let no = record.student?.studentNo, !no.isEmpty {
                         Text(no)
@@ -419,10 +505,17 @@ private struct RollCallStudentTile: View {
                             .lineLimit(1)
                     }
 
-                    Text(statusText)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(record.status == "present" ? .white.opacity(0.95) : tileColor)
-                        .lineLimit(1)
+                    HStack(spacing: 3) {
+                        Text(statusText)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(record.status == "present" ? .white.opacity(0.95) : tileColor)
+                            .lineLimit(1)
+                        if record.status == "present" {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: compact ? 11 : 12))
+                                .foregroundStyle(.white)
+                        }
+                    }
                 }
                 .padding(compact ? 10 : 12)
                 .frame(maxWidth: .infinity, minHeight: compact ? 58 : 74, alignment: .topLeading)

@@ -59,6 +59,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -354,6 +355,7 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
     var rollCall by remember { mutableStateOf<RollCall?>(null) }
     var records by remember { mutableStateOf<List<RollCallRecord>>(emptyList()) }
     var searchText by remember { mutableStateOf("") }
+    var statusFilter by remember { mutableStateOf<String?>(null) } // null = 全部, "present", "on_leave", "pending", "absent"
     var loading by remember { mutableStateOf(true) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -399,10 +401,25 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
     val pendingCount = records.count { it.status == "pending" }
     val absentCount = records.count { it.status == "absent" }
 
-    val filtered = remember(records, searchText) {
+    val filtered = remember(records, searchText, statusFilter) {
         val q = searchText.trim().lowercase()
-        if (q.isEmpty()) records
-        else records.filter { it.studentName.lowercase().contains(q) || (it.studentNo ?: "").lowercase().contains(q) }
+        records.filter { rec ->
+            if (statusFilter != null && rec.status != statusFilter) return@filter false
+            if (q.isEmpty()) true
+            else rec.studentName.lowercase().contains(q) || (rec.studentNo ?: "").lowercase().contains(q)
+        }
+    }
+
+    fun toggleStatusFilter(target: String?) {
+        statusFilter = if (target == null || statusFilter == target) null else target
+    }
+
+    val activeFilterLabel = when (statusFilter) {
+        "present" -> "已到"
+        "on_leave" -> "请假"
+        "pending" -> "未点"
+        "absent" -> "缺勤"
+        else -> null
     }
 
     Scaffold(
@@ -464,13 +481,53 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
             Surface(color = MaterialTheme.colorScheme.surface) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RollCallMetricPill("总人数", records.size, MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
-                        RollCallMetricPill("已到", presentCount, Color(0xFF16A34A), Modifier.weight(1f))
-                        RollCallMetricPill("请假", onLeaveCount, Color(0xFF2563EB), Modifier.weight(1f))
+                        RollCallMetricPill(
+                            title = "总人数",
+                            value = records.size,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            highlightColor = MaterialTheme.colorScheme.primary,
+                            selected = statusFilter == null,
+                            onClick = { toggleStatusFilter(null) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RollCallMetricPill(
+                            title = "已到",
+                            value = presentCount,
+                            color = Color(0xFF16A34A),
+                            highlightColor = Color(0xFF16A34A),
+                            selected = statusFilter == "present",
+                            onClick = { toggleStatusFilter("present") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        RollCallMetricPill(
+                            title = "请假",
+                            value = onLeaveCount,
+                            color = Color(0xFF2563EB),
+                            highlightColor = Color(0xFF2563EB),
+                            selected = statusFilter == "on_leave",
+                            onClick = { toggleStatusFilter("on_leave") },
+                            modifier = Modifier.weight(1f)
+                        )
                         if (isInProgress) {
-                            RollCallMetricPill("未点", pendingCount, Color(0xFFEA580C), Modifier.weight(1f))
+                            RollCallMetricPill(
+                                title = "未点",
+                                value = pendingCount,
+                                color = Color(0xFFEA580C),
+                                highlightColor = Color(0xFFEA580C),
+                                selected = statusFilter == "pending",
+                                onClick = { toggleStatusFilter("pending") },
+                                modifier = Modifier.weight(1f)
+                            )
                         } else {
-                            RollCallMetricPill("缺勤", absentCount, Color(0xFFDC2626), Modifier.weight(1f))
+                            RollCallMetricPill(
+                                title = "缺勤",
+                                value = absentCount,
+                                color = Color(0xFFDC2626),
+                                highlightColor = Color(0xFFDC2626),
+                                selected = statusFilter == "absent",
+                                onClick = { toggleStatusFilter("absent") },
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
 
@@ -531,6 +588,21 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
 
             if (loading && records.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            } else if (filtered.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            activeFilterLabel?.let { "当前筛选「$it」暂无学生" } ?: "暂无匹配的学生",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (statusFilter != null || searchText.isNotBlank()) {
+                            OutlinedButton(onClick = { statusFilter = null; searchText = "" }) {
+                                Text("查看全部")
+                            }
+                        }
+                    }
+                }
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columnCount.coerceIn(1, 4)),
@@ -600,19 +672,14 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                     modifier = Modifier.fillMaxSize().padding(if (compact) 10.dp else 12.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            rec.studentName,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (isPresent) Color.White else MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        if (isPresent) {
-                                            Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                        }
-                                    }
+                                    Text(
+                                        rec.studentName,
+                                        fontSize = if (compact) 13.sp else 15.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isPresent) Color.White else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                     if (!compact && !rec.studentNo.isNullOrBlank()) {
                                         Text(
                                             rec.studentNo,
@@ -622,17 +689,31 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                         )
                                     }
                                     Spacer(Modifier.weight(1f))
-                                    Text(
-                                        when (rec.status) {
-                                            "present" -> rec.markedAtLocal ?: "已到"
-                                            "on_leave" -> rec.leaveTypeName ?: "请假"
-                                            "absent" -> "缺勤"
-                                            else -> "未点"
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isPresent) Color.White else tileColor
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Text(
+                                            when (rec.status) {
+                                                "present" -> rec.markedAtLocal ?: "已到"
+                                                "on_leave" -> rec.leaveTypeName ?: "请假"
+                                                "absent" -> "缺勤"
+                                                else -> "未点"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (isPresent) Color.White else tileColor,
+                                            maxLines = 1
+                                        )
+                                        if (isPresent) {
+                                            Icon(
+                                                Icons.Rounded.CheckCircle,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(if (compact) 12.dp else 13.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -657,6 +738,7 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                             repo.completeRollCall(rollCallId, records)
                             draftDao.clearByRollCall(rollCallId)
                             restoredDraft = false
+                            if (statusFilter == "pending") statusFilter = null
                             load()
                         }.onFailure { error = it.localizedMessage }
                         submitting = false
@@ -696,15 +778,29 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
 }
 
 @Composable
-private fun RollCallMetricPill(title: String, value: Int, color: Color, modifier: Modifier = Modifier) {
+private fun RollCallMetricPill(
+    title: String,
+    value: Int,
+    color: Color,
+    highlightColor: Color,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Surface(
-        modifier = modifier,
+        modifier = modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
-        color = color.copy(alpha = 0.09f)
+        color = highlightColor.copy(alpha = if (selected) 0.16f else 0.08f),
+        border = if (selected) BorderStroke(1.6.dp, highlightColor) else null
     ) {
         Column(modifier = Modifier.padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("$value", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = color)
-            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                title,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) highlightColor else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
