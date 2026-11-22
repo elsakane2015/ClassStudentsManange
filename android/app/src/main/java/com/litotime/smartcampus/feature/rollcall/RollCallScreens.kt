@@ -76,6 +76,7 @@ import com.litotime.smartcampus.core.designsystem.StatusBadge
 import com.litotime.smartcampus.core.designsystem.statusColor
 import com.litotime.smartcampus.core.util.SCDateFormatter
 import com.litotime.smartcampus.data.model.ClassOptionItem
+import com.litotime.smartcampus.data.model.LeaveType
 import com.litotime.smartcampus.data.model.RollCall
 import com.litotime.smartcampus.data.model.RollCallAdminItem
 import com.litotime.smartcampus.data.model.RollCallRecord
@@ -363,9 +364,13 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
     var colsMenuOpen by remember { mutableStateOf(false) }
     var confirmComplete by remember { mutableStateOf(false) }
     var editingCompleted by remember { mutableStateOf<RollCallRecord?>(null) }
+    var leaveTypes by remember { mutableStateOf<List<LeaveType>>(emptyList()) }
 
     val isInProgress = rollCall?.status == "in_progress"
     val canModifyCompleted = rollCall?.canModifyRecords == true
+    val selectableLeaveTypes = remember(leaveTypes) {
+        leaveTypes.filter { it.isActive && it.mappedAttendanceStatus == "leave" }
+    }
 
     fun load() {
         scope.launch {
@@ -373,6 +378,9 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
             error = null
             runCatching {
                 val detail = repo.fetchRollCallDetail(rollCallId)
+                if (leaveTypes.isEmpty()) {
+                    leaveTypes = runCatching { repo.fetchLeaveTypes() }.getOrDefault(emptyList())
+                }
                 rollCall = detail
                 var list = detail.records.sortedBy { it.studentNo.orEmpty() }
                 if (detail.status == "in_progress") {
@@ -755,19 +763,65 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
             title = { Text("修改 ${rec.studentName} 点名状态") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("present" to "标记为已到", "absent" to "标记为缺勤", "on_leave" to "标记为请假").forEach { (st, label) ->
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            editingCompleted = null
+                            scope.launch {
+                                error = null
+                                runCatching {
+                                    repo.updateRollCallRecord(rollCallId, rec.id, "present")
+                                    load()
+                                }.onFailure { error = it.localizedMessage }
+                            }
+                        }
+                    ) { Text("标记为已到") }
+
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
+                        onClick = {
+                            editingCompleted = null
+                            scope.launch {
+                                error = null
+                                runCatching {
+                                    repo.updateRollCallRecord(rollCallId, rec.id, "absent")
+                                    load()
+                                }.onFailure { error = it.localizedMessage }
+                            }
+                        }
+                    ) { Text("标记为缺勤") }
+
+                    if (selectableLeaveTypes.isEmpty()) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
                                 editingCompleted = null
                                 scope.launch {
+                                    error = null
                                     runCatching {
-                                        repo.updateRollCallRecord(rollCallId, rec.id, st)
+                                        repo.updateRollCallRecord(rollCallId, rec.id, "on_leave")
                                         load()
                                     }.onFailure { error = it.localizedMessage }
                                 }
                             }
-                        ) { Text(label) }
+                        ) { Text("标记为请假") }
+                    } else {
+                        selectableLeaveTypes.forEach { lt ->
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    editingCompleted = null
+                                    scope.launch {
+                                        error = null
+                                        runCatching {
+                                            repo.updateRollCallRecord(rollCallId, rec.id, "on_leave", lt.id)
+                                            load()
+                                        }.onFailure { error = it.localizedMessage }
+                                    }
+                                }
+                            ) { Text("标记为请假 · ${lt.name}") }
+                        }
                     }
                 }
             },

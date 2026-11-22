@@ -17,9 +17,13 @@ struct RollCallOperationView: View {
 
     @State private var confirmComplete = false
     @State private var editingCompletedRecord: RollCallRecord?
+    @State private var leaveTypes: [LeaveType] = []
 
     private var isInProgress: Bool { rollCall?.status == "in_progress" }
     private var canModifyCompleted: Bool { rollCall?.canModifyRecords?.value == true }
+    private var selectableLeaveTypes: [LeaveType] {
+        leaveTypes.filter { $0.isActiveFlag && $0.mappedAttendanceStatus == "leave" }
+    }
 
     private var filteredRecords: [RollCallRecord] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -213,6 +217,9 @@ struct RollCallOperationView: View {
                     }
                     .padding()
                 }
+                .refreshable {
+                    await loadDetail()
+                }
                 .background(SCTheme.background)
             }
 
@@ -265,16 +272,25 @@ struct RollCallOperationView: View {
                 get: { editingCompletedRecord != nil },
                 set: { if !$0 { editingCompletedRecord = nil } }
             ),
-            titleVisibility: .visible
-        ) {
+            titleVisibility: .visible,
+            presenting: editingCompletedRecord
+        ) { targetRecord in
             Button("标记为已到") {
-                if let r = editingCompletedRecord { Task { await updateCompleted(r, to: "present") } }
+                Task { await updateCompleted(targetRecord, to: "present") }
             }
             Button("标记为缺勤", role: .destructive) {
-                if let r = editingCompletedRecord { Task { await updateCompleted(r, to: "absent") } }
+                Task { await updateCompleted(targetRecord, to: "absent") }
             }
-            Button("标记为请假") {
-                if let r = editingCompletedRecord { Task { await updateCompleted(r, to: "on_leave") } }
+            if selectableLeaveTypes.isEmpty {
+                Button("标记为请假") {
+                    Task { await updateCompleted(targetRecord, to: "on_leave") }
+                }
+            } else {
+                ForEach(selectableLeaveTypes) { lt in
+                    Button("标记为请假 · \(lt.name)") {
+                        Task { await updateCompleted(targetRecord, to: "on_leave", leaveTypeId: lt.id) }
+                    }
+                }
             }
             Button("取消", role: .cancel) {}
         }
@@ -289,7 +305,12 @@ struct RollCallOperationView: View {
         defer { isLoading = false }
 
         do {
-            let detail = try await RollCallRepository.fetchRollCallDetail(id: rollCallId)
+            async let detailReq = RollCallRepository.fetchRollCallDetail(id: rollCallId)
+            let shouldFetchLeaveTypes = leaveTypes.isEmpty
+            let detail = try await detailReq
+            if shouldFetchLeaveTypes, let fetchedTypes = try? await AttendanceRepository.fetchLeaveTypes() {
+                leaveTypes = fetchedTypes
+            }
             rollCall = detail
             var loadedRecords = (detail.records ?? []).sorted {
                 ($0.student?.studentNo ?? "").localizedStandardCompare($1.student?.studentNo ?? "") == .orderedAscending
@@ -392,15 +413,21 @@ struct RollCallOperationView: View {
         }
     }
 
-    private func updateCompleted(_ record: RollCallRecord, to status: String) async {
+    private func updateCompleted(_ record: RollCallRecord, to status: String, leaveTypeId: Int? = nil) async {
+        errorMessage = nil
         do {
             let updated = try await RollCallRepository.updateRecord(
                 rollCallId: rollCallId,
                 recordId: record.id,
-                status: status
+                status: status,
+                leaveTypeId: leaveTypeId
             )
             if let idx = records.firstIndex(where: { $0.id == record.id }) {
                 records[idx].status = updated.status
+                records[idx].leaveTypeId = updated.leaveTypeId
+                records[idx].leaveDetail = updated.leaveDetail
+                records[idx].leaveStatus = updated.leaveStatus
+                records[idx].leaveType = updated.leaveType
                 records[idx].markedAt = updated.markedAt
                 records[idx].markedAtLocal = updated.markedAtLocal
             }

@@ -2618,6 +2618,9 @@ class AttendanceController extends Controller
             if ($rollCallRecord) {
                 $rollCallRecord->update([
                     'status' => 'present',
+                    'leave_type_id' => null,
+                    'leave_detail' => null,
+                    'leave_status' => 'manual_override',
                     'marked_at' => now(),
                 ]);
                 
@@ -2627,7 +2630,13 @@ class AttendanceController extends Controller
                     $presentCount = \App\Models\RollCallRecord::where('roll_call_id', $rollCallId)
                         ->where('status', 'present')
                         ->count();
-                    $rollCall->update(['present_count' => $presentCount]);
+                    $onLeaveCount = \App\Models\RollCallRecord::where('roll_call_id', $rollCallId)
+                        ->where('status', 'on_leave')
+                        ->count();
+                    $rollCall->update([
+                        'present_count' => $presentCount,
+                        'on_leave_count' => $onLeaveCount,
+                    ]);
                 }
                 
                 \Log::info('Synced roll_call_record to present and deleted attendance records', [

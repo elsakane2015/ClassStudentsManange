@@ -249,6 +249,7 @@ final class APIClient {
         }
 
         var request = URLRequest(url: finalURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.httpMethod = method
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")

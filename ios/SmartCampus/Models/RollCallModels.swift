@@ -68,13 +68,13 @@ struct RollCallRecord: Decodable, Identifiable, Hashable {
     let rollCallId: Int?
     let studentId: Int
     var status: String // pending, present, absent, on_leave
-    let leaveTypeId: Int?
-    let leaveDetail: String?
-    let leaveStatus: String?
+    var leaveTypeId: Int?
+    var leaveDetail: String?
+    var leaveStatus: String?
     var markedAt: String?
     var markedAtLocal: String?
     let student: RollCallStudentRef?
-    let leaveType: LeaveType?
+    var leaveType: LeaveType?
 
     enum CodingKeys: String, CodingKey {
         case id, status, student

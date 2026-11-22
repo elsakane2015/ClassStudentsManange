@@ -90,12 +90,17 @@ enum RollCallRepository {
     static func updateRecord(
         rollCallId: Int,
         recordId: Int,
-        status: String
+        status: String,
+        leaveTypeId: Int? = nil
     ) async throws -> RollCallRecord {
-        try await APIClient.shared.requestWithJSONBody(
+        var body: [String: Any] = ["status": status]
+        if let leaveTypeId {
+            body["leave_type_id"] = leaveTypeId
+        }
+        return try await APIClient.shared.requestWithJSONBody(
             "/roll-calls/\(rollCallId)/records/\(recordId)",
             method: "PUT",
-            jsonBody: ["status": status]
+            jsonBody: body
         )
     }
 

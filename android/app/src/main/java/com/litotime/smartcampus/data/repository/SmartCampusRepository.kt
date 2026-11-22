@@ -353,8 +353,18 @@ class SmartCampusRepository(private val api: ApiClient) {
         return RollCall.fromJson(obj)
     }
 
-    suspend fun updateRollCallRecord(rollCallId: Int, recordId: Int, status: String) {
-        val body = buildJsonObject { put("status", status) }
+    suspend fun updateRollCallRecord(
+        rollCallId: Int,
+        recordId: Int,
+        status: String,
+        leaveTypeId: Int? = null
+    ) {
+        val body = buildJsonObject {
+            put("status", status)
+            if (leaveTypeId != null) {
+                put("leave_type_id", leaveTypeId)
+            }
+        }
         api.requestRaw("/roll-calls/$rollCallId/records/$recordId", method = "PUT", jsonBody = body.toString())
     }
 

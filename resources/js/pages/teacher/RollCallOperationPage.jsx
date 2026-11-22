@@ -63,17 +63,23 @@ export default function RollCallOperationPage() {
     };
 
     // Update record status for completed roll calls (this still needs to save immediately)
-    const updateRecordStatus = async (recordId, newStatus) => {
+    const updateRecordStatus = async (recordId, newStatus, leaveTypeId = null) => {
         setSaving(true);
         try {
-            const res = await axios.put(`/roll-calls/${id}/records/${recordId}`, {
-                status: newStatus,
-            });
-            // Update local state
-            const now = new Date();
+            const payload = { status: newStatus };
+            if (leaveTypeId) {
+                payload.leave_type_id = leaveTypeId;
+            }
+            const res = await axios.put(`/roll-calls/${id}/records/${recordId}`, payload);
+            const updated = res.data || {};
+            // Update local state from authoritative backend response
             setRecords(prev => prev.map(r =>
                 r.id === recordId
-                    ? { ...r, status: newStatus, marked_at: now.toISOString(), marked_at_local: format(now, 'HH:mm') }
+                    ? {
+                        ...r,
+                        ...updated,
+                        student: updated.student || r.student,
+                    }
                     : r
             ));
             setEditingRecord(null);
