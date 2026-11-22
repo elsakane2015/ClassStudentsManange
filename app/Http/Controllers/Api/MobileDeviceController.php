@@ -37,11 +37,58 @@ class MobileDeviceController extends Controller
         ]);
 
         $provider = $validated['push_provider'] ?? ($validated['platform'] === 'ios' ? 'apns' : 'fcm');
+        $incomingToken = isset($validated['push_token']) ? trim((string) $validated['push_token']) : '';
+        $hasPushEnvironmentCol = Schema::hasColumn('mobile_devices', 'push_environment');
 
+        $attributes = self::buildRegisterAttributes(
+            userId: (int) $request->user()->id,
+            provider: $provider,
+            validated: $validated,
+            incomingToken: $incomingToken,
+            hasPushEnvironmentCol: $hasPushEnvironmentCol
+        );
+
+        // Reassign device ownership to the currently authenticated user when switching accounts on the same phone.
+        $existing = MobileDevice::where('platform', $validated['platform'])
+            ->where('device_identifier', $validated['device_identifier'])
+            ->first();
+
+        if ($existing) {
+            $existing->fill($attributes);
+            $existing->save();
+            $device = $existing;
+        } else {
+            $device = MobileDevice::create(array_merge(
+                [
+                    'platform' => $validated['platform'],
+                    'device_identifier' => $validated['device_identifier'],
+                    'push_token' => $incomingToken !== '' ? $incomingToken : null,
+                ],
+                $attributes
+            ));
+        }
+
+        return response()->json([
+            'message' => 'Device registered',
+            'device' => $device,
+            'push_gateway_configured' => $this->isPushGatewayConfigured($validated['platform']),
+        ]);
+    }
+
+    /**
+     * 组装设备更新属性：当客户端本次未携带有效 push_token 时，不写入 push_token 键，
+     * 避免并发注册或冷启动空 Token 请求覆盖擦除数据库中已有的真机推送令牌。
+     */
+    public static function buildRegisterAttributes(
+        int $userId,
+        string $provider,
+        array $validated,
+        string $incomingToken,
+        bool $hasPushEnvironmentCol
+    ): array {
         $attributes = [
-            'user_id' => $request->user()->id,
+            'user_id' => $userId,
             'push_provider' => $provider,
-            'push_token' => $validated['push_token'] ?? null,
             'device_name' => $validated['device_name'] ?? null,
             'app_version' => $validated['app_version'] ?? null,
             'os_version' => $validated['os_version'] ?? null,
@@ -50,24 +97,15 @@ class MobileDeviceController extends Controller
             'last_active_at' => now(),
         ];
 
-        if (Schema::hasColumn('mobile_devices', 'push_environment')) {
-            $attributes['push_environment'] = $validated['push_environment'] ?? null;
+        if ($incomingToken !== '') {
+            $attributes['push_token'] = $incomingToken;
         }
 
-        // Reassign device ownership to the currently authenticated user when switching accounts on the same phone.
-        $device = MobileDevice::updateOrCreate(
-            [
-                'platform' => $validated['platform'],
-                'device_identifier' => $validated['device_identifier'],
-            ],
-            $attributes
-        );
+        if ($hasPushEnvironmentCol && !empty($validated['push_environment'])) {
+            $attributes['push_environment'] = $validated['push_environment'];
+        }
 
-        return response()->json([
-            'message' => 'Device registered',
-            'device' => $device,
-            'push_gateway_configured' => $this->isPushGatewayConfigured($validated['platform']),
-        ]);
+        return $attributes;
     }
 
     public function unregister(Request $request)

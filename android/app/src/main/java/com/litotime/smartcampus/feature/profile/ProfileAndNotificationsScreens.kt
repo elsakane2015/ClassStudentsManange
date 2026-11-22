@@ -75,6 +75,7 @@ import com.litotime.smartcampus.core.util.SCDateFormatter
 import com.litotime.smartcampus.data.model.AppNotificationItem
 import com.litotime.smartcampus.data.model.MobileDeviceItem
 import com.litotime.smartcampus.data.model.User
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,6 +94,8 @@ fun ProfileScreen(
 
     var hasNotifPerm by remember { mutableStateOf(container.pushManager.hasNotificationPermission()) }
     var devices by remember { mutableStateOf<List<MobileDeviceItem>>(emptyList()) }
+    var isSyncingPush by remember { mutableStateOf(false) }
+    var pushSyncFeedback by remember { mutableStateOf<String?>(null) }
     var showChangePassword by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -216,17 +219,46 @@ fun ProfileScreen(
                             Text("申请通知权限")
                         }
                     }
-                    OutlinedButton(onClick = {
-                        scope.launch {
-                            container.pushManager.syncDeviceWithBackend()
-                            container.pushManager.refreshUnreadCount()
-                            devices = runCatching { container.repository.fetchDevices() }.getOrDefault(devices)
+                    OutlinedButton(
+                        enabled = !isSyncingPush,
+                        onClick = {
+                            scope.launch {
+                                isSyncingPush = true
+                                pushSyncFeedback = null
+                                hasNotifPerm = container.pushManager.hasNotificationPermission()
+                                container.pushManager.syncDeviceWithBackend()
+                                container.pushManager.refreshUnreadCount()
+                                devices = runCatching { container.repository.fetchDevices() }.getOrDefault(devices)
+                                isSyncingPush = false
+                                pushSyncFeedback = if (gatewayConfigured && devices.any { !it.pushToken.isNullOrBlank() }) {
+                                    "已同步 · 锁屏推送已就绪"
+                                } else {
+                                    "已同步 · 当前为仅站内通知模式"
+                                }
+                                delay(3000)
+                                pushSyncFeedback = null
+                            }
                         }
-                    }) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("同步设备状态")
+                    ) {
+                        if (isSyncingPush) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("正在同步...")
+                        } else {
+                            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("同步设备状态")
+                        }
                     }
+                }
+                pushSyncFeedback?.let { feedback ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = feedback,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF16A34A),
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
 
@@ -294,7 +326,7 @@ fun ProfileScreen(
                                 )
                             }
                             StatusBadge(
-                                text = if (!d.pushToken.isNullOrBlank()) "已注册" else "站内通知",
+                                text = if (!d.pushToken.isNullOrBlank()) "锁屏推送" else "仅站内通知",
                                 color = if (!d.pushToken.isNullOrBlank()) Color(0xFF16A34A) else Color(0xFF2563EB)
                             )
                         }

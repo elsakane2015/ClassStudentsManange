@@ -106,6 +106,14 @@ class MobilePushAndDeviceTest extends TestCase
             'user_id' => $teacher->id,
         ]);
 
+        // Re-registering without push_token (e.g. cold-start race) must NOT wipe existing push_token.
+        $this->postJson('/api/devices/register', [
+            'platform' => 'ios',
+            'device_identifier' => 'device-uuid-001',
+            'push_token' => null,
+            'device_name' => 'iPhone 17 Pro',
+        ])->assertOk()->assertJsonPath('device.push_token', 'apns_token_sample_123');
+
         // Unregister removes current device cleanly.
         $this->postJson('/api/devices/unregister', [
             'platform' => 'ios',

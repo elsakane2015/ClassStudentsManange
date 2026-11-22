@@ -9,6 +9,8 @@ struct ProfileView: View {
     @State private var showServerSwitch = false
     @State private var showLogoutAlert = false
     @State private var copiedTokenNotice = false
+    @State private var isRefreshingPush = false
+    @State private var pushRefreshFeedback: String?
     @State private var devices: [MobileDeviceItem] = []
 
     var body: some View {
@@ -108,12 +110,39 @@ struct ProfileView: View {
 
                     Button {
                         Task {
+                            isRefreshingPush = true
+                            pushRefreshFeedback = nil
                             await pushManager.requestPermissionAndRegister()
+                            await pushManager.refreshUnreadCount()
                             await loadDevices()
+                            isRefreshingPush = false
+                            if pushManager.apnsDeviceToken != nil && pushManager.pushGatewayConfiguredOnServer {
+                                pushRefreshFeedback = "已同步 · 锁屏推送已就绪"
+                            } else if pushManager.apnsDeviceToken != nil {
+                                pushRefreshFeedback = "已同步本机 Token"
+                            } else {
+                                pushRefreshFeedback = "已刷新 · 当前为仅站内通知模式"
+                            }
+                            try? await Task.sleep(for: .seconds(3))
+                            pushRefreshFeedback = nil
                         }
                     } label: {
-                        Label("刷新推送注册状态", systemImage: "arrow.clockwise")
+                        HStack {
+                            if isRefreshingPush {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .padding(.trailing, 4)
+                                Text("正在同步推送状态...")
+                                    .foregroundStyle(.secondary)
+                            } else if let feedback = pushRefreshFeedback {
+                                Label(feedback, systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Label("刷新推送注册状态", systemImage: "arrow.clockwise")
+                            }
+                        }
                     }
+                    .disabled(isRefreshingPush)
                 }
 
                 // Server & Account
@@ -158,9 +187,9 @@ struct ProfileView: View {
                                 }
                                 Spacer()
                                 if let token = device.pushToken, !token.isEmpty {
-                                    StatusBadge(text: "已注册", color: .green)
+                                    StatusBadge(text: "锁屏推送", color: .green)
                                 } else {
-                                    StatusBadge(text: "站内通知", color: .blue)
+                                    StatusBadge(text: "仅站内通知", color: .blue)
                                 }
                             }
                         }
@@ -210,6 +239,9 @@ struct ProfileView: View {
                 await pushManager.refreshAuthorizationStatus()
                 await pushManager.refreshUnreadCount()
                 await loadDevices()
+            }
+            .onChange(of: pushManager.lastSyncedAt) { _, _ in
+                Task { await loadDevices() }
             }
         }
     }

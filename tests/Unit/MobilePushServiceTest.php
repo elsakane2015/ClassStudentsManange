@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Http\Controllers\Api\MobileDeviceController;
 use App\Models\MobileDevice;
 use App\Services\MobilePushService;
 use PHPUnit\Framework\TestCase;
@@ -49,5 +50,28 @@ class MobilePushServiceTest extends TestCase
         $this->assertSame('production', $method->invoke($service, $prodDevice, ['sandbox' => true]));
         $this->assertSame('development', $method->invoke($service, $legacyDevice, ['sandbox' => true]));
         $this->assertSame('production', $method->invoke($service, $legacyDevice, ['sandbox' => false]));
+    }
+
+    public function test_build_register_attributes_preserves_existing_push_token_when_incoming_is_empty(): void
+    {
+        $withoutToken = MobileDeviceController::buildRegisterAttributes(
+            userId: 7,
+            provider: 'apns',
+            validated: ['device_name' => 'iPhone', 'push_environment' => null],
+            incomingToken: '',
+            hasPushEnvironmentCol: true
+        );
+        $this->assertArrayNotHasKey('push_token', $withoutToken);
+        $this->assertArrayNotHasKey('push_environment', $withoutToken);
+
+        $withToken = MobileDeviceController::buildRegisterAttributes(
+            userId: 7,
+            provider: 'apns',
+            validated: ['device_name' => 'iPhone', 'push_environment' => 'development'],
+            incomingToken: '63e5815e7fe8fd',
+            hasPushEnvironmentCol: true
+        );
+        $this->assertSame('63e5815e7fe8fd', $withToken['push_token']);
+        $this->assertSame('development', $withToken['push_environment']);
     }
 }

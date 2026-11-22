@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 @main
 struct SmartCampusApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
     @State private var session = SessionManager.shared
     @State private var serverConfig = ServerConfigManager.shared
 
@@ -54,6 +55,14 @@ struct SmartCampusApp: App {
             }
             .task {
                 await session.bootstrap()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active, session.isAuthenticated {
+                    Task {
+                        await PushNotificationManager.shared.syncOnForegroundIfAuthenticated()
+                        await PushNotificationManager.shared.refreshUnreadCount()
+                    }
+                }
             }
         }
     }
