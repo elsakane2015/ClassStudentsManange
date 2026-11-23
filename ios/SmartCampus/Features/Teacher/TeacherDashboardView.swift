@@ -21,6 +21,8 @@ struct TeacherDashboardView: View {
     @State private var calendarSummary: [String: [CalendarSummaryRecord]] = [:]
     @State private var isLoadingCalendar: Bool = false
     @State private var dayPanelMode: DayPanelMode = .summary
+    @State private var summaryTypeFilter: String? = nil
+    @AppStorage("smartcampus.summary_columns") private var summaryColumns: Int = 1
     @State private var classSearchText: String = ""
     @State private var rosterFilter: RosterFilter = .all
     @AppStorage("smartcampus.roster_columns") private var rosterColumns: Int = 1
@@ -49,7 +51,7 @@ struct TeacherDashboardView: View {
     }
 
     enum DayPanelMode: String, CaseIterable {
-        case summary = "异常汇总"
+        case summary = "考勤情况"
         case roster = "全班登记"
     }
 
@@ -89,6 +91,69 @@ struct TeacherDashboardView: View {
 
     private var selectedDaySummaryRecords: [CalendarSummaryRecord] {
         calendarSummary[selectedDateKey] ?? []
+    }
+
+    private func normalizedSummaryTypeName(for rec: CalendarSummaryRecord) -> String {
+        let clean = rec.type.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !clean.isEmpty && clean != "未知" {
+            return clean
+        }
+        switch rec.status {
+        case "absent": return "旷课"
+        case "late": return "迟到"
+        case "early_leave": return "早退"
+        case "excused", "leave": return "请假"
+        default: return clean.isEmpty ? "考勤记录" : clean
+        }
+    }
+
+    private struct SummaryFilterOption: Identifiable {
+        let name: String
+        let count: Int
+        let colorKey: String
+        var id: String { name }
+    }
+
+    private var summaryFilterOptions: [SummaryFilterOption] {
+        var countsByType: [String: Int] = [:]
+        var fallbackColors: [String: String] = [:]
+        for rec in selectedDaySummaryRecords {
+            let name = normalizedSummaryTypeName(for: rec)
+            countsByType[name, default: 0] += 1
+            if fallbackColors[name] == nil {
+                fallbackColors[name] = rec.displayColorKey
+            }
+        }
+
+        var options: [SummaryFilterOption] = []
+        var seen = Set<String>()
+        for lt in activeLeaveTypes {
+            let cleanName = lt.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanName.isEmpty, seen.insert(cleanName).inserted else { continue }
+            options.append(SummaryFilterOption(
+                name: cleanName,
+                count: countsByType[cleanName] ?? 0,
+                colorKey: lt.resolvedColorKey
+            ))
+        }
+        // 补齐当日记录中不在启用考勤类型列表里的额外类型（如夜自习状态或历史类型）
+        for rec in selectedDaySummaryRecords {
+            let name = normalizedSummaryTypeName(for: rec)
+            guard seen.insert(name).inserted else { continue }
+            options.append(SummaryFilterOption(
+                name: name,
+                count: countsByType[name] ?? 0,
+                colorKey: fallbackColors[name] ?? fallbackColorKey(forName: name)
+            ))
+        }
+        return options
+    }
+
+    private var filteredDaySummaryRecords: [CalendarSummaryRecord] {
+        guard let filter = summaryTypeFilter else {
+            return selectedDaySummaryRecords
+        }
+        return selectedDaySummaryRecords.filter { normalizedSummaryTypeName(for: $0) == filter }
     }
 
     private var activeLeaveTypes: [LeaveType] {
@@ -396,33 +461,17 @@ struct TeacherDashboardView: View {
     private var selectedDateAttendanceCard: some View {
         SCCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(SCDateFormatter.cnMonthDay.string(from: selectedDate))
-                                .font(.headline)
-                            if isHoliday(selectedDate) {
-                                StatusBadge(text: "休", color: .red)
-                            }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(SCDateFormatter.cnMonthDay.string(from: selectedDate))
+                            .font(.headline)
+                        if isHoliday(selectedDate) {
+                            StatusBadge(text: "休", color: .red)
                         }
-                        Text(selectedDaySummaryRecords.isEmpty ? "当日暂无异常考勤" : "当日共 \(selectedDaySummaryRecords.count) 条异常考勤")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    Button {
-                        withAnimation(.snappy) {
-                            dayPanelMode = (dayPanelMode == .summary) ? .roster : .summary
-                        }
-                    } label: {
-                        Label(
-                            dayPanelMode == .summary ? "登记/维护" : "看异常汇总",
-                            systemImage: dayPanelMode == .summary ? "square.and.pencil" : "list.bullet.rectangle"
-                        )
-                        .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    Text(selectedDaySummaryRecords.isEmpty ? "当日暂无考勤记录" : "当日共 \(selectedDaySummaryRecords.count) 条考勤情况")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Picker("当日视图", selection: $dayPanelMode) {
@@ -434,7 +483,7 @@ struct TeacherDashboardView: View {
 
                 if dayPanelMode == .summary {
                     if !canViewCalendarSummary {
-                        Text("当前账号无日历异常摘要权限，可切换「全班登记」查看或维护。")
+                        Text("当前账号无日历考勤情况查看权限，可切换「全班登记」查看或维护。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 6)
@@ -455,32 +504,140 @@ struct TeacherDashboardView: View {
                         }
                         .padding(.vertical, 8)
                     } else {
-                        VStack(spacing: 8) {
-                            ForEach(selectedDaySummaryRecords) { rec in
-                                SummarySwipeableRecordRow(
-                                    record: rec,
-                                    activeLeaveTypes: activeLeaveTypes,
-                                    isBusy: busySummaryRecordIds.contains(rec.id),
-                                    isOpen: openSwipeRecordId == rec.id,
-                                    onSetOpen: { open in
-                                        withAnimation(.snappy(duration: 0.22)) {
-                                            if open {
-                                                openSwipeRecordId = rec.id
-                                            } else if openSwipeRecordId == rec.id {
-                                                openSwipeRecordId = nil
-                                            }
+                        // 考勤类型筛选选卡 + 1列/2列切换
+                        HStack(spacing: 6) {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    let isAllSelected = (summaryTypeFilter == nil)
+                                    Button {
+                                        withAnimation(.snappy(duration: 0.18)) {
+                                            openSwipeRecordId = nil
+                                            summaryTypeFilter = nil
                                         }
-                                    },
-                                    onTap: {
-                                        openSummaryDetail(for: rec)
-                                    },
-                                    onQuickChangeType: { targetType in
-                                        Task { await quickChangeSummaryRecord(rec, to: targetType) }
-                                    },
-                                    onDelete: {
-                                        Task { await quickDeleteSummaryRecord(rec) }
+                                    } label: {
+                                        Text("全部 \(selectedDaySummaryRecords.count)")
+                                            .font(.caption.weight(isAllSelected ? .semibold : .regular))
+                                            .padding(.horizontal, 9)
+                                            .padding(.vertical, 5)
+                                            .background(isAllSelected ? SCTheme.primary : Color(.tertiarySystemFill))
+                                            .foregroundStyle(isAllSelected ? .white : .primary)
+                                            .clipShape(Capsule())
                                     }
-                                )
+                                    .buttonStyle(.plain)
+
+                                    ForEach(summaryFilterOptions) { opt in
+                                        let isSelected = (summaryTypeFilter == opt.name)
+                                        let tint = SCTheme.color(for: opt.colorKey)
+                                        Button {
+                                            withAnimation(.snappy(duration: 0.18)) {
+                                                openSwipeRecordId = nil
+                                                summaryTypeFilter = isSelected ? nil : opt.name
+                                            }
+                                        } label: {
+                                            Text(opt.count > 0 ? "\(opt.name) \(opt.count)" : opt.name)
+                                                .font(.caption.weight(isSelected ? .semibold : .regular))
+                                                .padding(.horizontal, 9)
+                                                .padding(.vertical, 5)
+                                                .background(
+                                                    isSelected
+                                                        ? tint
+                                                        : (opt.count > 0 ? tint.opacity(0.12) : Color(.tertiarySystemFill))
+                                                )
+                                                .foregroundStyle(
+                                                    isSelected
+                                                        ? .white
+                                                        : (opt.count > 0 ? tint : .secondary)
+                                                )
+                                                .clipShape(Capsule())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            // 1列 / 2列切换（持久化记忆）
+                            HStack(spacing: 2) {
+                                ForEach([1, 2], id: \.self) { cols in
+                                    let active = summaryColumns == cols
+                                    Button {
+                                        withAnimation(.snappy(duration: 0.18)) {
+                                            openSwipeRecordId = nil
+                                            summaryColumns = cols
+                                        }
+                                    } label: {
+                                        Text("\(cols)列")
+                                            .font(.caption2.weight(active ? .semibold : .regular))
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 5)
+                                            .background(active ? SCTheme.primary : Color.clear)
+                                            .foregroundStyle(active ? .white : .secondary)
+                                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(2)
+                            .background(Color(.tertiarySystemFill))
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        }
+
+                        if filteredDaySummaryRecords.isEmpty {
+                            Text("当日暂无「\(summaryTypeFilter ?? "")」记录")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 10)
+                        } else if summaryColumns == 2 {
+                            LazyVGrid(
+                                columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                                spacing: 8
+                            ) {
+                                ForEach(filteredDaySummaryRecords) { rec in
+                                    SummaryCompactGridCard(
+                                        record: rec,
+                                        resolvedNote: resolvedSummaryNote(for: rec),
+                                        activeLeaveTypes: activeLeaveTypes,
+                                        isBusy: busySummaryRecordIds.contains(rec.id),
+                                        onTap: {
+                                            openSummaryDetail(for: rec)
+                                        },
+                                        onQuickChangeType: { targetType in
+                                            Task { await quickChangeSummaryRecord(rec, to: targetType) }
+                                        },
+                                        onDelete: {
+                                            Task { await quickDeleteSummaryRecord(rec) }
+                                        }
+                                    )
+                                }
+                            }
+                        } else {
+                            VStack(spacing: 8) {
+                                ForEach(filteredDaySummaryRecords) { rec in
+                                    SummarySwipeableRecordRow(
+                                        record: rec,
+                                        resolvedNote: resolvedSummaryNote(for: rec),
+                                        activeLeaveTypes: activeLeaveTypes,
+                                        isBusy: busySummaryRecordIds.contains(rec.id),
+                                        isOpen: openSwipeRecordId == rec.id,
+                                        onSetOpen: { open in
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                if open {
+                                                    openSwipeRecordId = rec.id
+                                                } else if openSwipeRecordId == rec.id {
+                                                    openSwipeRecordId = nil
+                                                }
+                                            }
+                                        },
+                                        onTap: {
+                                            openSummaryDetail(for: rec)
+                                        },
+                                        onQuickChangeType: { targetType in
+                                            Task { await quickChangeSummaryRecord(rec, to: targetType) }
+                                        },
+                                        onDelete: {
+                                            Task { await quickDeleteSummaryRecord(rec) }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1118,6 +1275,41 @@ struct TeacherDashboardView: View {
         return "blue"
     }
 
+    private func resolvedSummaryNote(for rec: CalendarSummaryRecord) -> String? {
+        if let n = rec.displayNote?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty {
+            return n
+        }
+        guard let student = matchedStudent(for: rec),
+              let attendance = student.attendance, !attendance.isEmpty else {
+            return nil
+        }
+        let nonNormal = attendance.filter { !$0.isNormalPresentRecord }
+        let idSet = Set(rec.allRecordIds)
+        var candidates = nonNormal.filter { idSet.contains($0.id) }
+        if candidates.isEmpty {
+            let recType = normalizedSummaryTypeName(for: rec)
+            let isEvening = rec.option?.contains("夜自习") == true
+            candidates = nonNormal.filter { item in
+                let itemIsEvening = (item.scene ?? "regular") == "evening_study"
+                guard itemIsEvening == isEvening else { return false }
+                let typeMatch = (item.titleText == recType) || (item.status == rec.status)
+                let approvalMatch = (rec.approvalStatus == nil) || (item.approvalStatus == rec.approvalStatus)
+                return typeMatch && approvalMatch
+            }
+        }
+        let cleanOption = rec.compactDisplay.option.trimmingCharacters(in: .whitespacesAndNewlines)
+        for item in candidates {
+            for raw in [item.reason, item.note, item.details?.value?.text] {
+                if let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !trimmed.isEmpty,
+                   trimmed != cleanOption {
+                    return trimmed
+                }
+            }
+        }
+        return nil
+    }
+
     private func showQuickToast(_ text: String) {
         withAnimation(.snappy(duration: 0.22)) {
             quickToastMessage = text
@@ -1139,6 +1331,7 @@ struct TeacherDashboardView: View {
 
 private struct SummarySwipeableRecordRow: View {
     let record: CalendarSummaryRecord
+    let resolvedNote: String?
     let activeLeaveTypes: [LeaveType]
     let isBusy: Bool
     let isOpen: Bool
@@ -1315,7 +1508,7 @@ private struct SummarySwipeableRecordRow: View {
                     Text(record.studentShortLabel)
                         .font(.caption)
                         .foregroundStyle(.primary)
-                    if let note = record.displayNote, !note.isEmpty {
+                    if let note = resolvedNote, !note.isEmpty {
                         Text("· \(note)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1341,6 +1534,152 @@ private struct SummarySwipeableRecordRow: View {
             }
         }
         .padding(10)
+    }
+
+    private func iconName(for leaveType: LeaveType) -> String {
+        switch leaveType.slug {
+        case "absent": return "xmark.circle"
+        case "late": return "clock.badge.exclamationmark"
+        case "early_leave": return "figure.walk.departure"
+        default:
+            if leaveType.name.contains("病") { return "cross.case" }
+            if leaveType.name.contains("生理") { return "heart" }
+            return "doc.text"
+        }
+    }
+}
+
+/// 2列模式下的紧凑考勤情况卡片（支持点按详情 + 长按快捷改考勤/删除）
+private struct SummaryCompactGridCard: View {
+    let record: CalendarSummaryRecord
+    let resolvedNote: String?
+    let activeLeaveTypes: [LeaveType]
+    let isBusy: Bool
+    let onTap: () -> Void
+    let onQuickChangeType: (LeaveType) -> Void
+    let onDelete: () -> Void
+
+    private var isEveningStudyRecord: Bool {
+        record.option?.contains("夜自习") == true
+    }
+
+    private var accentColor: Color {
+        SCTheme.color(for: record.displayColorKey)
+    }
+
+    private var cleanTypeTitle: String {
+        let clean = record.type.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !clean.isEmpty && clean != "未知" { return clean }
+        switch record.status {
+        case "absent": return "旷课"
+        case "late": return "迟到"
+        case "early_leave": return "早退"
+        case "excused", "leave": return "请假"
+        default: return "考勤"
+        }
+    }
+
+    var body: some View {
+        Button {
+            if !isBusy { onTap() }
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(accentColor)
+                        .frame(width: 7, height: 7)
+                    if !record.approvalPrefix.isEmpty {
+                        Text(record.approvalPrefix)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(SCTheme.color(for: record.approvalStatus))
+                    }
+                    Text(cleanTypeTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(accentColor)
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                    if isBusy {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else if let time = record.time, !time.isEmpty {
+                        Text(time)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                let opt = record.compactDisplay.option
+                if !opt.isEmpty {
+                    Text(opt)
+                        .font(.caption2)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(record.studentShortLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if let note = resolvedNote, !note.isEmpty {
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+            .padding(9)
+            .background(accentColor.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(accentColor.opacity(0.28), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contextMenu {
+            if !isEveningStudyRecord && !activeLeaveTypes.isEmpty {
+                Section("快捷修改考勤类型") {
+                    ForEach(activeLeaveTypes) { lt in
+                        let isCurrent = (lt.name == record.type)
+                        Button {
+                            if !isCurrent {
+                                onQuickChangeType(lt)
+                            }
+                        } label: {
+                            if isCurrent {
+                                Label("\(lt.name)（当前）", systemImage: "checkmark")
+                            } else {
+                                Label("改为 \(lt.name)", systemImage: iconName(for: lt))
+                            }
+                        }
+                        .disabled(isCurrent || isBusy)
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                onTap()
+            } label: {
+                Label("详细编辑（节次 / 备注）", systemImage: "slider.horizontal.3")
+            }
+
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("删除此记录", systemImage: "trash")
+            }
+            .disabled(isBusy)
+        }
     }
 
     private func iconName(for leaveType: LeaveType) -> String {
@@ -1851,7 +2190,7 @@ struct StudentAttendanceActionSheet: View {
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.seal.fill")
                                 .foregroundStyle(.green)
-                            Text("当日暂无异常，当前状态为正常出勤")
+                            Text("当日暂无考勤记录，当前状态为正常出勤")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -2120,7 +2459,7 @@ struct StudentAttendanceActionSheet: View {
                     if isLoadingHistory {
                         ProgressView("加载记录...")
                     } else if groupedHistoryRecords.isEmpty {
-                        Text("该范围内无异常考勤记录")
+                        Text("该范围内暂无考勤记录")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     } else {
@@ -2158,7 +2497,7 @@ struct StudentAttendanceActionSheet: View {
                         }
                     }
                 } header: {
-                    Text("近期历史异常（左滑可删除）")
+                    Text("近期考勤记录（左滑可删除）")
                 }
             }
             .navigationTitle(student.displayName)
@@ -2387,6 +2726,7 @@ private struct TeacherStatDetailSheet: View {
     let target: TeacherDashboardView.StatDetailTarget
     @Environment(\.dismiss) private var dismiss
 
+    @AppStorage("smartcampus.stat_detail_columns") private var detailColumns: Int = 1
     @State private var presentList: [PresentDetailStudent] = []
     @State private var nonPresentList: [NonPresentDetailStudent] = []
     @State private var isLoading = true
@@ -2400,22 +2740,120 @@ private struct TeacherStatDetailSheet: View {
                 } else if let errorMessage {
                     ErrorBannerView(message: errorMessage).padding()
                 } else if target.status == "present" {
-                    List(presentList) { s in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(s.name).font(.subheadline.weight(.semibold))
-                                Text("\(s.className ?? "") · \(s.studentNo ?? "")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                    if presentList.isEmpty {
+                        ContentUnavailableView("暂无出勤记录", systemImage: "checkmark.circle")
+                    } else if detailColumns == 2 {
+                        ScrollView {
+                            LazyVGrid(
+                                columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                                spacing: 10
+                            ) {
+                                ForEach(presentList) { s in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                            Text(s.name)
+                                                .font(.subheadline.weight(.semibold))
+                                                .lineLimit(1)
+                                            Spacer(minLength: 2)
+                                            if let rate = s.attendanceRate?.value {
+                                                StatusBadge(
+                                                    text: String(format: "%.0f%%", rate),
+                                                    color: rate >= 95 ? .green : .orange
+                                                )
+                                            }
+                                        }
+                                        Text("\(s.className ?? "") · \(s.studentNo ?? "")")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                                    .padding(10)
+                                    .background(SCTheme.cardBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                }
                             }
-                            Spacer()
-                            if let rate = s.attendanceRate?.value {
-                                StatusBadge(text: String(format: "%.1f%%", rate), color: rate >= 95 ? .green : .orange)
+                            .padding()
+                        }
+                        .background(SCTheme.background.ignoresSafeArea())
+                    } else {
+                        List(presentList) { s in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(s.name).font(.subheadline.weight(.semibold))
+                                    Text("\(s.className ?? "") · \(s.studentNo ?? "")")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if let rate = s.attendanceRate?.value {
+                                    StatusBadge(text: String(format: "%.1f%%", rate), color: rate >= 95 ? .green : .orange)
+                                }
                             }
                         }
                     }
                 } else if nonPresentList.isEmpty {
-                    ContentUnavailableView("暂无异常记录", systemImage: "checkmark.circle")
+                    ContentUnavailableView("暂无考勤记录", systemImage: "checkmark.circle")
+                } else if detailColumns == 2 {
+                    ScrollView {
+                        LazyVGrid(
+                            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                            spacing: 10
+                        ) {
+                            ForEach(nonPresentList) { s in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                        Text(formattedStudentTitle(s))
+                                            .font(.subheadline.weight(.semibold))
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.85)
+                                        Spacer(minLength: 2)
+                                    }
+                                    if let cls = s.className, !cls.isEmpty {
+                                        Text(cls)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    if let detail = s.detail, !detail.isEmpty {
+                                        Text(compactDetailText(detail))
+                                            .font(.caption2)
+                                            .foregroundStyle(.orange)
+                                            .lineLimit(3)
+                                    }
+                                    if let remark = extractedStudentRemark(s) {
+                                        Text("备注：\(remark)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                    if scope != "today", let recs = s.records, !recs.isEmpty {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            ForEach(recs.prefix(3)) { rec in
+                                                let dateText = rec.dateKey
+                                                let recDetail = compactDetailText(rec.resolvedDetailText)
+                                                Text(recDetail.isEmpty ? dateText : "\(dateText) · \(recDetail)")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                            }
+                                            if recs.count > 3 {
+                                                Text("共 \(recs.count) 条")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                        }
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+                                .padding(10)
+                                .background(SCTheme.cardBackground)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                        }
+                        .padding()
+                    }
+                    .background(SCTheme.background.ignoresSafeArea())
                 } else {
                     List(nonPresentList) { s in
                         VStack(alignment: .leading, spacing: 5) {
@@ -2431,6 +2869,12 @@ private struct TeacherStatDetailSheet: View {
                                 Text(compactDetailText(detail))
                                     .font(.caption)
                                     .foregroundStyle(.orange)
+                            }
+                            if let remark = extractedStudentRemark(s) {
+                                Text("备注：\(remark)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
                             }
                             if scope != "today", let recs = s.records, !recs.isEmpty {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -2458,6 +2902,30 @@ private struct TeacherStatDetailSheet: View {
             .navigationTitle(target.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 2) {
+                        ForEach([1, 2], id: \.self) { cols in
+                            let active = detailColumns == cols
+                            Button {
+                                withAnimation(.snappy(duration: 0.18)) {
+                                    detailColumns = cols
+                                }
+                            } label: {
+                                Text("\(cols)列")
+                                    .font(.caption2.weight(active ? .semibold : .regular))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 4)
+                                    .background(active ? SCTheme.primary : Color.clear)
+                                    .foregroundStyle(active ? .white : .secondary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(2)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("关闭") { dismiss() }
                 }
@@ -2489,6 +2957,21 @@ private struct TeacherStatDetailSheet: View {
             return "\(no.suffix(2)) \(student.name)"
         }
         return student.name
+    }
+
+    private func extractedStudentRemark(_ student: NonPresentDetailStudent) -> String? {
+        guard let recs = student.records else { return nil }
+        let detailText = student.detail ?? ""
+        for rec in recs {
+            for raw in [rec.reason, rec.note, rec.details?.value?.text] {
+                if let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !trimmed.isEmpty,
+                   !detailText.contains(trimmed) {
+                    return trimmed
+                }
+            }
+        }
+        return nil
     }
 
     private func compactDetailText(_ raw: String) -> String {
@@ -2556,7 +3039,7 @@ struct AttendanceExportSheet: View {
                     }
                     Picker("学生范围", selection: $studentRange) {
                         Text("全部学生").tag("all")
-                        Text("仅含异常记录学生").tag("with_records")
+                        Text("仅含有考勤记录学生").tag("with_records")
                     }
                 }
 

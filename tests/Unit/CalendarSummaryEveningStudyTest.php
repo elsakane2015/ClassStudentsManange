@@ -282,4 +282,31 @@ class CalendarSummaryEveningStudyTest extends TestCase
             AttendanceController::resolveDetailsQueryMode('early_leave', 11)
         );
     }
+
+    public function test_resolves_calendar_summary_note_for_self_applied_and_manual_records(): void
+    {
+        // 1. 学生自主请假（如特殊假、病假）：事由存于 reason 字段
+        $selfSpecial = new AttendanceRecord([
+            'is_self_applied' => true,
+            'reason' => '参加省技能大赛集训',
+            'note' => null,
+        ]);
+        $this->assertSame(
+            '参加省技能大赛集训',
+            AttendanceController::resolveCalendarSummaryNote($selfSpecial, [], '早读、早操、第1-6节、晚操 (9节)')
+        );
+
+        // 2. 手工标记带 details.text
+        $manual = new AttendanceRecord(['reason' => null, 'note' => null]);
+        $this->assertSame(
+            '技能训练',
+            AttendanceController::resolveCalendarSummaryNote($manual, ['text' => '技能训练'], '早读、早操、第1-6节、晚操 (9节) · 技能训练', '技能训练')
+        );
+
+        // 3. 仅文本无节次时，不与 optionLabel 重复输出
+        $textOnly = new AttendanceRecord(['reason' => null, 'note' => '技能训练']);
+        $this->assertNull(
+            AttendanceController::resolveCalendarSummaryNote($textOnly, ['text' => '技能训练'], '技能训练', null)
+        );
+    }
 }

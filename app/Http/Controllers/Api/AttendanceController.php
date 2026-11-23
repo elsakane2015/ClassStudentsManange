@@ -1138,8 +1138,10 @@ class AttendanceController extends Controller
             // 优先使用自定义的显示标签（用户自定义选择节次时生成）
             if ($record->scene === 'evening_study') {
                 $optionLabel = $resolvedLabels['option'] ?? '';
+                $noteLabel = self::resolveCalendarSummaryNote($record, $details, $optionLabel);
             } elseif ($isBatchPeriodRecord) {
                 $optionLabel = $periodMap->get((int) $record->period_id)['name'] ?? "第{$record->period_id}节";
+                $noteLabel = self::resolveCalendarSummaryNote($record, $details, $optionLabel);
             } else {
                 $formattedOption = self::formatCompactCalendarOption(
                     $details,
@@ -1149,7 +1151,12 @@ class AttendanceController extends Controller
                     $record->leaveType
                 );
                 $optionLabel = $formattedOption['option'];
-                $noteLabel = $formattedOption['note'];
+                $noteLabel = self::resolveCalendarSummaryNote(
+                    $record,
+                    $details,
+                    $optionLabel,
+                    $formattedOption['note']
+                );
             }
             
             // Format time (with correct timezone)
@@ -1190,6 +1197,9 @@ class AttendanceController extends Controller
                     $result[$dateKey][$mergeKey]['record_ids'][] = $record->id;
                     $result[$dateKey][$mergeKey]['_period_ids'][] = $record->period_id;
                     $result[$dateKey][$mergeKey]['_period_names'][] = $optionLabel;
+                    if (empty($result[$dateKey][$mergeKey]['note']) && $noteLabel !== null) {
+                        $result[$dateKey][$mergeKey]['note'] = $noteLabel;
+                    }
                 }
             } else {
                 // 普通记录、夜自习记录或已有 option_label 的记录
@@ -1634,6 +1644,41 @@ class AttendanceController extends Controller
         }
 
         return ['option' => '', 'note' => null];
+    }
+
+    /**
+     * 统一提取考勤情况摘要备注（兼容手工标记 details.text 与学生自主请假 reason / note）
+     *
+     * @param array<string, mixed> $details
+     */
+    public static function resolveCalendarSummaryNote(
+        AttendanceRecord $record,
+        array $details = [],
+        string $optionLabel = '',
+        ?string $preferredNote = null
+    ): ?string {
+        $candidates = [
+            $preferredNote,
+            $details['text'] ?? null,
+            $record->reason ?? null,
+            $record->note ?? null,
+            $details['reason'] ?? null,
+            $details['note'] ?? null,
+        ];
+
+        $cleanOption = trim($optionLabel);
+        foreach ($candidates as $candidate) {
+            if (!is_string($candidate)) {
+                continue;
+            }
+            $trimmed = trim($candidate);
+            if ($trimmed === '' || $trimmed === $cleanOption) {
+                continue;
+            }
+            return $trimmed;
+        }
+
+        return null;
     }
 
     /**

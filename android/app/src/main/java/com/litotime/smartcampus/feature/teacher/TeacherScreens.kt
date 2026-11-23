@@ -46,7 +46,6 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.Groups
@@ -169,6 +168,8 @@ fun TeacherDashboardScreen(
     var calendarSummary by remember { mutableStateOf<Map<String, List<CalendarSummaryRecord>>>(emptyMap()) }
     var loadingCalendar by remember { mutableStateOf(false) }
     var dayPanelMode by remember { mutableStateOf("summary") } // "summary" | "roster"
+    var summaryTypeFilter by remember { mutableStateOf<String?>(null) }
+    val summaryColumns by SmartCampusApp.container.prefs.summaryColumnsFlow.collectAsStateWithLifecycle(initialValue = 1)
     var rosterSearch by remember { mutableStateOf("") }
     var rosterFilter by remember { mutableStateOf("all") } // "all" | "has_records" | "normal"
     val rosterColumns by SmartCampusApp.container.prefs.rosterColumnsFlow.collectAsStateWithLifecycle(initialValue = 1)
@@ -195,6 +196,48 @@ fun TeacherDashboardScreen(
     val selectedDayRecords = calendarSummary[selectedDateKey].orEmpty()
     val isSelectedHoliday = activeSemester?.holidays?.contains(selectedDateKey) == true
     val regularPeriods = remember(classPeriods) { classPeriods.filter { (it.scene ?: "regular") != "evening_study" } }
+
+    fun normalizedSummaryTypeName(rec: CalendarSummaryRecord): String {
+        val clean = rec.type.trim()
+        if (clean.isNotEmpty() && clean != "未知") return clean
+        return when (rec.status) {
+            "absent" -> "旷课"
+            "late" -> "迟到"
+            "early_leave" -> "早退"
+            "excused", "leave" -> "请假"
+            else -> clean.ifEmpty { "考勤记录" }
+        }
+    }
+
+    val summaryFilterOptions = remember(selectedDayRecords, leaveTypes) {
+        val countsByType = mutableMapOf<String, Int>()
+        val fallbackColors = mutableMapOf<String, String>()
+        selectedDayRecords.forEach { rec ->
+            val name = normalizedSummaryTypeName(rec)
+            countsByType[name] = (countsByType[name] ?: 0) + 1
+            if (name !in fallbackColors) fallbackColors[name] = rec.displayColorKey
+        }
+        val list = mutableListOf<Triple<String, Int, String>>()
+        val seen = mutableSetOf<String>()
+        leaveTypes.filter { it.isActive }.forEach { lt ->
+            val name = lt.name.trim()
+            if (name.isNotEmpty() && seen.add(name)) {
+                list.add(Triple(name, countsByType[name] ?: 0, lt.resolvedColorKey))
+            }
+        }
+        selectedDayRecords.forEach { rec ->
+            val name = normalizedSummaryTypeName(rec)
+            if (seen.add(name)) {
+                list.add(Triple(name, countsByType[name] ?: 0, fallbackColors[name] ?: "blue"))
+            }
+        }
+        list
+    }
+
+    val filteredDayRecords = remember(selectedDayRecords, summaryTypeFilter) {
+        val filter = summaryTypeFilter ?: return@remember selectedDayRecords
+        selectedDayRecords.filter { normalizedSummaryTypeName(it) == filter }
+    }
 
     val allClassRoster = remember(overview) { overview.flatMap { it.classes }.flatMap { it.students } }
     val rosterHasRecordCount = remember(allClassRoster) {
@@ -292,6 +335,36 @@ fun TeacherDashboardScreen(
         rec.studentId?.let { sid -> all.firstOrNull { it.id == sid }?.let { return it } }
         rec.studentNo?.takeIf { it.isNotBlank() }?.let { no -> all.firstOrNull { it.studentNo == no }?.let { return it } }
         return all.firstOrNull { it.name == rec.studentName }
+    }
+
+    fun resolvedSummaryNote(rec: CalendarSummaryRecord): String? {
+        rec.displayNote?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val student = matchedStudent(rec) ?: return null
+        val nonNormal = student.attendance.filterNot { it.isNormalPresentRecord }
+        if (nonNormal.isEmpty()) return null
+        val idSet = rec.allRecordIds.toSet()
+        var candidates = nonNormal.filter { it.id in idSet }
+        if (candidates.isEmpty()) {
+            val recType = normalizedSummaryTypeName(rec)
+            val isEvening = rec.option?.contains("夜自习") == true
+            candidates = nonNormal.filter { item ->
+                val itemIsEvening = (item.scene ?: "regular") == "evening_study"
+                if (itemIsEvening != isEvening) return@filter false
+                val typeMatch = item.titleText == recType || item.status == rec.status
+                val approvalMatch = rec.approvalStatus == null || item.approvalStatus == rec.approvalStatus
+                typeMatch && approvalMatch
+            }
+        }
+        val cleanOption = rec.compactDisplay.first.trim()
+        for (item in candidates) {
+            for (raw in listOf(item.reason, item.note, item.detailsText)) {
+                val trimmed = raw?.trim().orEmpty()
+                if (trimmed.isNotEmpty() && trimmed != cleanOption) {
+                    return trimmed
+                }
+            }
+        }
+        return null
     }
 
     suspend fun resolveUnderlyingRecords(rec: CalendarSummaryRecord, student: OverviewStudent): List<AttendanceRecord> {
@@ -653,33 +726,22 @@ fun TeacherDashboardScreen(
 
             // 3. Linked Selected-Date Attendance Panel
             SCCard {
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(selectedDate.format(SCDateFormatter.cnMonthDay), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            if (isSelectedHoliday) StatusBadge("休", Color(0xFFDC2626))
-                        }
-                        Text(
-                            if (selectedDayRecords.isEmpty()) "当日暂无异常考勤" else "当日共 ${selectedDayRecords.size} 条异常考勤",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(selectedDate.format(SCDateFormatter.cnMonthDay), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        if (isSelectedHoliday) StatusBadge("休", Color(0xFFDC2626))
                     }
-                    Button(
-                        onClick = { dayPanelMode = if (dayPanelMode == "summary") "roster" else "summary" },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Rounded.EditNote, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (dayPanelMode == "summary") "登记/维护" else "看异常汇总", style = MaterialTheme.typography.labelMedium)
-                    }
+                    Text(
+                        if (selectedDayRecords.isEmpty()) "当日暂无考勤记录" else "当日共 ${selectedDayRecords.size} 条考勤情况",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 Spacer(Modifier.height(10.dp))
 
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf("summary" to "异常汇总", "roster" to "全班登记").forEachIndexed { idx, (k, label) ->
+                    listOf("summary" to "考勤情况", "roster" to "全班登记").forEachIndexed { idx, (k, label) ->
                         SegmentedButton(
                             selected = dayPanelMode == k,
                             onClick = { dayPanelMode = k },
@@ -692,7 +754,7 @@ fun TeacherDashboardScreen(
 
                 if (dayPanelMode == "summary") {
                     if (!canViewCalendarSummary) {
-                        Text("当前账号无日历异常摘要权限，可切换「全班登记」查看维护。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("当前账号无日历考勤情况查看权限，可切换「全班登记」查看维护。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else if (loadingCalendar && selectedDayRecords.isEmpty()) {
                         Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     } else if (selectedDayRecords.isEmpty()) {
@@ -701,33 +763,165 @@ fun TeacherDashboardScreen(
                             Text("该日期暂无请假、缺勤、迟到或早退记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            selectedDayRecords.forEach { rec ->
-                                SummarySwipeableRecordRow(
-                                    rec = rec,
-                                    activeLeaveTypes = leaveTypes,
-                                    isBusy = rec.id in busySummaryIds,
-                                    isOpen = openSwipeRecordId == rec.id,
-                                    onSetOpen = { open ->
-                                        openSwipeRecordId = when {
-                                            open -> rec.id
-                                            openSwipeRecordId == rec.id -> null
-                                            else -> openSwipeRecordId
-                                        }
-                                    },
-                                    onTap = {
-                                        matchedStudent(rec)?.let {
-                                            focusedRecordId = rec.id
-                                            selectedStudent = it
-                                        }
-                                    },
-                                    onQuickChangeType = { targetType ->
-                                        quickChangeSummaryRecord(rec, targetType)
-                                    },
-                                    onDelete = {
-                                        quickDeleteSummaryRecord(rec)
+                        // 考勤类型筛选选卡 + 1列/2列切换（持久化记忆）
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val allSelected = summaryTypeFilter == null
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = if (allSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.clip(RoundedCornerShape(999.dp)).clickable {
+                                        openSwipeRecordId = null
+                                        summaryTypeFilter = null
                                     }
-                                )
+                                ) {
+                                    Text(
+                                        "全部 ${selectedDayRecords.size}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (allSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (allSelected) Color.White else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+
+                                summaryFilterOptions.forEach { (typeName, cnt, colorKey) ->
+                                    val selected = summaryTypeFilter == typeName
+                                    val tint = statusColor(colorKey)
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = when {
+                                            selected -> tint
+                                            cnt > 0 -> tint.copy(alpha = 0.12f)
+                                            else -> MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                        modifier = Modifier.clip(RoundedCornerShape(999.dp)).clickable {
+                                            openSwipeRecordId = null
+                                            summaryTypeFilter = if (selected) null else typeName
+                                        }
+                                    ) {
+                                        Text(
+                                            if (cnt > 0) "$typeName $cnt" else typeName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = when {
+                                                selected -> Color.White
+                                                cnt > 0 -> tint
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(9.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Row(modifier = Modifier.padding(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    listOf(1, 2).forEach { cols ->
+                                        val active = summaryColumns == cols
+                                        Surface(
+                                            shape = RoundedCornerShape(7.dp),
+                                            color = if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                            modifier = Modifier.clip(RoundedCornerShape(7.dp)).clickable {
+                                                openSwipeRecordId = null
+                                                scope.launch { SmartCampusApp.container.prefs.setSummaryColumns(cols) }
+                                            }
+                                        ) {
+                                            Text(
+                                                "${cols}列",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                                color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        if (filteredDayRecords.isEmpty()) {
+                            Text(
+                                "当日暂无「${summaryTypeFilter.orEmpty()}」记录",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        } else if (summaryColumns == 2) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                filteredDayRecords.chunked(2).forEach { rowItems ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        rowItems.forEach { rec ->
+                                            SummaryCompactGridCard(
+                                                rec = rec,
+                                                resolvedNote = resolvedSummaryNote(rec),
+                                                activeLeaveTypes = leaveTypes,
+                                                isBusy = rec.id in busySummaryIds,
+                                                modifier = Modifier.weight(1f),
+                                                onTap = {
+                                                    matchedStudent(rec)?.let {
+                                                        focusedRecordId = rec.id
+                                                        selectedStudent = it
+                                                    }
+                                                },
+                                                onQuickChangeType = { targetType ->
+                                                    quickChangeSummaryRecord(rec, targetType)
+                                                },
+                                                onDelete = {
+                                                    quickDeleteSummaryRecord(rec)
+                                                }
+                                            )
+                                        }
+                                        if (rowItems.size == 1) {
+                                            Spacer(Modifier.weight(1f))
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                filteredDayRecords.forEach { rec ->
+                                    SummarySwipeableRecordRow(
+                                        rec = rec,
+                                        resolvedNote = resolvedSummaryNote(rec),
+                                        activeLeaveTypes = leaveTypes,
+                                        isBusy = rec.id in busySummaryIds,
+                                        isOpen = openSwipeRecordId == rec.id,
+                                        onSetOpen = { open ->
+                                            openSwipeRecordId = when {
+                                                open -> rec.id
+                                                openSwipeRecordId == rec.id -> null
+                                                else -> openSwipeRecordId
+                                            }
+                                        },
+                                        onTap = {
+                                            matchedStudent(rec)?.let {
+                                                focusedRecordId = rec.id
+                                                selectedStudent = it
+                                            }
+                                        },
+                                        onQuickChangeType = { targetType ->
+                                            quickChangeSummaryRecord(rec, targetType)
+                                        },
+                                        onDelete = {
+                                            quickDeleteSummaryRecord(rec)
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1071,6 +1265,7 @@ fun TeacherDashboardScreen(
 @Composable
 private fun SummarySwipeableRecordRow(
     rec: CalendarSummaryRecord,
+    resolvedNote: String?,
     activeLeaveTypes: List<LeaveType>,
     isBusy: Boolean,
     isOpen: Boolean,
@@ -1209,7 +1404,7 @@ private fun SummarySwipeableRecordRow(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(rec.studentShortLabel, style = MaterialTheme.typography.labelMedium)
-                        rec.displayNote?.takeIf { it.isNotBlank() }?.let { note ->
+                        resolvedNote?.takeIf { it.isNotBlank() }?.let { note ->
                             Text(
                                 "· $note",
                                 style = MaterialTheme.typography.labelMedium,
@@ -1287,6 +1482,170 @@ private fun SummarySwipeableRecordRow(
                     }
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SummaryCompactGridCard(
+    rec: CalendarSummaryRecord,
+    resolvedNote: String?,
+    activeLeaveTypes: List<LeaveType>,
+    isBusy: Boolean,
+    modifier: Modifier = Modifier,
+    onTap: () -> Unit,
+    onQuickChangeType: (LeaveType) -> Unit,
+    onDelete: () -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    var quickMenuOpen by remember { mutableStateOf(false) }
+    val isEveningStudy = rec.option?.contains("夜自习") == true
+    val accent = statusColor(rec.displayColorKey)
+    val cleanTypeTitle = rec.type.trim().takeIf { it.isNotEmpty() && it != "未知" } ?: when (rec.status) {
+        "absent" -> "旷课"
+        "late" -> "迟到"
+        "early_leave" -> "早退"
+        "excused", "leave" -> "请假"
+        else -> "考勤"
+    }
+
+    Box(modifier = modifier) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = accent.copy(alpha = 0.08f),
+            border = BorderStroke(1.dp, accent.copy(alpha = 0.28f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .combinedClickable(
+                    enabled = !isBusy,
+                    onClick = onTap,
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        quickMenuOpen = true
+                    }
+                )
+        ) {
+            Column(
+                modifier = Modifier.padding(9.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(accent))
+                    if (rec.approvalPrefix.isNotEmpty()) {
+                        Text(
+                            rec.approvalPrefix,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = statusColor(rec.approvalStatus),
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        cleanTypeTitle,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (isBusy) {
+                        CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                    } else {
+                        rec.time?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                val opt = rec.compactDisplay.first
+                if (opt.isNotEmpty()) {
+                    Text(
+                        opt,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Text(
+                    rec.studentShortLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                resolvedNote?.takeIf { it.isNotBlank() }?.let { note ->
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        DropdownMenu(
+            expanded = quickMenuOpen,
+            onDismissRequest = { quickMenuOpen = false }
+        ) {
+            if (!isEveningStudy && activeLeaveTypes.isNotEmpty()) {
+                activeLeaveTypes.forEach { lt ->
+                    val isCurrent = lt.name == rec.type
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (isCurrent) "${lt.name}（当前）" else "改为 ${lt.name}",
+                                color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else statusColor(lt.resolvedColorKey),
+                                fontWeight = if (isCurrent) FontWeight.Normal else FontWeight.Medium
+                            )
+                        },
+                        leadingIcon = if (isCurrent) {
+                            { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        } else null,
+                        enabled = !isCurrent && !isBusy,
+                        onClick = {
+                            quickMenuOpen = false
+                            onQuickChangeType(lt)
+                        }
+                    )
+                }
+                HorizontalDivider()
+            }
+            DropdownMenuItem(
+                text = { Text("详细编辑（节次 / 备注）") },
+                leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                onClick = {
+                    quickMenuOpen = false
+                    onTap()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("删除此记录", color = Color(0xFFDC2626)) },
+                leadingIcon = {
+                    Icon(
+                        Icons.Rounded.Delete,
+                        contentDescription = null,
+                        tint = Color(0xFFDC2626),
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                enabled = !isBusy,
+                onClick = {
+                    quickMenuOpen = false
+                    onDelete()
+                }
+            )
         }
     }
 }
@@ -1706,7 +2065,7 @@ private fun StudentManualAttendanceSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(18.dp))
-                        Text("当日暂无异常，当前状态为正常出勤", style = MaterialTheme.typography.bodySmall, color = Color(0xFF16A34A))
+                        Text("当日暂无考勤记录，当前状态为正常出勤", style = MaterialTheme.typography.bodySmall, color = Color(0xFF16A34A))
                     }
                 }
             } else {
@@ -2017,8 +2376,8 @@ private fun StudentManualAttendanceSheet(
 
             HorizontalDivider()
 
-            // SECTION 3: 近期历史异常（同日同批次合并展示）
-            Text("近期历史异常（点垃圾桶可删除）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            // SECTION 3: 近期考勤记录（同日同批次合并展示）
+            Text("近期考勤记录（点垃圾桶可删除）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 listOf("today" to "今日", "week" to "本周", "month" to "本月", "semester" to "本学期").forEachIndexed { idx, (k, label) ->
                     SegmentedButton(
@@ -2037,7 +2396,7 @@ private fun StudentManualAttendanceSheet(
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
             } else if (groupedHistoryRecords.isEmpty()) {
-                Text("该范围内无异常记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("该范围内暂无考勤记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 groupedHistoryRecords.forEach { group ->
                     val rec = group.primary
@@ -2095,9 +2454,24 @@ private fun TeacherStatDetailModal(
     onDismiss: () -> Unit
 ) {
     val repo = SmartCampusApp.container.repository
+    val scope = rememberCoroutineScope()
+    val detailColumns by SmartCampusApp.container.prefs.statDetailColumnsFlow.collectAsStateWithLifecycle(initialValue = 1)
     var presentList by remember { mutableStateOf<List<PresentDetailStudent>>(emptyList()) }
     var otherList by remember { mutableStateOf<List<NonPresentDetailStudent>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+
+    fun extractedStudentRemark(student: NonPresentDetailStudent): String? {
+        val detailText = student.detail.orEmpty()
+        for (rec in student.records) {
+            for (raw in listOf(rec.reason, rec.note, rec.detailsText)) {
+                val trimmed = raw?.trim().orEmpty()
+                if (trimmed.isNotEmpty() && !detailText.contains(trimmed)) {
+                    return trimmed
+                }
+            }
+        }
+        return null
+    }
 
     LaunchedEffect(Unit) {
         if (statusKey == "present") {
@@ -2110,28 +2484,134 @@ private fun TeacherStatDetailModal(
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Surface(
+                    shape = RoundedCornerShape(9.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Row(modifier = Modifier.padding(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        listOf(1, 2).forEach { cols ->
+                            val active = detailColumns == cols
+                            Surface(
+                                shape = RoundedCornerShape(7.dp),
+                                color = if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                modifier = Modifier.clip(RoundedCornerShape(7.dp)).clickable {
+                                    scope.launch { SmartCampusApp.container.prefs.setStatDetailColumns(cols) }
+                                }
+                            ) {
+                                Text(
+                                    "${cols}列",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(10.dp))
             if (loading) {
                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else if (statusKey == "present") {
-                LazyColumn(modifier = Modifier.height(360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(presentList, key = { it.id }) { s ->
-                        SCCard {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(s.name, fontWeight = FontWeight.SemiBold)
-                                    Text("${s.className.orEmpty()} · ${s.studentNo.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (presentList.isEmpty()) {
+                    Text("暂无出勤记录", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 20.dp))
+                } else if (detailColumns == 2) {
+                    LazyColumn(modifier = Modifier.height(380.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(presentList.chunked(2)) { rowItems ->
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rowItems.forEach { s ->
+                                    SCCard(modifier = Modifier.weight(1f)) {
+                                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(s.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            Spacer(Modifier.width(4.dp))
+                                            StatusBadge(String.format(Locale.US, "%.0f%%", s.attendanceRate), if (s.attendanceRate >= 95) Color(0xFF16A34A) else Color(0xFFEA580C))
+                                        }
+                                        Spacer(Modifier.height(4.dp))
+                                        Text("${s.className.orEmpty()} · ${s.studentNo.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
-                                StatusBadge(String.format(Locale.US, "%.1f%%", s.attendanceRate), if (s.attendanceRate >= 95) Color(0xFF16A34A) else Color(0xFFEA580C))
+                                if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.height(380.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(presentList, key = { it.id }) { s ->
+                            SCCard {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(s.name, fontWeight = FontWeight.SemiBold)
+                                        Text("${s.className.orEmpty()} · ${s.studentNo.orEmpty()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    StatusBadge(String.format(Locale.US, "%.1f%%", s.attendanceRate), if (s.attendanceRate >= 95) Color(0xFF16A34A) else Color(0xFFEA580C))
+                                }
                             }
                         }
                     }
                 }
             } else if (otherList.isEmpty()) {
-                Text("暂无异常明细", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 20.dp))
+                Text("暂无考勤记录", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 20.dp))
+            } else if (detailColumns == 2) {
+                LazyColumn(modifier = Modifier.height(380.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(otherList.chunked(2)) { rowItems ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowItems.forEach { s ->
+                                SCCard(modifier = Modifier.weight(1f)) {
+                                    Text(s.displayTitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    s.className?.takeIf { it.isNotBlank() }?.let {
+                                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    s.detail?.takeIf { it.isNotBlank() }?.let { detail ->
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            PeriodFormatter.compactDetailText(detail),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFFEA580C),
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    extractedStudentRemark(s)?.let { remark ->
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            "备注：$remark",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (scopeKey != "today" && s.records.isNotEmpty()) {
+                                        Spacer(Modifier.height(3.dp))
+                                        s.records.take(3).forEach { rec ->
+                                            val recText = PeriodFormatter.compactDetailText(rec.detailText)
+                                            Text(
+                                                if (recText.isEmpty()) rec.dateKey else "${rec.dateKey} · $recText",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        if (s.records.size > 3) {
+                                            Text("共 ${s.records.size} 条", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                            }
+                            if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
             } else {
-                LazyColumn(modifier = Modifier.height(360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(modifier = Modifier.height(380.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(otherList, key = { it.id }) { s ->
                         SCCard {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -2144,6 +2624,16 @@ private fun TeacherStatDetailModal(
                                     PeriodFormatter.compactDetailText(detail),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFFEA580C)
+                                )
+                            }
+                            extractedStudentRemark(s)?.let { remark ->
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "备注：$remark",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                             if (scopeKey != "today" && s.records.isNotEmpty()) {
@@ -2211,7 +2701,7 @@ private fun AttendanceExportModal(semesters: List<Semester>, onDismiss: () -> Un
 
             Text("学生范围", style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("all" to "全部学生", "with_records" to "仅含异常记录").forEach { (k, label) ->
+                listOf("all" to "全部学生", "with_records" to "仅含有考勤记录").forEach { (k, label) ->
                     FilterChip(selected = studentRange == k, onClick = { studentRange = k }, label = { Text(label) })
                 }
             }
@@ -3325,10 +3815,10 @@ fun StudentDetailManageScreen(student: StudentListItem, onBack: () -> Unit) {
             }
 
             SCCard {
-                Text("本月异常考勤记录", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text("本月考勤情况", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 if (records.isEmpty()) {
-                    Text("本月暂无异常考勤记录", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Text("本月暂无考勤记录", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 } else {
                     records.forEach { rec ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
