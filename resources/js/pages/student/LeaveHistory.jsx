@@ -1,16 +1,43 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { normalizeDateKey } from '../../utils/dateFormat';
+import useAuthStore from '../../store/authStore';
 
 export default function LeaveHistory() {
+    const { user } = useAuthStore();
     const [leaves, setLeaves] = useState([]);
     const [loading, setLoading] = useState(true);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [deleting, setDeleting] = useState(false);
+    const [ownerFilter, setOwnerFilter] = useState('all'); // all | mine
+    const [searchTerm, setSearchTerm] = useState('');
     const navigate = useNavigate();
+
+    const myStudentId = user?.student?.id ?? null;
+    const isClassAdmin = Boolean(user?.role === 'student' && user?.student?.is_class_admin);
+    const showStudentIdentity = useMemo(() => {
+        if (isClassAdmin) return true;
+        if (!myStudentId) return false;
+        return leaves.some(l => (l.student_id ?? l.student?.id) && (l.student_id ?? l.student?.id) !== myStudentId);
+    }, [isClassAdmin, myStudentId, leaves]);
+
+    const filteredLeaves = useMemo(() => {
+        const q = searchTerm.trim().toLowerCase();
+        return leaves.filter((leave) => {
+            const sid = leave.student_id ?? leave.student?.id;
+            if (showStudentIdentity && ownerFilter === 'mine' && myStudentId && sid !== myStudentId) {
+                return false;
+            }
+            if (!q) return true;
+            const name = (leave.student?.user?.name || leave.student?.name || '').toLowerCase();
+            const no = (leave.student?.student_no || '').toLowerCase();
+            const reason = (leave.reason || '').toLowerCase();
+            return name.includes(q) || no.includes(q) || reason.includes(q);
+        });
+    }, [leaves, showStudentIdentity, ownerFilter, myStudentId, searchTerm]);
 
     useEffect(() => {
         fetchLeaves();
@@ -76,27 +103,70 @@ export default function LeaveHistory() {
 
     return (
         <Layout>
-            <div className="md:flex md:items-center md:justify-between mb-6">
+            <div className="md:flex md:items-center md:justify-between mb-6 gap-3">
                 <div className="min-w-0 flex-1">
                     <h2 className="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
-                        我的请假记录
+                        {showStudentIdentity ? '班级请假记录' : '我的请假记录'}
                     </h2>
                 </div>
+                {showStudentIdentity && (
+                    <div className="mt-3 md:mt-0 flex flex-wrap items-center gap-2">
+                        <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm bg-white">
+                            <button
+                                type="button"
+                                onClick={() => setOwnerFilter('all')}
+                                className={`px-3 py-1.5 font-medium ${ownerFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+                            >
+                                全班
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setOwnerFilter('mine')}
+                                className={`px-3 py-1.5 font-medium ${ownerFilter === 'mine' ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+                            >
+                                仅看我的
+                            </button>
+                        </div>
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="搜索姓名或学号..."
+                            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </div>
+                )}
             </div>
 
             {loading ? (
                 <div className="text-center py-10">加载中...</div>
-            ) : leaves.length === 0 ? (
+            ) : filteredLeaves.length === 0 ? (
                 <div className="bg-white p-10 rounded-lg shadow text-center text-gray-500">
-                    您还没有任何请假申请记录。
+                    {showStudentIdentity ? '当前筛选条件下暂无请假记录。' : '您还没有任何请假申请记录。'}
                 </div>
             ) : (
                 <div className="bg-white shadow overflow-hidden sm:rounded-lg">
                     <ul role="list" className="divide-y divide-gray-200">
-                        {leaves.map((leave) => (
+                        {filteredLeaves.map((leave) => {
+                            const sid = leave.student_id ?? leave.student?.id;
+                            const isOwnRequest = !myStudentId || !sid || sid === myStudentId;
+                            const studentName = leave.student?.user?.name || leave.student?.name || (sid ? `学生 #${sid}` : '');
+                            const studentNo = leave.student?.student_no || '';
+                            return (
                             <li key={leave.id} className="px-4 py-4 sm:px-6 hover:bg-gray-50 transition duration-150 ease-in-out">
                                 <div className="flex items-center justify-between">
                                     <div className="flex flex-col">
+                                        {showStudentIdentity && studentName && (
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-sm font-semibold text-gray-900">{studentName}</span>
+                                                {studentNo && (
+                                                    <span className="text-xs text-gray-500 font-mono">{studentNo}</span>
+                                                )}
+                                                {isOwnRequest && (
+                                                    <span className="px-1.5 py-0.5 text-[11px] font-medium rounded-full bg-indigo-50 text-indigo-700">我</span>
+                                                )}
+                                            </div>
+                                        )}
                                         <div className="flex items-center text-sm text-indigo-600 font-medium mb-1">
                                             {getTypeLabel(leave)}
                                             <span className="text-gray-400 mx-2">•</span>
@@ -161,8 +231,8 @@ export default function LeaveHistory() {
                                             </div>
                                         )}
 
-                                        {/* Edit/Delete buttons for pending requests */}
-                                        {leave.status === 'pending' && (
+                                        {/* Edit/Delete buttons for own pending requests only */}
+                                        {leave.status === 'pending' && isOwnRequest && (
                                             <div className="flex items-center gap-2 mt-1">
                                                 <button
                                                     onClick={() => handleEdit(leave)}
@@ -186,7 +256,8 @@ export default function LeaveHistory() {
                                     </div>
                                 )}
                             </li>
-                        ))}
+                            );
+                        })}
                     </ul>
                 </div>
             )}

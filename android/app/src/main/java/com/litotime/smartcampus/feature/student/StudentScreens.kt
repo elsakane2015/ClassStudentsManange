@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.FactCheck
 import androidx.compose.material.icons.rounded.AddAPhoto
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -36,8 +37,10 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -110,7 +113,8 @@ import java.time.ZoneId
 fun StudentDashboardScreen(
     user: User,
     onOpenNotifications: () -> Unit,
-    onOpenClassAttendanceAdmin: () -> Unit
+    onOpenClassAttendanceAdmin: () -> Unit,
+    onOpenClassLeaveApprovals: () -> Unit = {}
 ) {
     val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
@@ -213,6 +217,31 @@ fun StudentDashboardScreen(
                             Text("点击快速记录与维护本班日常考勤", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodySmall)
                         }
                         Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color.White)
+                    }
+                }
+
+                if (user.isRollCallAdminStudent) {
+                    SCCard(onClick = onOpenClassLeaveApprovals) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.FactCheck,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("本班请假审批", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "查看并审批本班同学的请假申请（含姓名与学号）",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
@@ -1000,17 +1029,40 @@ fun LeaveRequestFormScreen(user: User) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LeaveHistoryScreen() {
+fun LeaveHistoryScreen(user: User) {
     val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
     val filters = listOf("all" to "全部", "pending" to "待审批", "approved" to "已通过", "rejected" to "已驳回")
 
     var statusFilter by remember { mutableStateOf("all") }
+    var ownerScope by remember { mutableStateOf("all") } // "all" | "mine"
+    var searchText by remember { mutableStateOf("") }
     var requests by remember { mutableStateOf<List<LeaveRequestGroup>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var cancelTarget by remember { mutableStateOf<LeaveRequestGroup?>(null) }
     var previewImage by remember { mutableStateOf<String?>(null) }
+
+    val myStudentId = user.student?.id
+    fun isOwnRequest(req: LeaveRequestGroup): Boolean {
+        if (myStudentId == null || req.studentId == null) return true
+        return req.studentId == myStudentId
+    }
+
+    val showStudentIdentity = remember(user.isClassAdminStudent, requests, myStudentId) {
+        user.isClassAdminStudent || requests.any { !isOwnRequest(it) }
+    }
+
+    val filteredRequests = remember(requests, showStudentIdentity, ownerScope, searchText, myStudentId) {
+        val q = searchText.trim().lowercase()
+        requests.filter { req ->
+            if (showStudentIdentity && ownerScope == "mine" && !isOwnRequest(req)) return@filter false
+            if (q.isEmpty()) true
+            else req.studentName.lowercase().contains(q)
+                || (req.studentNo ?: "").lowercase().contains(q)
+                || (req.reason ?: "").lowercase().contains(q)
+        }
+    }
 
     fun load() {
         scope.launch {
@@ -1028,7 +1080,7 @@ fun LeaveHistoryScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("请假记录") },
+                title = { Text(if (showStudentIdentity) "班级请假记录" else "请假记录") },
                 actions = { IconButton(onClick = { load() }) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新") } }
             )
         }
@@ -1044,6 +1096,30 @@ fun LeaveHistoryScreen() {
                 }
             }
 
+            if (showStudentIdentity) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("all" to "全班", "mine" to "仅看我的").forEach { (key, label) ->
+                        FilterChip(
+                            selected = ownerScope == key,
+                            onClick = { ownerScope = key },
+                            label = { Text(label, style = MaterialTheme.typography.labelMedium) }
+                        )
+                    }
+                    OutlinedTextField(
+                        value = searchText,
+                        onValueChange = { searchText = it },
+                        placeholder = { Text("搜姓名/学号", style = MaterialTheme.typography.labelMedium) },
+                        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
             error?.let {
                 ErrorBanner(message = it, onRetry = { load() })
                 Spacer(Modifier.height(10.dp))
@@ -1051,14 +1127,44 @@ fun LeaveHistoryScreen() {
 
             if (loading && requests.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            } else if (requests.isEmpty()) {
+            } else if (filteredRequests.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("暂无请假记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(requests, key = { it.id }) { req ->
+                    items(filteredRequests, key = { it.id }) { req ->
+                        val isMine = isOwnRequest(req)
                         SCCard {
+                            if (showStudentIdentity) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Person,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        req.studentName,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    req.studentNo?.takeIf { it.isNotBlank() }?.let { no ->
+                                        Text(
+                                            no,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (isMine) {
+                                        StatusBadge("我", MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 StatusBadge(req.leaveTypeName, statusColor(req.leaveTypeColor))
                                 StatusBadge(req.statusDisplayName, statusColor(req.status))
@@ -1095,7 +1201,7 @@ fun LeaveHistoryScreen() {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
                                 )
-                                if (req.status == "pending") {
+                                if (req.status == "pending" && isMine) {
                                     OutlinedButton(
                                         onClick = { cancelTarget = req },
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626))

@@ -866,6 +866,7 @@ data class LeaveSubRecord(
 
 data class LeaveRequestGroup(
     val id: Int,
+    val studentId: Int? = null,
     val studentName: String,
     val studentNo: String?,
     val className: String?,
@@ -903,6 +904,7 @@ data class LeaveRequestGroup(
                 ?: if (start == end) start else "$start 至 $end"
             return LeaveRequestGroup(
                 id = o.intVal("id"),
+                studentId = o.intOrNull("student_id") ?: studentObj?.intOrNull("id"),
                 studentName = studentObj?.objOrNull("user")?.str("name") ?: "学生",
                 studentNo = studentObj?.str("student_no"),
                 className = o.objOrNull("class")?.str("name"),

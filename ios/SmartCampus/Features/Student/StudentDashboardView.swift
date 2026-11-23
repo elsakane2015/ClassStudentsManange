@@ -42,34 +42,67 @@ struct StudentDashboardView: View {
 
                     // Class Admin Quick Banner
                     if user.isClassAdminStudent {
-                        NavigationLink {
-                            ClassAttendanceAdminView(user: user)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "person.badge.shield.checkmark.fill")
-                                    .font(.title2)
-                                    .foregroundStyle(.white)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("班级考勤员工作台")
-                                        .font(.headline)
+                        VStack(spacing: 10) {
+                            NavigationLink {
+                                ClassAttendanceAdminView(user: user)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "person.badge.shield.checkmark.fill")
+                                        .font(.title2)
                                         .foregroundStyle(.white)
-                                    Text("点击快速记录与维护本班日常考勤")
-                                        .font(.caption)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("班级考勤员工作台")
+                                            .font(.headline)
+                                            .foregroundStyle(.white)
+                                        Text("点击快速记录与维护本班日常考勤")
+                                            .font(.caption)
+                                            .foregroundStyle(.white.opacity(0.85))
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
                                         .foregroundStyle(.white.opacity(0.85))
                                 }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .foregroundStyle(.white.opacity(0.85))
-                            }
-                            .padding(16)
-                            .background(
-                                LinearGradient(
-                                    colors: [SCTheme.primary, SCTheme.primary.opacity(0.75)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
+                                .padding(16)
+                                .background(
+                                    LinearGradient(
+                                        colors: [SCTheme.primary, SCTheme.primary.opacity(0.75)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
                                 )
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+
+                            if user.isRollCallAdminStudent {
+                                NavigationLink {
+                                    LeaveApprovalsView(
+                                        user: user,
+                                        openCurrentWeekTrigger: 1,
+                                        embedInNavigationStack: false
+                                    )
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "checkmark.seal.fill")
+                                            .font(.title3)
+                                            .foregroundStyle(.indigo)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("本班请假审批")
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                            Text("查看并审批本班同学的请假申请（含姓名与学号）")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(14)
+                                    .background(SCTheme.cardBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                }
+                            }
                         }
                     }
 

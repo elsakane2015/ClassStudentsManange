@@ -2219,7 +2219,10 @@ private data class ApprovalDateRange(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LeaveApprovalsScreen(openCurrentWeekTrigger: Int = 0) {
+fun LeaveApprovalsScreen(
+    openCurrentWeekTrigger: Int = 0,
+    onBack: (() -> Unit)? = null
+) {
     val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
     val pageSize = 20
@@ -2483,6 +2486,13 @@ fun LeaveApprovalsScreen(openCurrentWeekTrigger: Int = 0) {
         topBar = {
             TopAppBar(
                 title = { Text("请假审批") },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        }
+                    }
+                },
                 actions = { IconButton(onClick = { loadFirstPage() }) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新") } }
             )
         }

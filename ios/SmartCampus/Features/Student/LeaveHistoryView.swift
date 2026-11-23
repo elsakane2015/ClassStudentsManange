@@ -4,11 +4,19 @@ struct LeaveHistoryView: View {
     let user: User
 
     @State private var statusFilter: String = "all"
+    @State private var ownerScope: OwnerScope = .all
+    @State private var searchText: String = ""
     @State private var requests: [LeaveRequestGroup] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var cancelTarget: LeaveRequestGroup?
     @State private var previewImagePath: String?
+
+    enum OwnerScope: String, CaseIterable, Identifiable {
+        case all = "全班"
+        case mine = "仅看我的"
+        var id: String { rawValue }
+    }
 
     private let filters: [(key: String, label: String)] = [
         ("all", "全部"),
@@ -16,6 +24,35 @@ struct LeaveHistoryView: View {
         ("approved", "已通过"),
         ("rejected", "已驳回")
     ]
+
+    private var myStudentId: Int? { user.student?.id }
+
+    private func isOwnRequest(_ req: LeaveRequestGroup) -> Bool {
+        guard let myId = myStudentId else { return true }
+        let reqSid = req.studentId ?? req.student?.id
+        guard let reqSid else { return true }
+        return reqSid == myId
+    }
+
+    /// 班级考勤员或列表中出现非本人记录时，醒目展示学生姓名与学号并提供范围/搜索筛选
+    private var showStudentIdentity: Bool {
+        if user.isClassAdminStudent { return true }
+        return requests.contains { !isOwnRequest($0) }
+    }
+
+    private var filteredRequests: [LeaveRequestGroup] {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return requests.filter { req in
+            if showStudentIdentity && ownerScope == .mine && !isOwnRequest(req) {
+                return false
+            }
+            guard !q.isEmpty else { return true }
+            let name = (req.student?.name ?? "").lowercased()
+            let no = (req.student?.studentNo ?? "").lowercased()
+            let reason = (req.reason ?? "").lowercased()
+            return name.contains(q) || no.contains(q) || reason.contains(q)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -27,8 +64,50 @@ struct LeaveHistoryView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                .padding(.bottom, showStudentIdentity ? 6 : 8)
                 .background(SCTheme.background)
+
+                if showStudentIdentity {
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            ForEach(OwnerScope.allCases) { scope in
+                                let active = ownerScope == scope
+                                Button {
+                                    withAnimation(.snappy(duration: 0.18)) {
+                                        ownerScope = scope
+                                    }
+                                } label: {
+                                    Text(scope.rawValue)
+                                        .font(.caption.weight(active ? .semibold : .regular))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(active ? SCTheme.primary : Color(.secondarySystemGroupedBackground))
+                                        .foregroundStyle(active ? .white : .primary)
+                                        .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        HStack(spacing: 5) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TextField("搜姓名/学号", text: $searchText)
+                                .font(.caption)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(Capsule())
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .background(SCTheme.background)
+                }
 
                 Group {
                     if isLoading && requests.isEmpty {
@@ -40,19 +119,24 @@ struct LeaveHistoryView: View {
                         }
                         .padding()
                         Spacer()
-                    } else if requests.isEmpty {
+                    } else if filteredRequests.isEmpty {
                         ContentUnavailableView(
                             "暂无请假记录",
                             systemImage: "doc.text.magnifyingglass",
-                            description: Text("提交的请假申请及审批状态将显示在这里")
+                            description: Text(showStudentIdentity
+                                ? "当前筛选条件下暂无请假申请记录"
+                                : "提交的请假申请及审批状态将显示在这里")
                         )
                     } else {
                         ScrollView {
                             LazyVStack(spacing: 12) {
-                                ForEach(requests) { req in
+                                ForEach(filteredRequests) { req in
+                                    let isMine = isOwnRequest(req)
                                     LeaveRecordCard(
                                         request: req,
-                                        canCancel: req.effectiveStatus == "pending",
+                                        showStudentIdentity: showStudentIdentity,
+                                        isOwnRequest: isMine,
+                                        canCancel: req.effectiveStatus == "pending" && isMine,
                                         onCancel: { cancelTarget = req },
                                         onImageTap: { path in previewImagePath = path }
                                     )
@@ -64,7 +148,7 @@ struct LeaveHistoryView: View {
                 }
             }
             .background(SCTheme.background.ignoresSafeArea())
-            .navigationTitle("请假记录")
+            .navigationTitle(showStudentIdentity ? "班级请假记录" : "请假记录")
             .refreshable {
                 await loadRequests()
             }
@@ -161,6 +245,8 @@ struct FullScreenImageSheet: View {
 
 private struct LeaveRecordCard: View {
     let request: LeaveRequestGroup
+    let showStudentIdentity: Bool
+    let isOwnRequest: Bool
     let canCancel: Bool
     let onCancel: () -> Void
     let onImageTap: (String) -> Void
@@ -168,6 +254,32 @@ private struct LeaveRecordCard: View {
     var body: some View {
         SCCard {
             VStack(alignment: .leading, spacing: 10) {
+                if showStudentIdentity {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "person.fill")
+                            .font(.caption)
+                            .foregroundStyle(SCTheme.primary)
+                        Text(request.student?.name ?? "学生 #\(request.studentId ?? request.id)")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.primary)
+                        if let no = request.student?.studentNo, !no.isEmpty {
+                            Text(no)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        if isOwnRequest {
+                            Text("我")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(SCTheme.primary.opacity(0.14))
+                                .foregroundStyle(SCTheme.primary)
+                                .clipShape(Capsule())
+                        }
+                        Spacer()
+                    }
+                }
+
                 HStack {
                     StatusBadge(
                         text: request.leaveType?.name ?? "请假",

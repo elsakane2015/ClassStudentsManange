@@ -78,6 +78,7 @@ private sealed interface SubRoute {
     data object Notifications : SubRoute
     data object ServerSetup : SubRoute
     data object ClassAttendanceAdmin : SubRoute
+    data object ClassLeaveApprovals : SubRoute
     data class RollCallOperate(val rollCallId: Int) : SubRoute
     data object RollCallAdmins : SubRoute
     data class EveningStudyTake(
@@ -158,6 +159,10 @@ fun RoleBasedHomeScreen(user: User) {
             ClassAttendanceAdminScreen(user = user, onBack = { subRoute = null })
             return
         }
+        is SubRoute.ClassLeaveApprovals -> {
+            LeaveApprovalsScreen(openCurrentWeekTrigger = 1, onBack = { subRoute = null })
+            return
+        }
         is SubRoute.RollCallOperate -> {
             RollCallOperationScreen(rollCallId = currentSub.rollCallId, onBack = { subRoute = null })
             return
@@ -212,10 +217,11 @@ fun RoleBasedHomeScreen(user: User) {
                 TabId.STUDENT_HOME -> StudentDashboardScreen(
                     user = user,
                     onOpenNotifications = { subRoute = SubRoute.Notifications },
-                    onOpenClassAttendanceAdmin = { subRoute = SubRoute.ClassAttendanceAdmin }
+                    onOpenClassAttendanceAdmin = { subRoute = SubRoute.ClassAttendanceAdmin },
+                    onOpenClassLeaveApprovals = { subRoute = SubRoute.ClassLeaveApprovals }
                 )
                 TabId.LEAVE_REQUEST -> LeaveRequestFormScreen(user = user)
-                TabId.LEAVE_HISTORY -> LeaveHistoryScreen()
+                TabId.LEAVE_HISTORY -> LeaveHistoryScreen(user = user)
                 TabId.TEACHER_HOME -> TeacherDashboardScreen(
                     user = user,
                     onOpenNotifications = { subRoute = SubRoute.Notifications },

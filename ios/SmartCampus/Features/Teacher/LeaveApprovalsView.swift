@@ -33,6 +33,7 @@ private struct ApprovalMonthOption: Hashable, Identifiable {
 struct LeaveApprovalsView: View {
     let user: User
     var openCurrentWeekTrigger: Int = 0
+    var embedInNavigationStack: Bool = true
 
     private let pageSize = 20
 
@@ -214,8 +215,17 @@ struct LeaveApprovalsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
+        if embedInNavigationStack {
+            NavigationStack {
+                approvalsBodyContent
+            }
+        } else {
+            approvalsBodyContent
+        }
+    }
+
+    private var approvalsBodyContent: some View {
+        VStack(spacing: 0) {
                 // 1. 审批状态分段条
                 Picker("审批状态", selection: $statusFilter) {
                     ForEach(filters, id: \.key) { item in
@@ -469,7 +479,6 @@ struct LeaveApprovalsView: View {
                 hasInitialized = true
                 await loadFirstPage()
             }
-        }
     }
 
     private var weekNavigatorBar: some View {
