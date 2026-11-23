@@ -18,17 +18,66 @@ enum PeriodFormatter {
             }
         }
 
-        let periodMap = Dictionary(uniqueKeysWithValues: periods.map { ($0.id, $0.name) })
-        let names = normalized.compactMap { periodMap[$0] }
-        return mergePeriodNames(names)
+        let orderedNames = orderedPeriodNames(for: normalized, periods: periods)
+        return mergePeriodNames(orderedNames, separator: "/")
     }
 
-    /// 将 ["第1节","第2节","第3节","晚自习"] 合并为 "第1-3节、晚自习"
-    static func mergePeriodNames(_ names: [String]) -> String {
+    /// 详细节次格式：命中时段时同时展示具体节次，例如 "上午（早读/早操/第1-3节）"
+    static func formatDetailedPeriodSummary(
+        periodIds: [Int],
+        periods: [ClassPeriod],
+        timeSlots: [TimeSlot] = [],
+        preferredSlotName: String? = nil
+    ) -> String {
+        guard !periodIds.isEmpty else {
+            return preferredSlotName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        let normalized = Array(Set(periodIds)).sorted()
+        let orderedNames = orderedPeriodNames(for: normalized, periods: periods)
+        let detail = mergePeriodNames(orderedNames, separator: "/")
+
+        var matchedSlotName: String? = nil
+        for slot in timeSlots {
+            let slotIds = Array(Set(slot.periodIds ?? [])).sorted()
+            if !slotIds.isEmpty && slotIds == normalized {
+                matchedSlotName = slot.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        if matchedSlotName == nil || matchedSlotName?.isEmpty == true {
+            let cleanPreferred = preferredSlotName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !cleanPreferred.isEmpty && cleanPreferred != detail {
+                matchedSlotName = cleanPreferred
+            }
+        }
+
+        if let slotName = matchedSlotName, !slotName.isEmpty {
+            if detail.isEmpty || detail == slotName {
+                return slotName
+            }
+            return "\(slotName)（\(detail)）"
+        }
+        return detail
+    }
+
+    private static func orderedPeriodNames(for periodIds: [Int], periods: [ClassPeriod]) -> [String] {
+        let idSet = Set(periodIds)
+        // 优先保留后端 periods 配置的校园自然顺序
+        let inConfigOrder = periods.filter { idSet.contains($0.id) }.map(\.name)
+        if !inConfigOrder.isEmpty {
+            return inConfigOrder
+        }
+        let periodMap = Dictionary(uniqueKeysWithValues: periods.map { ($0.id, $0.name) })
+        return periodIds.compactMap { periodMap[$0] }
+    }
+
+    /// 将 ["早读","早操","第1节","第2节","第3节","晚操"] 按校园自然顺序合并为 "早读/早操/第1-3节/晚操"
+    static func mergePeriodNames(_ names: [String], separator: String = "/") -> String {
         guard !names.isEmpty else { return "" }
 
         var regularNumbers: [Int] = []
-        var specialNames: [String] = []
+        var morningNames: [String] = []
+        var otherSpecialNames: [String] = []
         let regex = try? NSRegularExpression(pattern: "^第(\\d+)节$")
 
         for name in names {
@@ -37,12 +86,16 @@ enum PeriodFormatter {
                let numRange = Range(match.range(at: 1), in: name),
                let num = Int(name[numRange]) {
                 regularNumbers.append(num)
-            } else if !specialNames.contains(name) {
-                specialNames.append(name)
+            } else if name.contains("早") || name.contains("晨") {
+                if !morningNames.contains(name) { morningNames.append(name) }
+            } else {
+                if !otherSpecialNames.contains(name) { otherSpecialNames.append(name) }
             }
         }
 
         var parts: [String] = []
+        parts.append(contentsOf: morningNames)
+
         let sortedUnique = Array(Set(regularNumbers)).sorted()
         if !sortedUnique.isEmpty {
             var ranges: [String] = []
@@ -62,8 +115,8 @@ enum PeriodFormatter {
             parts.append("第\(ranges.joined(separator: ","))节")
         }
 
-        parts.append(contentsOf: specialNames)
-        return parts.joined(separator: "、")
+        parts.append(contentsOf: otherSpecialNames)
+        return parts.joined(separator: separator)
     }
 }
 

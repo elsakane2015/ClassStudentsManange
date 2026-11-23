@@ -22,6 +22,8 @@ struct TeacherDashboardView: View {
     @State private var isLoadingCalendar: Bool = false
     @State private var dayPanelMode: DayPanelMode = .summary
     @State private var classSearchText: String = ""
+    @State private var rosterFilter: RosterFilter = .all
+    @AppStorage("smartcampus.roster_columns") private var rosterColumns: Int = 1
 
     // Overview for Selected Date (used for both teacher's class roster & admin tree)
     @State private var overview: [AttendanceOverviewDepartment] = []
@@ -49,6 +51,14 @@ struct TeacherDashboardView: View {
     enum DayPanelMode: String, CaseIterable {
         case summary = "异常汇总"
         case roster = "全班登记"
+    }
+
+    enum RosterFilter: String, CaseIterable, Identifiable {
+        case all = "全部"
+        case hasRecords = "有记录"
+        case normal = "正常"
+
+        var id: String { rawValue }
     }
 
     struct StatDetailTarget: Identifiable {
@@ -89,12 +99,34 @@ struct TeacherDashboardView: View {
         classPeriods.filter { ($0.scene ?? "regular") != "evening_study" }
     }
 
+    private var allClassRosterStudents: [AttendanceOverviewStudent] {
+        overview.flatMap { $0.classes ?? [] }.flatMap { $0.students ?? [] }
+    }
+
+    private func studentHasDayRecords(_ student: AttendanceOverviewStudent) -> Bool {
+        !(student.attendance ?? []).filter { !$0.isNormalPresentRecord }.isEmpty
+    }
+
+    private var rosterHasRecordCount: Int {
+        allClassRosterStudents.filter { studentHasDayRecords($0) }.count
+    }
+
+    private var rosterNormalCount: Int {
+        max(0, allClassRosterStudents.count - rosterHasRecordCount)
+    }
+
     private var flattenedRosterStudents: [AttendanceOverviewStudent] {
-        let all = overview.flatMap { $0.classes ?? [] }.flatMap { $0.students ?? [] }
         let q = classSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return all }
-        return all.filter { s in
-            s.displayName.lowercased().contains(q)
+        return allClassRosterStudents.filter { s in
+            switch rosterFilter {
+            case .all: break
+            case .hasRecords:
+                if !studentHasDayRecords(s) { return false }
+            case .normal:
+                if studentHasDayRecords(s) { return false }
+            }
+            guard !q.isEmpty else { return true }
+            return s.displayName.lowercased().contains(q)
                 || (s.studentNo ?? "").lowercased().contains(q)
         }
     }
@@ -451,7 +483,7 @@ struct TeacherDashboardView: View {
                     }
                 } else {
                     // Full class roster for selectedDate (quick attendance marking/editing)
-                    VStack(spacing: 8) {
+                    VStack(spacing: 10) {
                         HStack(spacing: 6) {
                             Image(systemName: "magnifyingglass")
                                 .foregroundStyle(.secondary)
@@ -464,11 +496,131 @@ struct TeacherDashboardView: View {
                         .background(Color(.tertiarySystemFill))
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
+                        // 筛选（全部 / 有记录 / 正常）+ 1列/2列切换
+                        HStack(spacing: 6) {
+                            HStack(spacing: 6) {
+                                ForEach(RosterFilter.allCases) { f in
+                                    let count: Int = {
+                                        switch f {
+                                        case .all: return allClassRosterStudents.count
+                                        case .hasRecords: return rosterHasRecordCount
+                                        case .normal: return rosterNormalCount
+                                        }
+                                    }()
+                                    let isSelected = rosterFilter == f
+                                    Button {
+                                        withAnimation(.snappy(duration: 0.18)) {
+                                            rosterFilter = f
+                                        }
+                                    } label: {
+                                        Text("\(f.rawValue) \(count)")
+                                            .font(.caption.weight(isSelected ? .semibold : .regular))
+                                            .padding(.horizontal, 9)
+                                            .padding(.vertical, 5)
+                                            .background(isSelected ? SCTheme.primary : Color(.tertiarySystemFill))
+                                            .foregroundStyle(isSelected ? .white : .primary)
+                                            .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+
+                            Spacer(minLength: 4)
+
+                            // 1列 / 2列切换
+                            HStack(spacing: 2) {
+                                ForEach([1, 2], id: \.self) { cols in
+                                    let active = rosterColumns == cols
+                                    Button {
+                                        withAnimation(.snappy(duration: 0.18)) {
+                                            rosterColumns = cols
+                                        }
+                                    } label: {
+                                        Text("\(cols)列")
+                                            .font(.caption2.weight(active ? .semibold : .regular))
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 5)
+                                            .background(active ? SCTheme.primary : Color.clear)
+                                            .foregroundStyle(active ? .white : .secondary)
+                                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(2)
+                            .background(Color(.tertiarySystemFill))
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        }
+
                         if flattenedRosterStudents.isEmpty {
-                            Text("暂无匹配的本班学生数据")
+                            Text(rosterFilter == .all ? "暂无匹配的本班学生数据" : "当前筛选「\(rosterFilter.rawValue)」下暂无学生")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
-                                .padding(.vertical, 8)
+                                .padding(.vertical, 10)
+                        } else if rosterColumns == 2 {
+                            LazyVGrid(
+                                columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                                spacing: 8
+                            ) {
+                                ForEach(flattenedRosterStudents) { student in
+                                    let badgeGroups = DayAttendanceBadgeGroup.build(
+                                        from: student.attendance ?? [],
+                                        classPeriods: classPeriods,
+                                        timeSlots: timeSlots
+                                    )
+                                    let hasRec = !badgeGroups.isEmpty
+                                    let accent = hasRec ? SCTheme.color(for: badgeGroups[0].colorKey) : Color.green
+                                    Button {
+                                        focusedRecordId = nil
+                                        selectedStudent = student
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                                Text(student.displayName)
+                                                    .font(.subheadline.weight(.semibold))
+                                                    .foregroundStyle(.primary)
+                                                    .lineLimit(1)
+                                                    .minimumScaleFactor(0.82)
+                                                Spacer(minLength: 2)
+                                                if let no = student.studentNo, !no.isEmpty {
+                                                    Text(no.count >= 2 ? String(no.suffix(2)) : no)
+                                                        .font(.caption2.weight(.bold).monospacedDigit())
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+
+                                            if hasRec {
+                                                VStack(alignment: .leading, spacing: 3) {
+                                                    ForEach(badgeGroups.prefix(2)) { g in
+                                                        StatusBadge(
+                                                            text: g.badgeText,
+                                                            color: SCTheme.color(for: g.colorKey)
+                                                        )
+                                                    }
+                                                    if badgeGroups.count > 2 {
+                                                        Text("+\(badgeGroups.count - 2) 项")
+                                                            .font(.caption2)
+                                                            .foregroundStyle(.secondary)
+                                                    }
+                                                }
+                                            } else {
+                                                Text("正常出勤")
+                                                    .font(.caption2.weight(.medium))
+                                                    .foregroundStyle(.green)
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
+                                        .padding(9)
+                                        .background(hasRec ? accent.opacity(0.08) : Color(.tertiarySystemFill).opacity(0.5))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .stroke(hasRec ? accent.opacity(0.32) : Color.clear, lineWidth: 1)
+                                        )
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         } else {
                             LazyVStack(spacing: 0) {
                                 ForEach(flattenedRosterStudents) { student in
@@ -1588,10 +1740,10 @@ struct StudentAttendanceActionSheet: View {
     // 1. 当日已有标记
     @State private var dayRecords: [AttendanceRecord] = []
     @State private var isLoadingDayRecords = false
-    @State private var recordPendingDelete: AttendanceRecord?
+    @State private var groupPendingDelete: DayRecordGroup?
 
     // 2. 补录 / 修改表单（类 Web 一步点选后台配置的考勤类型）
-    @State private var editingRecord: AttendanceRecord?
+    @State private var editingGroup: DayRecordGroup?
     @State private var selectedLeaveTypeId: Int?
     @State private var fallbackStatus: String = "leave"
     @State private var selectedPeriodIds: Set<Int> = []
@@ -1627,10 +1779,21 @@ struct StudentAttendanceActionSheet: View {
         }
     }
 
+    /// 当日已有标记（多节次自动合并为 1 条，如 "上午（早读/早操/第1-3节）"）
+    private var groupedDayRecords: [DayRecordGroup] {
+        DayRecordGroup.build(from: dayRecords, classPeriods: regularPeriods, timeSlots: timeSlots, groupByDate: false)
+    }
+
+    /// 近期历史异常（同日同批次合并）
+    private var groupedHistoryRecords: [DayRecordGroup] {
+        DayRecordGroup.build(from: historyRecords, classPeriods: regularPeriods, timeSlots: timeSlots, groupByDate: true)
+    }
+
     /// 已被当日其他记录占用的节次集合（用于节次网格小橙点提示）
     private var occupiedPeriodIds: Set<Int> {
+        let editingIds = editingGroup?.recordIdSet ?? []
         var result = Set<Int>()
-        for rec in dayRecords where rec.id != editingRecord?.id {
+        for rec in dayRecords where !editingIds.contains(rec.id) {
             result.formUnion(rec.extractedPeriodIds(classPeriods: regularPeriods))
         }
         return result
@@ -1649,11 +1812,11 @@ struct StudentAttendanceActionSheet: View {
                     }
                 }
 
-                // SECTION 1: 当日已有标记（置顶、可一键修改或撤销）
+                // SECTION 1: 当日已有标记（置顶、同批次多节次合并展示、可一键修改或撤销）
                 Section {
-                    if isLoadingDayRecords && dayRecords.isEmpty {
+                    if isLoadingDayRecords && groupedDayRecords.isEmpty {
                         ProgressView("加载当日标记...")
-                    } else if dayRecords.isEmpty {
+                    } else if groupedDayRecords.isEmpty {
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.seal.fill")
                                 .foregroundStyle(.green)
@@ -1663,11 +1826,10 @@ struct StudentAttendanceActionSheet: View {
                         }
                         .padding(.vertical, 4)
                     } else {
-                        ForEach(dayRecords) { rec in
-                            let isFocused = (initialFocusRecordId == rec.id) || (editingRecord?.id == rec.id)
-                            let periodText = rec.concisePeriodLabel(classPeriods: regularPeriods, timeSlots: timeSlots)
-                            let remark = (rec.details?.value?.text ?? rec.reason ?? rec.note)?
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                        ForEach(groupedDayRecords) { group in
+                            let rec = group.primary
+                            let isEditingThis = editingGroup?.id == group.id
+                            let isFocused = group.contains(recordId: initialFocusRecordId) || isEditingThis
 
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 6) {
@@ -1695,16 +1857,21 @@ struct StudentAttendanceActionSheet: View {
                                     }
                                 }
 
-                                HStack(spacing: 6) {
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Image(systemName: "clock")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
-                                    Text(periodText)
+                                    Text(group.periodDetailText)
                                         .font(.subheadline.weight(.medium))
                                         .foregroundStyle(.primary)
+                                    if group.periodIds.count > 1 {
+                                        Text("共\(group.periodIds.count)节")
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
 
-                                if let remark, !remark.isEmpty {
+                                if let remark = group.remark, !remark.isEmpty {
                                     Text("备注：\(remark)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -1712,9 +1879,9 @@ struct StudentAttendanceActionSheet: View {
 
                                 HStack(spacing: 10) {
                                     Button {
-                                        beginEditing(rec)
+                                        beginEditing(group)
                                     } label: {
-                                        Label(editingRecord?.id == rec.id ? "修改中" : "修改", systemImage: "pencil")
+                                        Label(isEditingThis ? "修改中" : "修改", systemImage: "pencil")
                                             .font(.caption.weight(.semibold))
                                             .frame(maxWidth: .infinity)
                                     }
@@ -1723,7 +1890,7 @@ struct StudentAttendanceActionSheet: View {
                                     .controlSize(.small)
 
                                     Button(role: .destructive) {
-                                        recordPendingDelete = rec
+                                        groupPendingDelete = group
                                     } label: {
                                         Label("撤销", systemImage: "trash")
                                             .font(.caption.weight(.semibold))
@@ -1744,7 +1911,7 @@ struct StudentAttendanceActionSheet: View {
                     }
                 } header: {
                     HStack {
-                        Text("\(dateKey) 当日已有标记（\(dayRecords.count)）")
+                        Text("\(dateKey) 当日已有标记（\(groupedDayRecords.count)）")
                         Spacer()
                         if isLoadingDayRecords {
                             ProgressView().controlSize(.mini)
@@ -1754,11 +1921,11 @@ struct StudentAttendanceActionSheet: View {
 
                 // SECTION 2: 补录 / 修改考勤（类似 Web 端一步选考勤类型）
                 Section {
-                    if let editing = editingRecord {
+                    if let editing = editingGroup {
                         HStack(spacing: 8) {
                             Image(systemName: "pencil.circle.fill")
                                 .foregroundStyle(SCTheme.primary)
-                            Text("正在修改：\(editing.titleText) · \(editing.concisePeriodLabel(classPeriods: regularPeriods, timeSlots: timeSlots))")
+                            Text("正在修改：\(editing.primary.titleText) · \(editing.periodDetailText)")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(SCTheme.primary)
                             Spacer()
@@ -1897,7 +2064,7 @@ struct StudentAttendanceActionSheet: View {
                         HStack {
                             Spacer()
                             if isSaving { ProgressView().tint(.white) }
-                            Text(editingRecord == nil ? "保存考勤记录" : "保存修改")
+                            Text(editingGroup == nil ? "保存考勤记录" : "保存修改")
                                 .font(.headline)
                             Spacer()
                         }
@@ -1906,10 +2073,10 @@ struct StudentAttendanceActionSheet: View {
                     .foregroundStyle(.white)
                     .disabled(isSaving || (!activeLeaveTypes.isEmpty && selectedLeaveTypeId == nil))
                 } header: {
-                    Text(editingRecord == nil ? "为 \(student.displayName) 补录考勤" : "修改 \(student.displayName) 的考勤标记")
+                    Text(editingGroup == nil ? "为 \(student.displayName) 补录考勤" : "修改 \(student.displayName) 的考勤标记")
                 }
 
-                // SECTION 3: 近期历史异常（追溯参考）
+                // SECTION 3: 近期历史异常（同日同批次合并，左滑整组删除）
                 Section {
                     Picker("历史范围", selection: $historyScope) {
                         Text("今日").tag("today")
@@ -1921,32 +2088,38 @@ struct StudentAttendanceActionSheet: View {
 
                     if isLoadingHistory {
                         ProgressView("加载记录...")
-                    } else if historyRecords.isEmpty {
+                    } else if groupedHistoryRecords.isEmpty {
                         Text("该范围内无异常考勤记录")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(historyRecords) { rec in
+                        ForEach(groupedHistoryRecords) { group in
+                            let rec = group.primary
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
                                         StatusBadge(text: rec.titleText, color: SCTheme.color(for: rec.badgeColorKey))
-                                        Text(rec.dateKey)
+                                        Text(group.dateKey)
                                             .font(.caption.monospacedDigit())
                                             .foregroundStyle(.secondary)
                                     }
-                                    let detail = rec.resolvedDetailText
-                                    if !detail.isEmpty {
-                                        Text(detail)
+                                    if !group.periodDetailText.isEmpty {
+                                        Text(group.periodDetailText)
                                             .font(.caption)
                                             .foregroundStyle(.primary)
+                                    }
+                                    if let remark = group.remark, !remark.isEmpty {
+                                        Text(remark)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
                                     }
                                 }
                                 Spacer()
                             }
                             .swipeActions {
                                 Button(role: .destructive) {
-                                    Task { await deleteRecord(rec) }
+                                    Task { await deleteGroup(group) }
                                 } label: {
                                     Label("删除", systemImage: "trash")
                                 }
@@ -1965,19 +2138,19 @@ struct StudentAttendanceActionSheet: View {
                 }
             }
             .alert("确认撤销该条标记？", isPresented: Binding(
-                get: { recordPendingDelete != nil },
-                set: { if !$0 { recordPendingDelete = nil } }
+                get: { groupPendingDelete != nil },
+                set: { if !$0 { groupPendingDelete = nil } }
             )) {
-                Button("取消", role: .cancel) { recordPendingDelete = nil }
+                Button("取消", role: .cancel) { groupPendingDelete = nil }
                 Button("确认撤销", role: .destructive) {
-                    if let target = recordPendingDelete {
-                        recordPendingDelete = nil
-                        Task { await deleteRecord(target) }
+                    if let target = groupPendingDelete {
+                        groupPendingDelete = nil
+                        Task { await deleteGroup(target) }
                     }
                 }
             } message: {
-                if let target = recordPendingDelete {
-                    Text("将删除 \(dateKey)「\(target.titleText) · \(target.concisePeriodLabel(classPeriods: regularPeriods, timeSlots: timeSlots))」考勤记录。")
+                if let target = groupPendingDelete {
+                    Text("将删除 \(dateKey)「\(target.primary.titleText) · \(target.periodDetailText)」考勤记录。")
                 }
             }
             .onChange(of: historyScope) { _, _ in
@@ -1994,8 +2167,9 @@ struct StudentAttendanceActionSheet: View {
         }
     }
 
-    private func beginEditing(_ rec: AttendanceRecord) {
-        editingRecord = rec
+    private func beginEditing(_ group: DayRecordGroup) {
+        let rec = group.primary
+        editingGroup = group
         if let ltId = rec.leaveTypeId, activeLeaveTypes.contains(where: { $0.id == ltId }) {
             selectedLeaveTypeId = ltId
         } else if let bySlug = activeLeaveTypes.first(where: { $0.slug == rec.status || $0.name == rec.titleText }) {
@@ -2004,13 +2178,12 @@ struct StudentAttendanceActionSheet: View {
             selectedLeaveTypeId = activeLeaveTypes.first?.id
             fallbackStatus = rec.status == "present" ? "leave" : rec.status
         }
-        selectedPeriodIds = Set(rec.extractedPeriodIds(classPeriods: regularPeriods))
-        noteText = (rec.details?.value?.text ?? rec.note ?? rec.reason ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        selectedPeriodIds = Set(group.periodIds)
+        noteText = group.remark ?? ""
     }
 
     private func cancelEditing() {
-        editingRecord = nil
+        editingGroup = nil
         selectedPeriodIds.removeAll()
         noteText = ""
     }
@@ -2078,27 +2251,40 @@ struct StudentAttendanceActionSheet: View {
             record["details"] = details
         }
 
-        let oldRecord = editingRecord
+        let oldGroup = editingGroup
         do {
             try await AttendanceRepository.submitBulkAttendance(
                 date: dateKey,
                 records: [record]
             )
 
-            // 修改模式：若原记录不会被后端同位更新或点名转请假自动替换，则安全清理旧记录
-            if let old = oldRecord {
-                let oldPeriodIds = old.extractedPeriodIds(classPeriods: regularPeriods)
-                let sameTarget = (old.leaveTypeId == targetLeaveTypeId)
-                    && (old.status == targetStatus)
-                    && (oldPeriodIds == sortedPeriodIds)
-                    && (old.periodId == nil)
-                let autoReplacedRollCall = (old.sourceType == "roll_call")
-                    && (targetStatus == "leave")
-                    && (targetLeaveTypeId != nil)
-                    && (sortedPeriodIds.isEmpty || !Set(oldPeriodIds).isDisjoint(with: Set(sortedPeriodIds)))
+            // 修改模式：安全清理该组所有不会被后端同位覆盖或自动替换点名旷课的旧记录
+            if let oldGroup {
+                var deletedRollCallIds = Set<Int>()
+                var deletedSelfBatches = Set<String>()
+                for old in oldGroup.records {
+                    let oldPeriodIds = old.extractedPeriodIds(classPeriods: regularPeriods)
+                    let sameTarget = (old.leaveTypeId == targetLeaveTypeId)
+                        && (old.status == targetStatus)
+                        && (oldPeriodIds == sortedPeriodIds)
+                        && (old.periodId == nil)
+                    let autoReplacedRollCall = (old.sourceType == "roll_call")
+                        && (targetStatus == "leave")
+                        && (targetLeaveTypeId != nil)
+                        && (sortedPeriodIds.isEmpty || !Set(oldPeriodIds).isDisjoint(with: Set(sortedPeriodIds)))
 
-                if !sameTarget && !autoReplacedRollCall {
+                    if sameTarget || autoReplacedRollCall {
+                        continue
+                    }
+                    if old.sourceType == "roll_call", let sid = old.sourceId {
+                        if !deletedRollCallIds.insert(sid).inserted { continue }
+                    }
                     let isSelfApplied = (old.isSelfApplied?.value == true) || (old.sourceType == "self_applied")
+                    if isSelfApplied, let batch = old.leaveBatchId, !batch.isEmpty {
+                        let key = "\(batch)_\(old.scene ?? "regular")"
+                        if !deletedSelfBatches.insert(key).inserted { continue }
+                    }
+
                     try? await AttendanceRepository.deleteAttendanceRecord(
                         studentId: student.id,
                         date: old.dateKey.isEmpty ? dateKey : old.dateKey,
@@ -2112,7 +2298,7 @@ struct StudentAttendanceActionSheet: View {
                 }
             }
 
-            editingRecord = nil
+            editingGroup = nil
             noteText = ""
             selectedPeriodIds.removeAll()
             onChanged()
@@ -2123,25 +2309,38 @@ struct StudentAttendanceActionSheet: View {
         }
     }
 
-    private func deleteRecord(_ rec: AttendanceRecord) async {
+    private func deleteGroup(_ group: DayRecordGroup) async {
         errorMessage = nil
         do {
-            let isSelfApplied = (rec.isSelfApplied?.value == true) || (rec.sourceType == "self_applied")
-            try await AttendanceRepository.deleteAttendanceRecord(
-                studentId: student.id,
-                date: rec.dateKey.isEmpty ? dateKey : rec.dateKey,
-                recordId: rec.id,
-                periodId: rec.periodId,
-                leaveBatchId: rec.leaveBatchId,
-                sourceType: isSelfApplied ? "self_applied" : rec.sourceType,
-                scene: rec.scene ?? "regular",
-                deleteScope: isSelfApplied ? "scene_date" : "record"
-            )
-            if editingRecord?.id == rec.id {
+            var deletedRollCallIds = Set<Int>()
+            var deletedSelfBatches = Set<String>()
+            for rec in group.records {
+                if rec.sourceType == "roll_call", let sid = rec.sourceId {
+                    if !deletedRollCallIds.insert(sid).inserted { continue }
+                }
+                let isSelfApplied = (rec.isSelfApplied?.value == true) || (rec.sourceType == "self_applied")
+                if isSelfApplied, let batch = rec.leaveBatchId, !batch.isEmpty {
+                    let key = "\(batch)_\(rec.scene ?? "regular")"
+                    if !deletedSelfBatches.insert(key).inserted { continue }
+                }
+
+                try await AttendanceRepository.deleteAttendanceRecord(
+                    studentId: student.id,
+                    date: rec.dateKey.isEmpty ? dateKey : rec.dateKey,
+                    recordId: rec.id,
+                    periodId: rec.periodId,
+                    leaveBatchId: rec.leaveBatchId,
+                    sourceType: isSelfApplied ? "self_applied" : rec.sourceType,
+                    scene: rec.scene ?? "regular",
+                    deleteScope: isSelfApplied ? "scene_date" : "record"
+                )
+            }
+            if editingGroup?.id == group.id {
                 cancelEditing()
             }
-            dayRecords.removeAll { $0.id == rec.id }
-            historyRecords.removeAll { $0.id == rec.id }
+            let removedIds = group.recordIdSet
+            dayRecords.removeAll { removedIds.contains($0.id) }
+            historyRecords.removeAll { removedIds.contains($0.id) }
             onChanged()
             await refreshDayRecords()
             await loadHistory()

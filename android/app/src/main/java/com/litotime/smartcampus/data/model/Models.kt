@@ -600,6 +600,76 @@ data class DayAttendanceBadgeGroup(
     }
 }
 
+/** 将同一天同批次/同类型的多条节次考勤合并为 1 条逻辑记录（用于单生维护弹窗「当日已有标记」与「近期历史异常」） */
+data class DayRecordGroup(
+    val id: String,
+    val dateKey: String,
+    val primary: AttendanceRecord,
+    val records: List<AttendanceRecord>,
+    val periodIds: List<Int>,
+    val periodDetailText: String,
+    val remark: String?
+) {
+    val recordIdSet: Set<Int> get() = records.map { it.id }.toSet()
+    val isEveningStudy: Boolean get() = records.any { (it.scene ?: "regular") == "evening_study" }
+
+    fun contains(recordId: Int?): Boolean = recordId != null && records.any { it.id == recordId }
+
+    companion object {
+        fun build(
+            records: List<AttendanceRecord>,
+            classPeriods: List<ClassPeriod>,
+            timeSlots: List<TimeSlot>,
+            groupByDate: Boolean = false
+        ): List<DayRecordGroup> {
+            val valid = records.filterNot { it.isNormalPresentRecord }
+            if (valid.isEmpty()) return emptyList()
+
+            val grouped = linkedMapOf<String, MutableList<AttendanceRecord>>()
+            valid.forEach { rec ->
+                val datePrefix = if (groupByDate) "${rec.dateKey}|" else ""
+                val sceneKey = rec.scene ?: "regular"
+                val remarkKey = (rec.detailsText ?: rec.reason ?: rec.note)?.trim().orEmpty()
+                val key = when {
+                    !rec.leaveBatchId.isNullOrBlank() ->
+                        "${datePrefix}batch|${rec.leaveBatchId}|$sceneKey|${rec.leaveTypeId ?: -1}|${rec.status}|${rec.approvalStatus.orEmpty()}"
+                    rec.sourceType == "roll_call" && rec.sourceId != null ->
+                        "${datePrefix}rc|${rec.sourceId}|${rec.leaveTypeId ?: -1}|${rec.status}"
+                    rec.periodId != null && sceneKey != "evening_study" ->
+                        "${datePrefix}multi|$sceneKey|${rec.leaveTypeId ?: -1}|${rec.status}|${rec.approvalStatus.orEmpty()}|${rec.sourceType.orEmpty()}|$remarkKey"
+                    else -> "${datePrefix}single|${rec.id}"
+                }
+                grouped.getOrPut(key) { mutableListOf() }.add(rec)
+            }
+
+            return grouped.mapNotNull { (key, items) ->
+                val first = items.firstOrNull() ?: return@mapNotNull null
+                val allIds = items.flatMap { it.extractedPeriodIds(classPeriods) }.distinct().sorted()
+                val preferredSlotName = items.firstNotNullOfOrNull { it.detailsTimeSlotName?.trim()?.takeIf { s -> s.isNotEmpty() } }
+                val detailLabel = if (allIds.isNotEmpty()) {
+                    PeriodFormatter.formatDetailedPeriodSummary(allIds, classPeriods, timeSlots, preferredSlotName)
+                        .ifBlank { first.concisePeriodLabel(classPeriods, timeSlots) }
+                } else {
+                    items.map { it.concisePeriodLabel(classPeriods, timeSlots) }
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .joinToString("/")
+                }
+                val remark = items.firstNotNullOfOrNull { (it.detailsText ?: it.reason ?: it.note)?.trim()?.takeIf { s -> s.isNotEmpty() } }
+                DayRecordGroup(
+                    id = key,
+                    dateKey = first.dateKey,
+                    primary = first,
+                    records = items,
+                    periodIds = allIds,
+                    periodDetailText = detailLabel,
+                    remark = remark
+                )
+            }
+        }
+    }
+}
+
 data class StudentStats(
     val present: Int,
     val workingDays: Int,
@@ -799,6 +869,7 @@ data class LeaveRequestGroup(
     val studentName: String,
     val studentNo: String?,
     val className: String?,
+    val leaveTypeId: Int? = null,
     val leaveTypeName: String,
     val leaveTypeColor: String,
     val dateRangeText: String,
@@ -835,6 +906,7 @@ data class LeaveRequestGroup(
                 studentName = studentObj?.objOrNull("user")?.str("name") ?: "学生",
                 studentNo = studentObj?.str("student_no"),
                 className = o.objOrNull("class")?.str("name"),
+                leaveTypeId = ltObj?.intOrNull("id") ?: o.intOrNull("leave_type_id"),
                 leaveTypeName = ltObj?.str("name") ?: "请假",
                 leaveTypeColor = ltObj?.str("color") ?: "blue",
                 dateRangeText = range,

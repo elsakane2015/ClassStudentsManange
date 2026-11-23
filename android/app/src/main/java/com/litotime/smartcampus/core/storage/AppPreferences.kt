@@ -35,6 +35,7 @@ class AppPreferences(private val context: Context) {
         val DEVICE_IDENTIFIER = stringPreferencesKey("device_identifier")
         val PUSH_TOKEN = stringPreferencesKey("push_token")
         val ROLL_CALL_COLUMNS = intPreferencesKey("roll_call_columns")
+        val ROSTER_COLUMNS = intPreferencesKey("roster_columns")
     }
 
     val activeBaseUrlFlow: Flow<String?> = context.dataStore.data.map { it[Keys.ACTIVE_BASE_URL] }
@@ -44,6 +45,7 @@ class AppPreferences(private val context: Context) {
         runCatching { json.decodeFromString<List<SavedServer>>(raw) }.getOrDefault(emptyList())
     }
     val rollCallColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.ROLL_CALL_COLUMNS] ?: 2).coerceIn(1, 4) }
+    val rosterColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.ROSTER_COLUMNS] ?: 1).coerceIn(1, 2) }
 
     suspend fun getActiveBaseUrl(): String? = context.dataStore.data.first()[Keys.ACTIVE_BASE_URL]
 
@@ -77,6 +79,10 @@ class AppPreferences(private val context: Context) {
 
     suspend fun setRollCallColumns(columns: Int) {
         context.dataStore.edit { it[Keys.ROLL_CALL_COLUMNS] = columns.coerceIn(1, 4) }
+    }
+
+    suspend fun setRosterColumns(columns: Int) {
+        context.dataStore.edit { it[Keys.ROSTER_COLUMNS] = columns.coerceIn(1, 2) }
     }
 
     suspend fun applyServer(baseUrl: String, schoolName: String) {

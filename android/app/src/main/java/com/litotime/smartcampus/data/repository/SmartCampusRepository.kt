@@ -299,17 +299,31 @@ class SmartCampusRepository(private val api: ApiClient) {
         api.requestRaw("/leave-requests/$id", method = "DELETE")
     }
 
-    suspend fun approveLeaveRequest(id: Int, recordIds: List<Int>? = null) {
+    suspend fun approveLeaveRequest(
+        id: Int,
+        recordIds: List<Int>? = null,
+        leaveTypeId: Int? = null
+    ) {
         val body = buildJsonObject {
             if (!recordIds.isNullOrEmpty()) {
                 put("record_ids", JsonArray(recordIds.map { JsonPrimitive(it) }))
+            }
+            if (leaveTypeId != null) {
+                put("leave_type_id", leaveTypeId)
             }
         }
         api.requestRaw("/leave-requests/$id/approve", method = "POST", jsonBody = body.toString())
     }
 
-    suspend fun rejectLeaveRequest(id: Int, reason: String?) {
+    suspend fun rejectLeaveRequest(
+        id: Int,
+        reason: String?,
+        recordIds: List<Int>? = null
+    ) {
         val body = buildJsonObject {
+            if (!recordIds.isNullOrEmpty()) {
+                put("record_ids", JsonArray(recordIds.map { JsonPrimitive(it) }))
+            }
             if (!reason.isNullOrBlank()) put("reason", reason.trim())
         }
         api.requestRaw("/leave-requests/$id/reject", method = "POST", jsonBody = body.toString())

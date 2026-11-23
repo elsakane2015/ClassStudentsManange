@@ -29,17 +29,19 @@ private struct ApprovalMonthOption: Hashable, Identifiable {
     var displayTitle: String { "\(year)年\(month)月" }
 }
 
-/// 教师 / 管理员 / 班级考勤员 请假审批流（服务端分页滚动加载 + 本学期近30天/教学周/月份筛选 + 服务端搜索 + 一键/分项审批）
+/// 教师 / 管理员 / 班级考勤员 请假审批流（服务端分页滚动加载 + 教学周/近30天/月份筛选 + 审批改假类 + 分项审批/驳回）
 struct LeaveApprovalsView: View {
     let user: User
+    var openCurrentWeekTrigger: Int = 0
 
     private let pageSize = 20
 
     @State private var statusFilter: String = "pending"
-    @State private var timeScope: ApprovalTimeScope = .all
-    @State private var lastHistoryScope: ApprovalTimeScope = .recent30
+    @State private var timeScope: ApprovalTimeScope = .week
 
     @State private var semesters: [Semester] = []
+    @State private var leaveTypes: [LeaveType] = []
+    @State private var selectedLeaveTypeOverrides: [Int: Int] = [:]
     @State private var selectedWeek: Int = 1
     @State private var selectedMonth: ApprovalMonthOption = {
         let comps = Calendar.current.dateComponents([.year, .month], from: Date())
@@ -56,14 +58,21 @@ struct LeaveApprovalsView: View {
     @State private var hasMore: Bool = false
     @State private var isLoading = false
     @State private var isLoadingMore = false
+    @State private var hasInitialized = false
     @State private var requestGeneration: Int = 0
     @State private var errorMessage: String?
 
     @State private var rejectingRequest: LeaveRequestGroup?
     @State private var rejectionReason: String = ""
-    @State private var partialApprovalRequest: LeaveRequestGroup?
+    @State private var scopeApprovalRequest: LeaveRequestGroup?
     @State private var previewImagePath: String?
     @State private var hapticSuccess = 0
+
+    private var activeLeaveTypes: [LeaveType] {
+        let active = leaveTypes.filter(\.isActiveFlag)
+        let leaveOnly = active.filter { $0.mappedAttendanceStatus == "leave" }
+        return leaveOnly.isEmpty ? active : leaveOnly
+    }
 
     private let filters: [(key: String, label: String)] = [
         ("pending", "待审批"),
@@ -229,9 +238,6 @@ struct LeaveApprovalsView: View {
                                 let selected = timeScope == scope
                                 Button {
                                     timeScope = scope
-                                    if statusFilter != "pending" {
-                                        lastHistoryScope = scope
-                                    }
                                 } label: {
                                     Text(scope.label)
                                         .font(.caption.weight(selected ? .semibold : .regular))
@@ -315,10 +321,18 @@ struct LeaveApprovalsView: View {
                             }
 
                             ForEach(requests) { req in
+                                let chosenTypeId = selectedLeaveTypeOverrides[req.id] ?? req.leaveType?.id
                                 ApprovalItemRow(
                                     request: req,
-                                    onApproveAll: { Task { await approve(req, recordIds: nil) } },
-                                    onPartialApprove: { partialApprovalRequest = req },
+                                    activeLeaveTypes: activeLeaveTypes,
+                                    selectedLeaveTypeId: chosenTypeId,
+                                    onSelectLeaveType: { newId in
+                                        selectedLeaveTypeOverrides[req.id] = newId
+                                    },
+                                    onApproveAll: {
+                                        Task { await approve(req, recordIds: nil, leaveTypeId: chosenTypeId) }
+                                    },
+                                    onOpenScopePanel: { scopeApprovalRequest = req },
                                     onReject: {
                                         rejectionReason = ""
                                         rejectingRequest = req
@@ -331,7 +345,7 @@ struct LeaveApprovalsView: View {
                                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                     if req.effectiveStatus == "pending" {
                                         Button {
-                                            Task { await approve(req, recordIds: nil) }
+                                            Task { await approve(req, recordIds: nil, leaveTypeId: chosenTypeId) }
                                         } label: {
                                             Label("通过", systemImage: "checkmark.circle.fill")
                                         }
@@ -372,33 +386,27 @@ struct LeaveApprovalsView: View {
             .refreshable {
                 await loadFirstPage()
             }
-            .onChange(of: statusFilter) { oldValue, newValue in
-                let targetScope: ApprovalTimeScope
-                if newValue == "pending" {
-                    targetScope = .all
-                } else if oldValue == "pending" {
-                    targetScope = lastHistoryScope
-                } else {
-                    targetScope = timeScope
-                }
-                if targetScope != timeScope {
-                    timeScope = targetScope
-                } else {
-                    Task { await loadFirstPage() }
-                }
+            .onChange(of: statusFilter) { _, _ in
+                guard hasInitialized else { return }
+                Task { await loadFirstPage() }
             }
             .onChange(of: timeScope) { _, _ in
+                guard hasInitialized else { return }
                 Task { await loadFirstPage() }
             }
             .onChange(of: selectedWeek) { _, _ in
-                if timeScope == .week {
+                if hasInitialized && timeScope == .week {
                     Task { await loadFirstPage() }
                 }
             }
             .onChange(of: selectedMonth) { _, _ in
-                if timeScope == .month {
+                if hasInitialized && timeScope == .month {
                     Task { await loadFirstPage() }
                 }
+            }
+            .onChange(of: openCurrentWeekTrigger) { _, newValue in
+                guard newValue > 0 else { return }
+                Task { await switchToCurrentWeekPending() }
             }
             .onChange(of: searchText) { _, newValue in
                 searchTask?.cancel()
@@ -420,16 +428,24 @@ struct LeaveApprovalsView: View {
                 Button("取消", role: .cancel) {}
                 Button("确认驳回", role: .destructive) {
                     if let target = rejectingRequest {
-                        Task { await reject(target, reason: rejectionReason) }
+                        Task { await reject(target, recordIds: nil, reason: rejectionReason) }
                     }
                 }
             } message: {
                 Text("驳回后系统将通知 \(rejectingRequest?.student?.name ?? "该学生")。")
             }
-            .sheet(item: $partialApprovalRequest) { req in
-                PartialApprovalSheet(request: req) { selectedIds in
-                    Task { await approve(req, recordIds: selectedIds) }
-                }
+            .sheet(item: $scopeApprovalRequest) { req in
+                ApprovalScopeSheet(
+                    request: req,
+                    activeLeaveTypes: activeLeaveTypes,
+                    initialLeaveTypeId: selectedLeaveTypeOverrides[req.id] ?? req.leaveType?.id,
+                    onApprove: { selectedIds, chosenLeaveTypeId in
+                        Task { await approve(req, recordIds: selectedIds, leaveTypeId: chosenLeaveTypeId) }
+                    },
+                    onReject: { selectedIds, reason in
+                        Task { await reject(req, recordIds: selectedIds, reason: reason) }
+                    }
+                )
             }
             .sheet(item: Binding(
                 get: { previewImagePath.map { ImagePreviewPayload(path: $0) } },
@@ -438,9 +454,19 @@ struct LeaveApprovalsView: View {
                 FullScreenImageSheet(pathOrURL: payload.path)
             }
             .task {
-                if semesters.isEmpty {
+                if semesters.isEmpty || leaveTypes.isEmpty {
                     await loadSemestersAndInitDefaults()
                 }
+                if openCurrentWeekTrigger > 0 {
+                    statusFilter = "pending"
+                    if semesterBounds != nil {
+                        timeScope = .week
+                        selectedWeek = currentTeachingWeek()
+                    }
+                } else if semesterBounds == nil && timeScope == .week {
+                    timeScope = .all
+                }
+                hasInitialized = true
                 await loadFirstPage()
             }
         }
@@ -583,12 +609,38 @@ struct LeaveApprovalsView: View {
         }
     }
 
-    private func loadSemestersAndInitDefaults() async {
-        semesters = (try? await AttendanceRepository.fetchSemesters()) ?? []
+    private func currentTeachingWeek() -> Int {
         let today = calendar.startOfDay(for: Date())
-        if let bounds = semesterBounds {
-            let days = calendar.dateComponents([.day], from: bounds.start, to: today).day ?? 0
-            selectedWeek = min(max(1, days / 7 + 1), semesterTotalWeeks)
+        guard let bounds = semesterBounds else { return 1 }
+        let days = calendar.dateComponents([.day], from: bounds.start, to: today).day ?? 0
+        return min(max(1, days / 7 + 1), semesterTotalWeeks)
+    }
+
+    private func switchToCurrentWeekPending() async {
+        if semesters.isEmpty || leaveTypes.isEmpty {
+            await loadSemestersAndInitDefaults()
+        }
+        let targetWeek = currentTeachingWeek()
+        let needExplicitLoad = (statusFilter == "pending" && timeScope == .week && selectedWeek == targetWeek)
+        statusFilter = "pending"
+        if semesterBounds != nil {
+            timeScope = .week
+            selectedWeek = targetWeek
+        }
+        hasInitialized = true
+        if needExplicitLoad {
+            await loadFirstPage()
+        }
+    }
+
+    private func loadSemestersAndInitDefaults() async {
+        async let semReq = AttendanceRepository.fetchSemesters()
+        async let typesReq = AttendanceRepository.fetchLeaveTypes()
+        semesters = (try? await semReq) ?? []
+        leaveTypes = (try? await typesReq) ?? []
+        let today = calendar.startOfDay(for: Date())
+        if semesterBounds != nil {
+            selectedWeek = currentTeachingWeek()
         }
         let months = availableMonths
         let nowComps = calendar.dateComponents([.year, .month], from: today)
@@ -663,9 +715,10 @@ struct LeaveApprovalsView: View {
         }
     }
 
-    private func approve(_ req: LeaveRequestGroup, recordIds: [Int]?) async {
+    private func approve(_ req: LeaveRequestGroup, recordIds: [Int]?, leaveTypeId: Int?) async {
         do {
-            try await LeaveRepository.approveLeaveRequest(id: req.id, recordIds: recordIds)
+            try await LeaveRepository.approveLeaveRequest(id: req.id, recordIds: recordIds, leaveTypeId: leaveTypeId)
+            selectedLeaveTypeOverrides.removeValue(forKey: req.id)
             hapticSuccess += 1
             await loadFirstPage()
         } catch {
@@ -673,9 +726,10 @@ struct LeaveApprovalsView: View {
         }
     }
 
-    private func reject(_ req: LeaveRequestGroup, reason: String) async {
+    private func reject(_ req: LeaveRequestGroup, recordIds: [Int]?, reason: String) async {
         do {
-            try await LeaveRepository.rejectLeaveRequest(id: req.id, reason: reason)
+            try await LeaveRepository.rejectLeaveRequest(id: req.id, recordIds: recordIds, reason: reason)
+            selectedLeaveTypeOverrides.removeValue(forKey: req.id)
             hapticSuccess += 1
             await loadFirstPage()
         } catch {
@@ -686,13 +740,26 @@ struct LeaveApprovalsView: View {
 
 private struct ApprovalItemRow: View {
     let request: LeaveRequestGroup
+    let activeLeaveTypes: [LeaveType]
+    let selectedLeaveTypeId: Int?
+    let onSelectLeaveType: (Int) -> Void
     let onApproveAll: () -> Void
-    let onPartialApprove: () -> Void
+    let onOpenScopePanel: () -> Void
     let onReject: () -> Void
     let onImageTap: (String) -> Void
 
     private var pendingSubRecordsCount: Int {
         (request.records ?? []).filter { $0.approvalStatus == "pending" }.count
+    }
+
+    private var selectedLeaveType: LeaveType? {
+        guard let id = selectedLeaveTypeId else { return nil }
+        return activeLeaveTypes.first(where: { $0.id == id })
+    }
+
+    private var isTypeChanged: Bool {
+        guard let selectedId = selectedLeaveTypeId, let origId = request.leaveType?.id else { return false }
+        return selectedId != origId
     }
 
     var body: some View {
@@ -768,31 +835,96 @@ private struct ApprovalItemRow: View {
                 }
 
                 if request.effectiveStatus == "pending" {
-                    HStack(spacing: 10) {
-                        Button(role: .destructive, action: onReject) {
-                            Text("驳回")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Divider()
 
-                        if pendingSubRecordsCount > 1 {
-                            Button(action: onPartialApprove) {
-                                Text("分项批")
+                        // 参考 Web 端 ApprovalScopePanel：审批时直接可改「批准为」假类（病假/事假/特殊等）
+                        if !activeLeaveTypes.isEmpty {
+                            HStack(spacing: 8) {
+                                Text("批准为")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                Menu {
+                                    ForEach(activeLeaveTypes) { lt in
+                                        Button {
+                                            onSelectLeaveType(lt.id)
+                                        } label: {
+                                            if lt.id == selectedLeaveTypeId {
+                                                Label(lt.name, systemImage: "checkmark")
+                                            } else {
+                                                Text(lt.name)
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(selectedLeaveType?.name ?? request.leaveType?.name ?? "选择假类")
+                                            .font(.caption.weight(.semibold))
+                                        Image(systemName: "chevron.up.chevron.down")
+                                            .font(.caption2)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        isTypeChanged
+                                            ? SCTheme.primary.opacity(0.14)
+                                            : Color(.tertiarySystemFill)
+                                    )
+                                    .foregroundStyle(isTypeChanged ? SCTheme.primary : .primary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+
+                                if isTypeChanged {
+                                    Text("已更改假类")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(SCTheme.primary)
+                                }
+
+                                Spacer()
+
+                                if pendingSubRecordsCount > 1 {
+                                    Button(action: onOpenScopePanel) {
+                                        Label("选范围(\(pendingSubRecordsCount))", systemImage: "checklist")
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+                        } else if pendingSubRecordsCount > 1 {
+                            HStack {
+                                Spacer()
+                                Button(action: onOpenScopePanel) {
+                                    Label("选择审批范围（\(pendingSubRecordsCount) 项）", systemImage: "checklist")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
+
+                        // 参考 Web 端底部双主按钮：驳回 / 批准
+                        HStack(spacing: 10) {
+                            Button(role: .destructive, action: onReject) {
+                                Label("驳回", systemImage: "xmark")
                                     .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.bordered)
-                        }
 
-                        Button(action: onApproveAll) {
-                            Text("批准通过")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
+                            Button(action: onApproveAll) {
+                                let labelText = isTypeChanged
+                                    ? "按\(selectedLeaveType?.name ?? "新类型")批准"
+                                    : "批准通过"
+                                Label(labelText, systemImage: "checkmark")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.green)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.green)
                     }
-                    .padding(.top, 2)
                 } else if let approver = request.approverName {
                     Text("审批人：\(approver) · \(SCDateFormatter.displayDateTime(request.approvedAt ?? request.createdAt))")
                         .font(.caption2)
@@ -803,55 +935,151 @@ private struct ApprovalItemRow: View {
     }
 }
 
-private struct PartialApprovalSheet: View {
+/// 对标 Web 端 ApprovalScopePanel：支持改假类 + 按日期/节次分项批准或分项驳回
+private struct ApprovalScopeSheet: View {
     let request: LeaveRequestGroup
-    let onConfirm: ([Int]) -> Void
+    let activeLeaveTypes: [LeaveType]
+    let initialLeaveTypeId: Int?
+    let onApprove: ([Int], Int?) -> Void
+    let onReject: ([Int], String) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedIds: Set<Int> = []
+    @State private var chosenLeaveTypeId: Int?
+    @State private var rejectionReason: String = ""
 
     private var pendingRecords: [LeaveSubRecord] {
         (request.records ?? []).filter { $0.approvalStatus == "pending" }
     }
 
+    private var groupedDates: [(date: String, records: [LeaveSubRecord])] {
+        var map: [String: [LeaveSubRecord]] = [:]
+        for r in pendingRecords {
+            let key = SCDateFormatter.normalizeDateKey(r.date)
+            map[key.isEmpty ? "未知日期" : key, default: []].append(r)
+        }
+        return map.keys.sorted().map { ($0, map[$0] ?? []) }
+    }
+
     var body: some View {
         NavigationStack {
-            List(pendingRecords) { sub in
-                let isSelected = selectedIds.contains(sub.id)
-                Button {
-                    if isSelected { selectedIds.remove(sub.id) } else { selectedIds.insert(sub.id) }
-                } label: {
-                    HStack {
-                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(isSelected ? .green : .secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(sub.date ?? "") · \(sub.label ?? "全天")")
-                                .foregroundStyle(.primary)
-                            if sub.scene == "evening_study" {
-                                Text("夜自习" + (sub.destination.map { " · 去向：\($0)" } ?? ""))
-                                    .font(.caption)
-                                    .foregroundStyle(.indigo)
+            Form {
+                if !activeLeaveTypes.isEmpty {
+                    Section("批准假类") {
+                        Picker("批准为", selection: $chosenLeaveTypeId) {
+                            ForEach(activeLeaveTypes) { lt in
+                                Text(lt.name).tag(Optional(lt.id))
                             }
                         }
+                        .pickerStyle(.menu)
+                    }
+                }
+
+                Section {
+                    ForEach(groupedDates, id: \.date) { group in
+                        let dayIds = group.records.map(\.id)
+                        let allDaySelected = dayIds.allSatisfy { selectedIds.contains($0) }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Button {
+                                if allDaySelected {
+                                    dayIds.forEach { selectedIds.remove($0) }
+                                } else {
+                                    dayIds.forEach { selectedIds.insert($0) }
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: allDaySelected ? "checkmark.square.fill" : "square")
+                                        .foregroundStyle(allDaySelected ? SCTheme.primary : .secondary)
+                                    Text(group.date)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Text("\(dayIds.filter { selectedIds.contains($0) }.count)/\(dayIds.count)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+
+                            ForEach(group.records) { sub in
+                                let isSelected = selectedIds.contains(sub.id)
+                                Button {
+                                    if isSelected { selectedIds.remove(sub.id) } else { selectedIds.insert(sub.id) }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(isSelected ? .green : .secondary)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(sub.label ?? "全天")
+                                                .font(.subheadline)
+                                                .foregroundStyle(.primary)
+                                            if sub.scene == "evening_study" {
+                                                Text("夜自习" + (sub.destination.map { " · 去向：\($0)" } ?? ""))
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.indigo)
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(.leading, 18)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("选择审批范围（已选 \(selectedIds.count)/\(pendingRecords.count) 项）")
+                } footer: {
+                    Text("未选部分会继续保留为待审批，可稍后单独处理。")
+                }
+
+                Section("驳回原因（仅驳回选中项时生效）") {
+                    TextField("驳回原因（可选）", text: $rejectionReason)
+                }
+
+                Section {
+                    HStack(spacing: 12) {
+                        Button(role: .destructive) {
+                            let ids = Array(selectedIds)
+                            let reason = rejectionReason.trimmingCharacters(in: .whitespacesAndNewlines)
+                            dismiss()
+                            onReject(ids, reason)
+                        } label: {
+                            Label("驳回选中（\(selectedIds.count)）", systemImage: "xmark")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(selectedIds.isEmpty)
+
+                        Button {
+                            let ids = Array(selectedIds)
+                            let ltId = chosenLeaveTypeId
+                            dismiss()
+                            onApprove(ids, ltId)
+                        } label: {
+                            Label("批准选中（\(selectedIds.count)）", systemImage: "checkmark")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                        .disabled(selectedIds.isEmpty)
                     }
                 }
             }
-            .navigationTitle("选择要批准的节次")
+            .navigationTitle("审批范围 · \(request.student?.name ?? "")")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("批准选中（\(selectedIds.count)）") {
-                        dismiss()
-                        onConfirm(Array(selectedIds))
-                    }
-                    .disabled(selectedIds.isEmpty)
+                    Button("关闭") { dismiss() }
                 }
             }
             .onAppear {
                 selectedIds = Set(pendingRecords.map(\.id))
+                chosenLeaveTypeId = initialLeaveTypeId ?? request.leaveType?.id ?? activeLeaveTypes.first?.id
             }
         }
     }

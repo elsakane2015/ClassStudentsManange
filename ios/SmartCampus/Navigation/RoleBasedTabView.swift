@@ -6,6 +6,7 @@ struct RoleBasedTabView: View {
 
     @State private var pushManager = PushNotificationManager.shared
     @State private var selectedTab: AppTab = .home
+    @State private var approvalsWeekTrigger: Int = 0
 
     enum AppTab: Hashable {
         case home
@@ -107,7 +108,10 @@ struct RoleBasedTabView: View {
         TabView(selection: $selectedTab) {
             TeacherDashboardView(
                 user: user,
-                onOpenApprovals: { selectedTab = .approvals }
+                onOpenApprovals: {
+                    approvalsWeekTrigger += 1
+                    selectedTab = .approvals
+                }
             )
                 .tabItem {
                     Label("看板", systemImage: "chart.bar.doc.horizontal")
@@ -121,7 +125,7 @@ struct RoleBasedTabView: View {
                 .tag(AppTab.rollCall)
 
             if user.hasPermission("leave_requests.approve") || user.isTeacherOrAdmin {
-                LeaveApprovalsView(user: user)
+                LeaveApprovalsView(user: user, openCurrentWeekTrigger: approvalsWeekTrigger)
                     .tabItem {
                         Label("审批", systemImage: "checkmark.seal")
                     }

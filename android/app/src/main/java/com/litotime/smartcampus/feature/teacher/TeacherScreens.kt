@@ -40,8 +40,10 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.EditNote
@@ -109,10 +111,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.litotime.smartcampus.BuildConfig
 import com.litotime.smartcampus.SmartCampusApp
 import com.litotime.smartcampus.core.designsystem.ErrorBanner
@@ -165,6 +169,8 @@ fun TeacherDashboardScreen(
     var loadingCalendar by remember { mutableStateOf(false) }
     var dayPanelMode by remember { mutableStateOf("summary") } // "summary" | "roster"
     var rosterSearch by remember { mutableStateOf("") }
+    var rosterFilter by remember { mutableStateOf("all") } // "all" | "has_records" | "normal"
+    val rosterColumns by SmartCampusApp.container.prefs.rosterColumnsFlow.collectAsStateWithLifecycle(initialValue = 1)
 
     var overview by remember { mutableStateOf<List<OverviewDepartment>>(emptyList()) }
     var expandedDepts by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -189,11 +195,23 @@ fun TeacherDashboardScreen(
     val isSelectedHoliday = activeSemester?.holidays?.contains(selectedDateKey) == true
     val regularPeriods = remember(classPeriods) { classPeriods.filter { (it.scene ?: "regular") != "evening_study" } }
 
-    val filteredRoster = remember(overview, rosterSearch) {
-        val all = overview.flatMap { it.classes }.flatMap { it.students }
+    val allClassRoster = remember(overview) { overview.flatMap { it.classes }.flatMap { it.students } }
+    val rosterHasRecordCount = remember(allClassRoster) {
+        allClassRoster.count { s -> s.attendance.any { !it.isNormalPresentRecord } }
+    }
+    val rosterNormalCount = (allClassRoster.size - rosterHasRecordCount).coerceAtLeast(0)
+
+    val filteredRoster = remember(allClassRoster, rosterSearch, rosterFilter) {
         val q = rosterSearch.trim().lowercase()
-        if (q.isEmpty()) all
-        else all.filter { it.name.lowercase().contains(q) || (it.studentNo ?: "").lowercase().contains(q) }
+        allClassRoster.filter { s ->
+            val hasRec = s.attendance.any { !it.isNormalPresentRecord }
+            when (rosterFilter) {
+                "has_records" -> if (!hasRec) return@filter false
+                "normal" -> if (hasRec) return@filter false
+            }
+            if (q.isEmpty()) true
+            else s.name.lowercase().contains(q) || (s.studentNo ?: "").lowercase().contains(q)
+        }
     }
 
     fun loadStats() {
@@ -708,8 +726,145 @@ fun TeacherDashboardScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
+
+                    // 筛选（全部 / 有记录 / 正常）+ 1列/2列切换
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                Triple("all", "全部", allClassRoster.size),
+                                Triple("has_records", "有记录", rosterHasRecordCount),
+                                Triple("normal", "正常", rosterNormalCount)
+                            ).forEach { (key, label, cnt) ->
+                                val selected = rosterFilter == key
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.clip(RoundedCornerShape(999.dp)).clickable { rosterFilter = key }
+                                ) {
+                                    Text(
+                                        "$label $cnt",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(9.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Row(modifier = Modifier.padding(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                listOf(1, 2).forEach { cols ->
+                                    val active = rosterColumns == cols
+                                    Surface(
+                                        shape = RoundedCornerShape(7.dp),
+                                        color = if (active) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        modifier = Modifier.clip(RoundedCornerShape(7.dp)).clickable {
+                                            scope.launch { SmartCampusApp.container.prefs.setRosterColumns(cols) }
+                                        }
+                                    ) {
+                                        Text(
+                                            "${cols}列",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
                     if (filteredRoster.isEmpty()) {
-                        Text("暂无匹配的学生数据", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            if (rosterFilter == "all") "暂无匹配的学生数据" else "当前筛选下暂无学生",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (rosterColumns == 2) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            filteredRoster.chunked(2).forEach { pair ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    pair.forEach { s ->
+                                        val badgeGroups = remember(s.attendance, classPeriods, timeSlots) {
+                                            DayAttendanceBadgeGroup.build(s.attendance, classPeriods, timeSlots)
+                                        }
+                                        val hasRec = badgeGroups.isNotEmpty()
+                                        val accent = if (hasRec) statusColor(badgeGroups.first().colorKey) else Color(0xFF16A34A)
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (hasRec) accent.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                            border = if (hasRec) BorderStroke(1.dp, accent.copy(alpha = 0.32f)) else null,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable {
+                                                    focusedRecordId = null
+                                                    selectedStudent = s
+                                                }
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(9.dp),
+                                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        s.name,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                    s.studentNo?.takeIf { it.isNotBlank() }?.let { no ->
+                                                        Text(
+                                                            if (no.length >= 2) no.takeLast(2) else no,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                                if (hasRec) {
+                                                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                        badgeGroups.take(2).forEach { g ->
+                                                            StatusBadge(g.badgeText, statusColor(g.colorKey))
+                                                        }
+                                                        if (badgeGroups.size > 2) {
+                                                            Text(
+                                                                "+${badgeGroups.size - 2} 项",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    Text("正常出勤", style = MaterialTheme.typography.labelSmall, color = Color(0xFF16A34A))
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (pair.size == 1) {
+                                        Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         filteredRoster.forEach { s ->
                             val badgeGroups = remember(s.attendance, classPeriods, timeSlots) {
@@ -1363,10 +1518,10 @@ private fun StudentManualAttendanceSheet(
         mutableStateOf(student.attendance.filterNot { it.isNormalPresentRecord })
     }
     var loadingDayRecords by remember { mutableStateOf(false) }
-    var recordPendingDelete by remember { mutableStateOf<AttendanceRecord?>(null) }
+    var groupPendingDelete by remember { mutableStateOf<DayRecordGroup?>(null) }
 
     // 2. 补录 / 修改表单（类 Web 端一步点选后台配置的考勤类型）
-    var editingRecord by remember { mutableStateOf<AttendanceRecord?>(null) }
+    var editingGroup by remember { mutableStateOf<DayRecordGroup?>(null) }
     var selectedLeaveTypeId by remember(activeLeaveTypes) { mutableStateOf(activeLeaveTypes.firstOrNull()?.id) }
     var fallbackStatus by remember { mutableStateOf("leave") }
     var selectedPeriods by remember { mutableStateOf<Set<Int>>(emptySet()) }
@@ -1379,9 +1534,17 @@ private fun StudentManualAttendanceSheet(
     var history by remember { mutableStateOf<List<AttendanceRecord>>(emptyList()) }
     var loadingHistory by remember { mutableStateOf(false) }
 
-    val occupiedPeriodIds = remember(dayRecords, editingRecord, regularPeriods) {
+    val groupedDayRecords = remember(dayRecords, regularPeriods, timeSlots) {
+        DayRecordGroup.build(dayRecords, regularPeriods, timeSlots, groupByDate = false)
+    }
+    val groupedHistoryRecords = remember(history, regularPeriods, timeSlots) {
+        DayRecordGroup.build(history, regularPeriods, timeSlots, groupByDate = true)
+    }
+
+    val occupiedPeriodIds = remember(dayRecords, editingGroup, regularPeriods) {
+        val editingIds = editingGroup?.recordIdSet.orEmpty()
         buildSet {
-            dayRecords.filter { it.id != editingRecord?.id }.forEach { rec ->
+            dayRecords.filter { it.id !in editingIds }.forEach { rec ->
                 addAll(rec.extractedPeriodIds(regularPeriods))
             }
         }
@@ -1414,8 +1577,9 @@ private fun StudentManualAttendanceSheet(
         }
     }
 
-    fun beginEditing(rec: AttendanceRecord) {
-        editingRecord = rec
+    fun beginEditing(group: DayRecordGroup) {
+        val rec = group.primary
+        editingGroup = group
         selectedLeaveTypeId = when {
             rec.leaveTypeId != null && activeLeaveTypes.any { it.id == rec.leaveTypeId } -> rec.leaveTypeId
             else -> activeLeaveTypes.firstOrNull { it.slug == rec.status || it.name == rec.titleText }?.id
@@ -1424,34 +1588,46 @@ private fun StudentManualAttendanceSheet(
         if (selectedLeaveTypeId == null) {
             fallbackStatus = if (rec.status == "present") "leave" else rec.status
         }
-        selectedPeriods = rec.extractedPeriodIds(regularPeriods).toSet()
-        note = (rec.detailsText ?: rec.note ?: rec.reason).orEmpty().trim()
+        selectedPeriods = group.periodIds.toSet()
+        note = group.remark.orEmpty()
     }
 
     fun cancelEditing() {
-        editingRecord = null
+        editingGroup = null
         selectedPeriods = emptySet()
         note = ""
     }
 
-    fun performDelete(rec: AttendanceRecord) {
+    fun performDeleteGroup(group: DayRecordGroup) {
         scope.launch {
             error = null
             runCatching {
-                val isSelfApplied = rec.isSelfApplied || rec.sourceType == "self_applied"
-                repo.deleteAttendanceRecord(
-                    studentId = student.id,
-                    date = rec.dateKey.ifBlank { dateKey },
-                    recordId = rec.id,
-                    periodId = rec.periodId,
-                    leaveBatchId = rec.leaveBatchId,
-                    sourceType = if (isSelfApplied) "self_applied" else rec.sourceType,
-                    scene = rec.scene ?: "regular",
-                    deleteScope = if (isSelfApplied) "scene_date" else "record"
-                )
-                if (editingRecord?.id == rec.id) cancelEditing()
-                dayRecords = dayRecords.filterNot { it.id == rec.id }
-                history = history.filterNot { it.id == rec.id }
+                val deletedRollCallIds = mutableSetOf<Int>()
+                val deletedSelfBatches = mutableSetOf<String>()
+                group.records.forEach { rec ->
+                    if (rec.sourceType == "roll_call" && rec.sourceId != null) {
+                        if (!deletedRollCallIds.add(rec.sourceId)) return@forEach
+                    }
+                    val isSelfApplied = rec.isSelfApplied || rec.sourceType == "self_applied"
+                    if (isSelfApplied && !rec.leaveBatchId.isNullOrBlank()) {
+                        val key = "${rec.leaveBatchId}_${rec.scene ?: "regular"}"
+                        if (!deletedSelfBatches.add(key)) return@forEach
+                    }
+                    repo.deleteAttendanceRecord(
+                        studentId = student.id,
+                        date = rec.dateKey.ifBlank { dateKey },
+                        recordId = rec.id,
+                        periodId = rec.periodId,
+                        leaveBatchId = rec.leaveBatchId,
+                        sourceType = if (isSelfApplied) "self_applied" else rec.sourceType,
+                        scene = rec.scene ?: "regular",
+                        deleteScope = if (isSelfApplied) "scene_date" else "record"
+                    )
+                }
+                if (editingGroup?.id == group.id) cancelEditing()
+                val removedIds = group.recordIdSet
+                dayRecords = dayRecords.filterNot { it.id in removedIds }
+                history = history.filterNot { it.id in removedIds }
                 onChanged()
                 refreshDayRecords()
                 loadHistory()
@@ -1479,10 +1655,10 @@ private fun StudentManualAttendanceSheet(
             )
             error?.let { ErrorBanner(message = it) }
 
-            // SECTION 1: 当日已有标记（置顶）
+            // SECTION 1: 当日已有标记（置顶、同批次多节次合并为 1 条）
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "$dateKey 当日已有标记（${dayRecords.size}）",
+                    "$dateKey 当日已有标记（${groupedDayRecords.size}）",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
@@ -1492,7 +1668,7 @@ private fun StudentManualAttendanceSheet(
                 }
             }
 
-            if (dayRecords.isEmpty()) {
+            if (groupedDayRecords.isEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = Color(0xFF16A34A).copy(alpha = 0.08f),
@@ -1509,10 +1685,10 @@ private fun StudentManualAttendanceSheet(
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    dayRecords.forEach { rec ->
-                        val isFocused = (initialFocusRecordId == rec.id) || (editingRecord?.id == rec.id)
-                        val periodText = rec.concisePeriodLabel(regularPeriods, timeSlots)
-                        val remark = (rec.detailsText ?: rec.reason ?: rec.note)?.trim().orEmpty()
+                    groupedDayRecords.forEach { group ->
+                        val rec = group.primary
+                        val isEditingThis = editingGroup?.id == group.id
+                        val isFocused = group.contains(initialFocusRecordId) || isEditingThis
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (isFocused) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
@@ -1549,23 +1725,40 @@ private fun StudentManualAttendanceSheet(
                                     }
                                 }
 
-                                Text("课节：$periodText", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                if (remark.isNotEmpty()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        "课节：${group.periodDetailText}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (group.periodIds.size > 1) {
+                                        Text(
+                                            "共${group.periodIds.size}节",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                group.remark?.takeIf { it.isNotBlank() }?.let { remark ->
                                     Text("备注：$remark", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
 
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(
-                                        onClick = { beginEditing(rec) },
+                                        onClick = { beginEditing(group) },
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(4.dp))
-                                        Text(if (editingRecord?.id == rec.id) "修改中" else "修改", style = MaterialTheme.typography.labelMedium)
+                                        Text(if (isEditingThis) "修改中" else "修改", style = MaterialTheme.typography.labelMedium)
                                     }
                                     OutlinedButton(
-                                        onClick = { recordPendingDelete = rec },
+                                        onClick = { groupPendingDelete = group },
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
                                         border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.5f)),
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -1586,12 +1779,12 @@ private fun StudentManualAttendanceSheet(
 
             // SECTION 2: 补录 / 修改考勤（类 Web 端一步点选考勤类型）
             Text(
-                if (editingRecord == null) "为 ${student.name} 补录考勤" else "修改 ${student.name} 的考勤标记",
+                if (editingGroup == null) "为 ${student.name} 补录考勤" else "修改 ${student.name} 的考勤标记",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
 
-            editingRecord?.let { editing ->
+            editingGroup?.let { editing ->
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
@@ -1602,7 +1795,7 @@ private fun StudentManualAttendanceSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "正在修改：${editing.titleText} · ${editing.concisePeriodLabel(regularPeriods, timeSlots)}",
+                            "正在修改：${editing.primary.titleText} · ${editing.periodDetailText}",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.primary,
@@ -1722,7 +1915,7 @@ private fun StudentManualAttendanceSheet(
                         val targetLeaveTypeId = selectedLeaveType?.id
                         val sortedIds = selectedPeriods.sorted()
                         val matchedSlot = validTimeSlots.firstOrNull { it.second == sortedIds }?.first
-                        val oldRec = editingRecord
+                        val oldGroup = editingGroup
 
                         runCatching {
                             repo.submitBulkAttendance(
@@ -1736,19 +1929,31 @@ private fun StudentManualAttendanceSheet(
                                 timeSlotName = matchedSlot?.name
                             )
 
-                            if (oldRec != null) {
-                                val oldPeriodIds = oldRec.extractedPeriodIds(regularPeriods)
-                                val sameTarget = (oldRec.leaveTypeId == targetLeaveTypeId) &&
-                                    (oldRec.status == targetStatus) &&
-                                    (oldPeriodIds == sortedIds) &&
-                                    (oldRec.periodId == null)
-                                val autoReplacedRollCall = (oldRec.sourceType == "roll_call") &&
-                                    (targetStatus == "leave") &&
-                                    (targetLeaveTypeId != null) &&
-                                    (sortedIds.isEmpty() || oldPeriodIds.any { it in sortedIds })
+                            if (oldGroup != null) {
+                                val deletedRollCallIds = mutableSetOf<Int>()
+                                val deletedSelfBatches = mutableSetOf<String>()
+                                oldGroup.records.forEach { oldRec ->
+                                    val oldPeriodIds = oldRec.extractedPeriodIds(regularPeriods)
+                                    val sameTarget = (oldRec.leaveTypeId == targetLeaveTypeId) &&
+                                        (oldRec.status == targetStatus) &&
+                                        (oldPeriodIds == sortedIds) &&
+                                        (oldRec.periodId == null)
+                                    val autoReplacedRollCall = (oldRec.sourceType == "roll_call") &&
+                                        (targetStatus == "leave") &&
+                                        (targetLeaveTypeId != null) &&
+                                        (sortedIds.isEmpty() || oldPeriodIds.any { it in sortedIds })
 
-                                if (!sameTarget && !autoReplacedRollCall) {
+                                    if (sameTarget || autoReplacedRollCall) return@forEach
+
+                                    if (oldRec.sourceType == "roll_call" && oldRec.sourceId != null) {
+                                        if (!deletedRollCallIds.add(oldRec.sourceId)) return@forEach
+                                    }
                                     val isSelfApplied = oldRec.isSelfApplied || oldRec.sourceType == "self_applied"
+                                    if (isSelfApplied && !oldRec.leaveBatchId.isNullOrBlank()) {
+                                        val key = "${oldRec.leaveBatchId}_${oldRec.scene ?: "regular"}"
+                                        if (!deletedSelfBatches.add(key)) return@forEach
+                                    }
+
                                     runCatching {
                                         repo.deleteAttendanceRecord(
                                             studentId = student.id,
@@ -1764,7 +1969,7 @@ private fun StudentManualAttendanceSheet(
                                 }
                             }
 
-                            editingRecord = null
+                            editingGroup = null
                             note = ""
                             selectedPeriods = emptySet()
                             onChanged()
@@ -1778,7 +1983,7 @@ private fun StudentManualAttendanceSheet(
                 Text(
                     when {
                         saving -> "保存中..."
-                        editingRecord != null -> "保存修改"
+                        editingGroup != null -> "保存修改"
                         else -> "保存考勤记录"
                     }
                 )
@@ -1786,7 +1991,7 @@ private fun StudentManualAttendanceSheet(
 
             HorizontalDivider()
 
-            // SECTION 3: 近期历史异常
+            // SECTION 3: 近期历史异常（同日同批次合并展示）
             Text("近期历史异常（点垃圾桶可删除）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 listOf("today" to "今日", "week" to "本周", "month" to "本月", "semester" to "本学期").forEachIndexed { idx, (k, label) ->
@@ -1805,20 +2010,24 @@ private fun StudentManualAttendanceSheet(
                 Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
-            } else if (history.isEmpty()) {
+            } else if (groupedHistoryRecords.isEmpty()) {
                 Text("该范围内无异常记录", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                history.forEach { rec ->
+                groupedHistoryRecords.forEach { group ->
+                    val rec = group.primary
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         StatusBadge(rec.titleText, statusColor(rec.badgeColorKey))
                         Spacer(Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(rec.dateKey, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                            if (rec.detailText.isNotBlank()) {
-                                Text(rec.detailText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(group.dateKey, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            if (group.periodDetailText.isNotBlank()) {
+                                Text(group.periodDetailText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            group.remark?.takeIf { it.isNotBlank() }?.let { rm ->
+                                Text(rm, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        IconButton(onClick = { performDelete(rec) }) {
+                        IconButton(onClick = { performDeleteGroup(group) }) {
                             Icon(Icons.Rounded.Delete, contentDescription = "删除", tint = Color(0xFFDC2626))
                         }
                     }
@@ -1828,22 +2037,22 @@ private fun StudentManualAttendanceSheet(
         }
     }
 
-    recordPendingDelete?.let { target ->
+    groupPendingDelete?.let { target ->
         AlertDialog(
-            onDismissRequest = { recordPendingDelete = null },
+            onDismissRequest = { groupPendingDelete = null },
             title = { Text("确认撤销该条标记？") },
-            text = { Text("将删除 $dateKey「${target.titleText} · ${target.concisePeriodLabel(regularPeriods, timeSlots)}」考勤记录。") },
+            text = { Text("将删除 $dateKey「${target.primary.titleText} · ${target.periodDetailText}」考勤记录。") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        recordPendingDelete = null
-                        performDelete(target)
+                        groupPendingDelete = null
+                        performDeleteGroup(target)
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDC2626))
                 ) { Text("确认撤销") }
             },
             dismissButton = {
-                TextButton(onClick = { recordPendingDelete = null }) { Text("取消") }
+                TextButton(onClick = { groupPendingDelete = null }) { Text("取消") }
             }
         )
     }
@@ -2010,18 +2219,19 @@ private data class ApprovalDateRange(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LeaveApprovalsScreen() {
+fun LeaveApprovalsScreen(openCurrentWeekTrigger: Int = 0) {
     val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
     val pageSize = 20
     val filters = listOf("pending" to "待审批", "approved" to "已通过", "rejected" to "已驳回", "all" to "全部")
 
     var statusFilter by remember { mutableStateOf("pending") }
-    var timeScope by remember { mutableStateOf(ApprovalTimeScope.ALL) }
-    var lastHistoryScope by remember { mutableStateOf(ApprovalTimeScope.RECENT_30) }
+    var timeScope by remember { mutableStateOf(ApprovalTimeScope.WEEK) }
 
     var semesters by remember { mutableStateOf<List<Semester>>(emptyList()) }
     var semestersLoaded by remember { mutableStateOf(false) }
+    var leaveTypes by remember { mutableStateOf<List<LeaveType>>(emptyList()) }
+    var selectedLeaveTypeOverrides by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var selectedWeek by remember { mutableIntStateOf(1) }
     var selectedMonth by remember { mutableStateOf(YearMonth.now()) }
     var weekMenuOpen by remember { mutableStateOf(false) }
@@ -2041,8 +2251,14 @@ fun LeaveApprovalsScreen() {
 
     var rejectingTarget by remember { mutableStateOf<LeaveRequestGroup?>(null) }
     var rejectReason by remember { mutableStateOf("") }
-    var partialTarget by remember { mutableStateOf<LeaveRequestGroup?>(null) }
+    var scopeTarget by remember { mutableStateOf<LeaveRequestGroup?>(null) }
     var previewImage by remember { mutableStateOf<String?>(null) }
+
+    val activeLeaveTypes = remember(leaveTypes) {
+        val active = leaveTypes.filter { it.isActive }
+        val leaveOnly = active.filter { it.mappedAttendanceStatus == "leave" }
+        leaveOnly.ifEmpty { active }
+    }
 
     val currentSemester = remember(semesters) {
         semesters.firstOrNull { it.isCurrent } ?: semesters.firstOrNull()
@@ -2210,9 +2426,10 @@ fun LeaveApprovalsScreen() {
         }
     }
 
-    // 初始化当前学期与默认教学周/月份
+    // 初始化当前学期、假类列表与默认教学周/月份
     LaunchedEffect(Unit) {
         val list = runCatching { repo.fetchSemesters() }.getOrDefault(emptyList())
+        leaveTypes = runCatching { repo.fetchLeaveTypes() }.getOrDefault(emptyList())
         semesters = list
         val cur = list.firstOrNull { it.isCurrent } ?: list.firstOrNull()
         val start = SCDateFormatter.parseLocalDate(cur?.startDate)
@@ -2230,8 +2447,21 @@ fun LeaveApprovalsScreen() {
                 nowYm.isAfter(endYm) -> endYm
                 else -> nowYm
             }
+        } else if (timeScope == ApprovalTimeScope.WEEK) {
+            timeScope = ApprovalTimeScope.ALL
         }
         semestersLoaded = true
+    }
+
+    // 从看板「待审批请假」卡片进入时，强制切换到「待审批 + 当前教学周」
+    LaunchedEffect(openCurrentWeekTrigger, semestersLoaded) {
+        if (openCurrentWeekTrigger <= 0 || !semestersLoaded) return@LaunchedEffect
+        statusFilter = "pending"
+        if (semesterBounds != null) {
+            val diffDays = ChronoUnit.DAYS.between(semesterBounds.first, LocalDate.now()).toInt()
+            selectedWeek = (diffDays / 7 + 1).coerceIn(1, totalWeeks)
+            timeScope = ApprovalTimeScope.WEEK
+        }
     }
 
     // 搜索防抖 350ms
@@ -2263,13 +2493,7 @@ fun LeaveApprovalsScreen() {
                     SegmentedButton(
                         selected = statusFilter == key,
                         onClick = {
-                            val prev = statusFilter
                             statusFilter = key
-                            if (key == "pending") {
-                                timeScope = ApprovalTimeScope.ALL
-                            } else if (prev == "pending") {
-                                timeScope = lastHistoryScope
-                            }
                         },
                         shape = SegmentedButtonDefaults.itemShape(idx, filters.size)
                     ) { Text(label) }
@@ -2289,9 +2513,6 @@ fun LeaveApprovalsScreen() {
                         selected = timeScope == item,
                         onClick = {
                             timeScope = item
-                            if (statusFilter != "pending") {
-                                lastHistoryScope = item
-                            }
                         },
                         label = { Text(item.label, style = MaterialTheme.typography.labelMedium) }
                     )
@@ -2436,16 +2657,108 @@ fun LeaveApprovalsScreen() {
                             }
 
                             if (req.status == "pending") {
+                                val chosenTypeId = selectedLeaveTypeOverrides[req.id] ?: req.leaveTypeId
+                                val chosenType = activeLeaveTypes.firstOrNull { it.id == chosenTypeId }
+                                val isTypeChanged = chosenTypeId != null && req.leaveTypeId != null && chosenTypeId != req.leaveTypeId
+                                var typeMenuOpen by remember(req.id) { mutableStateOf(false) }
+
                                 Spacer(Modifier.height(10.dp))
+                                HorizontalDivider()
+                                Spacer(Modifier.height(8.dp))
+
+                                // 参考 Web 端 ApprovalScopePanel：审批时直接可改「批准为」假类（病假/事假/特殊等）
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (activeLeaveTypes.isNotEmpty()) {
+                                        Text(
+                                            "批准为",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Box {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = if (isTypeChanged) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                                else MaterialTheme.colorScheme.surfaceVariant,
+                                                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { typeMenuOpen = true }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Text(
+                                                        chosenType?.name ?: req.leaveTypeName,
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = if (isTypeChanged) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Icon(
+                                                        Icons.Rounded.ExpandMore,
+                                                        contentDescription = "切换假类",
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = if (isTypeChanged) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            DropdownMenu(expanded = typeMenuOpen, onDismissRequest = { typeMenuOpen = false }) {
+                                                activeLeaveTypes.forEach { lt ->
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                lt.name,
+                                                                fontWeight = if (lt.id == chosenTypeId) FontWeight.Bold else FontWeight.Normal
+                                                            )
+                                                        },
+                                                        leadingIcon = if (lt.id == chosenTypeId) {
+                                                            { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                                        } else null,
+                                                        onClick = {
+                                                            selectedLeaveTypeOverrides = selectedLeaveTypeOverrides + (req.id to lt.id)
+                                                            typeMenuOpen = false
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        if (isTypeChanged) {
+                                            Text(
+                                                "已改假类",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.weight(1f))
+
+                                    if (pendingSubs.size > 1) {
+                                        OutlinedButton(
+                                            onClick = { scopeTarget = req },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(Icons.Rounded.Checklist, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("选范围(${pendingSubs.size})", style = MaterialTheme.typography.labelMedium)
+                                        }
+                                    }
+                                }
+
+                                Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(
                                         onClick = { rejectReason = ""; rejectingTarget = req },
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
+                                        border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.55f)),
                                         modifier = Modifier.weight(1f)
-                                    ) { Text("驳回") }
-
-                                    if (pendingSubs.size > 1) {
-                                        OutlinedButton(onClick = { partialTarget = req }) { Text("分项批") }
+                                    ) {
+                                        Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("驳回")
                                     }
 
                                     Button(
@@ -2453,12 +2766,23 @@ fun LeaveApprovalsScreen() {
                                         modifier = Modifier.weight(1f),
                                         onClick = {
                                             scope.launch {
-                                                runCatching { repo.approveLeaveRequest(req.id) }
-                                                    .onSuccess { loadFirstPage() }
-                                                    .onFailure { error = it.localizedMessage }
+                                                runCatching {
+                                                    repo.approveLeaveRequest(req.id, recordIds = null, leaveTypeId = chosenTypeId)
+                                                }.onSuccess {
+                                                    selectedLeaveTypeOverrides = selectedLeaveTypeOverrides - req.id
+                                                    loadFirstPage()
+                                                }.onFailure { error = it.localizedMessage }
                                             }
                                         }
-                                    ) { Text("批准通过") }
+                                    ) {
+                                        Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            if (isTypeChanged) "按${chosenType?.name ?: "新类型"}批准" else "批准通过",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             } else {
                                 req.approverName?.let {
@@ -2528,45 +2852,151 @@ fun LeaveApprovalsScreen() {
         )
     }
 
-    partialTarget?.let { target ->
+    scopeTarget?.let { target ->
         val pendingSubs = target.records.filter { it.approvalStatus == "pending" }
+        val groupedByDate = remember(target.id) {
+            pendingSubs.groupBy { SCDateFormatter.normalizeDateKey(it.date).ifBlank { "未知日期" } }.toSortedMap()
+        }
         var selectedIds by remember(target.id) { mutableStateOf(pendingSubs.map { it.id }.toSet()) }
+        var chosenLeaveTypeId by remember(target.id) {
+            mutableStateOf(selectedLeaveTypeOverrides[target.id] ?: target.leaveTypeId ?: activeLeaveTypes.firstOrNull()?.id)
+        }
+        var scopeTypeMenuOpen by remember(target.id) { mutableStateOf(false) }
+        var scopeRejectReason by remember(target.id) { mutableStateOf("") }
+
         AlertDialog(
-            onDismissRequest = { partialTarget = null },
-            title = { Text("选择要批准的节次") },
+            onDismissRequest = { scopeTarget = null },
+            title = { Text("选择审批范围 · ${target.studentName}") },
             text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    pendingSubs.forEach { sub ->
-                        val checked = sub.id in selectedIds
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                selectedIds = if (checked) selectedIds - sub.id else selectedIds + sub.id
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (activeLeaveTypes.isNotEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("批准为", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Box(modifier = Modifier.weight(1f)) {
+                                OutlinedButton(
+                                    onClick = { scopeTypeMenuOpen = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        activeLeaveTypes.firstOrNull { it.id == chosenLeaveTypeId }?.name ?: target.leaveTypeName,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                                DropdownMenu(expanded = scopeTypeMenuOpen, onDismissRequest = { scopeTypeMenuOpen = false }) {
+                                    activeLeaveTypes.forEach { lt ->
+                                        DropdownMenuItem(
+                                            text = { Text(lt.name) },
+                                            leadingIcon = if (lt.id == chosenLeaveTypeId) {
+                                                { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                            } else null,
+                                            onClick = { chosenLeaveTypeId = lt.id; scopeTypeMenuOpen = false }
+                                        )
+                                    }
+                                }
                             }
-                        ) {
-                            Checkbox(checked = checked, onCheckedChange = {
-                                selectedIds = if (it) selectedIds + sub.id else selectedIds - sub.id
-                            })
-                            Text("${sub.date} · ${sub.label ?: "全天"}")
                         }
                     }
+
+                    Text(
+                        "已选 ${selectedIds.size}/${pendingSubs.size} 项 · 未选部分会继续保留为待审批。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    groupedByDate.forEach { (dateKey, recs) ->
+                        val dayIds = recs.map { it.id }
+                        val allChecked = dayIds.all { it in selectedIds }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth().clickable {
+                                        selectedIds = if (allChecked) selectedIds - dayIds.toSet() else selectedIds + dayIds
+                                    }
+                                ) {
+                                    Checkbox(checked = allChecked, onCheckedChange = {
+                                        selectedIds = if (it) selectedIds + dayIds else selectedIds - dayIds.toSet()
+                                    })
+                                    Text(dateKey, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                                }
+                                recs.forEach { sub ->
+                                    val checked = sub.id in selectedIds
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth().padding(start = 18.dp).clickable {
+                                            selectedIds = if (checked) selectedIds - sub.id else selectedIds + sub.id
+                                        }
+                                    ) {
+                                        Checkbox(checked = checked, onCheckedChange = {
+                                            selectedIds = if (it) selectedIds + sub.id else selectedIds - sub.id
+                                        })
+                                        Text(
+                                            sub.label ?: "全天",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = scopeRejectReason,
+                        onValueChange = { scopeRejectReason = it },
+                        label = { Text("驳回原因（驳回选中项时填写）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             },
             confirmButton = {
-                TextButton(
-                    enabled = selectedIds.isNotEmpty(),
-                    onClick = {
-                        val ids = selectedIds.toList()
-                        partialTarget = null
-                        scope.launch {
-                            runCatching { repo.approveLeaveRequest(target.id, ids) }
-                                .onSuccess { loadFirstPage() }
-                                .onFailure { error = it.localizedMessage }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(
+                        enabled = selectedIds.isNotEmpty(),
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDC2626)),
+                        onClick = {
+                            val ids = selectedIds.toList()
+                            val reason = scopeRejectReason.trim()
+                            scopeTarget = null
+                            scope.launch {
+                                runCatching { repo.rejectLeaveRequest(target.id, reason, ids) }
+                                    .onSuccess {
+                                        selectedLeaveTypeOverrides = selectedLeaveTypeOverrides - target.id
+                                        loadFirstPage()
+                                    }
+                                    .onFailure { error = it.localizedMessage }
+                            }
                         }
-                    }
-                ) { Text("批准选中（${selectedIds.size}）") }
+                    ) { Text("驳回选中") }
+
+                    Button(
+                        enabled = selectedIds.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                        onClick = {
+                            val ids = selectedIds.toList()
+                            val ltId = chosenLeaveTypeId
+                            scopeTarget = null
+                            scope.launch {
+                                runCatching { repo.approveLeaveRequest(target.id, ids, ltId) }
+                                    .onSuccess {
+                                        selectedLeaveTypeOverrides = selectedLeaveTypeOverrides - target.id
+                                        loadFirstPage()
+                                    }
+                                    .onFailure { error = it.localizedMessage }
+                            }
+                        }
+                    ) { Text("批准选中(${selectedIds.size})") }
+                }
             },
-            dismissButton = { TextButton(onClick = { partialTarget = null }) { Text("取消") } }
+            dismissButton = { TextButton(onClick = { scopeTarget = null }) { Text("关闭") } }
         )
     }
 

@@ -40,26 +40,73 @@ object PeriodFormatter {
             }
         }
 
-        val periodMap = periods.associate { it.id to it.name }
-        val names = normalized.mapNotNull { periodMap[it] }
-        return mergePeriodNames(names)
+        val orderedNames = orderedPeriodNames(normalized, periods)
+        return mergePeriodNames(orderedNames, separator = "/")
     }
 
-    fun mergePeriodNames(names: List<String>): String {
+    /** 详细节次格式：命中时段时同时展示具体节次，例如 "上午（早读/早操/第1-3节）" */
+    fun formatDetailedPeriodSummary(
+        periodIds: List<Int>,
+        periods: List<ClassPeriod>,
+        timeSlots: List<TimeSlot> = emptyList(),
+        preferredSlotName: String? = null
+    ): String {
+        if (periodIds.isEmpty()) return preferredSlotName?.trim().orEmpty()
+        val normalized = periodIds.distinct().sorted()
+        val orderedNames = orderedPeriodNames(normalized, periods)
+        val detail = mergePeriodNames(orderedNames, separator = "/")
+
+        var matchedSlotName: String? = null
+        for (slot in timeSlots) {
+            val slotIds = slot.periodIds.distinct().sorted()
+            if (slotIds.isNotEmpty() && slotIds == normalized) {
+                matchedSlotName = slot.name.trim()
+                break
+            }
+        }
+        if (matchedSlotName.isNullOrBlank()) {
+            val cleanPreferred = preferredSlotName?.trim().orEmpty()
+            if (cleanPreferred.isNotEmpty() && cleanPreferred != detail) {
+                matchedSlotName = cleanPreferred
+            }
+        }
+
+        return if (!matchedSlotName.isNullOrBlank()) {
+            if (detail.isEmpty() || detail == matchedSlotName) matchedSlotName
+            else "$matchedSlotName（$detail）"
+        } else {
+            detail
+        }
+    }
+
+    private fun orderedPeriodNames(periodIds: List<Int>, periods: List<ClassPeriod>): List<String> {
+        val idSet = periodIds.toSet()
+        val inConfigOrder = periods.filter { it.id in idSet }.map { it.name }
+        if (inConfigOrder.isNotEmpty()) return inConfigOrder
+        val periodMap = periods.associate { it.id to it.name }
+        return periodIds.mapNotNull { periodMap[it] }
+    }
+
+    fun mergePeriodNames(names: List<String>, separator: String = "/"): String {
         if (names.isEmpty()) return ""
         val regularNums = mutableListOf<Int>()
-        val specialNames = mutableListOf<String>()
+        val morningNames = mutableListOf<String>()
+        val otherSpecialNames = mutableListOf<String>()
 
         for (name in names) {
             val match = numberedRegex.matchEntire(name)
             if (match != null) {
                 match.groupValues[1].toIntOrNull()?.let { regularNums.add(it) }
-            } else if (!specialNames.contains(name)) {
-                specialNames.add(name)
+            } else if (name.contains("早") || name.contains("晨")) {
+                if (!morningNames.contains(name)) morningNames.add(name)
+            } else if (!otherSpecialNames.contains(name)) {
+                otherSpecialNames.add(name)
             }
         }
 
         val parts = mutableListOf<String>()
+        parts.addAll(morningNames)
+
         val sortedUnique = regularNums.distinct().sorted()
         if (sortedUnique.isNotEmpty()) {
             val ranges = mutableListOf<String>()
@@ -77,8 +124,8 @@ object PeriodFormatter {
             ranges.add(if (start == end) "$start" else "$start-$end")
             parts.add("第${ranges.joinToString(",")}节")
         }
-        parts.addAll(specialNames)
-        return parts.joinToString("、")
+        parts.addAll(otherSpecialNames)
+        return parts.joinToString(separator)
     }
 }
 

@@ -551,6 +551,101 @@ struct DayAttendanceBadgeGroup: Identifiable, Hashable {
     }
 }
 
+/// 将同一天同批次/同类型的多条节次考勤合并为 1 条逻辑记录（用于单生维护弹窗「当日已有标记」与「近期历史异常」）
+struct DayRecordGroup: Identifiable, Hashable {
+    let id: String
+    let dateKey: String
+    let primary: AttendanceRecord
+    let records: [AttendanceRecord]
+    let periodIds: [Int]
+    let periodDetailText: String
+    let remark: String?
+
+    var recordIdSet: Set<Int> { Set(records.map(\.id)) }
+    var isEveningStudy: Bool { records.contains { ($0.scene ?? "regular") == "evening_study" } }
+
+    func contains(recordId: Int?) -> Bool {
+        guard let recordId else { return false }
+        return records.contains { $0.id == recordId }
+    }
+
+    static func build(
+        from records: [AttendanceRecord],
+        classPeriods: [ClassPeriod],
+        timeSlots: [TimeSlot],
+        groupByDate: Bool = false
+    ) -> [DayRecordGroup] {
+        let valid = records.filter { !$0.isNormalPresentRecord }
+        guard !valid.isEmpty else { return [] }
+
+        var order: [String] = []
+        var grouped: [String: [AttendanceRecord]] = [:]
+
+        for rec in valid {
+            let datePrefix = groupByDate ? "\(rec.dateKey)|" : ""
+            let sceneKey = rec.scene ?? "regular"
+            let remarkKey = (rec.details?.value?.text ?? rec.reason ?? rec.note)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let key: String
+            if let batch = rec.leaveBatchId, !batch.isEmpty {
+                key = "\(datePrefix)batch|\(batch)|\(sceneKey)|\(rec.leaveTypeId ?? -1)|\(rec.status)|\(rec.approvalStatus ?? "")"
+            } else if rec.sourceType == "roll_call", let sid = rec.sourceId {
+                key = "\(datePrefix)rc|\(sid)|\(rec.leaveTypeId ?? -1)|\(rec.status)"
+            } else if rec.periodId != nil && sceneKey != "evening_study" {
+                key = "\(datePrefix)multi|\(sceneKey)|\(rec.leaveTypeId ?? -1)|\(rec.status)|\(rec.approvalStatus ?? "")|\(rec.sourceType ?? "")|\(remarkKey)"
+            } else {
+                key = "\(datePrefix)single|\(rec.id)"
+            }
+
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(rec)
+        }
+
+        return order.compactMap { key in
+            guard let items = grouped[key], let first = items.first else { return nil }
+            let allIds = Array(Set(items.flatMap { $0.extractedPeriodIds(classPeriods: classPeriods) })).sorted()
+            let preferredSlotName = items.compactMap { item -> String? in
+                let name = item.details?.value?.timeSlotName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (name?.isEmpty == false) ? name : nil
+            }.first
+
+            let detailLabel: String
+            if !allIds.isEmpty {
+                let formatted = PeriodFormatter.formatDetailedPeriodSummary(
+                    periodIds: allIds,
+                    periods: classPeriods,
+                    timeSlots: timeSlots,
+                    preferredSlotName: preferredSlotName
+                )
+                detailLabel = formatted.isEmpty ? first.concisePeriodLabel(classPeriods: classPeriods, timeSlots: timeSlots) : formatted
+            } else {
+                var labels: [String] = []
+                for item in items {
+                    let lbl = item.concisePeriodLabel(classPeriods: classPeriods, timeSlots: timeSlots)
+                    if !lbl.isEmpty && !labels.contains(lbl) { labels.append(lbl) }
+                }
+                detailLabel = labels.joined(separator: "/")
+            }
+
+            let remark = items.compactMap { item -> String? in
+                let text = (item.details?.value?.text ?? item.reason ?? item.note)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return (text?.isEmpty == false) ? text : nil
+            }.first
+
+            return DayRecordGroup(
+                id: key,
+                dateKey: first.dateKey,
+                primary: first,
+                records: items,
+                periodIds: allIds,
+                periodDetailText: detailLabel,
+                remark: remark
+            )
+        }
+    }
+}
+
 struct StudentCalendarResponse: Decodable {
     let attendance: [AttendanceRecord]
 }

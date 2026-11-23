@@ -123,6 +123,7 @@ fun RoleBasedHomeScreen(user: User) {
 
     var selectedTab by remember(user.id) { mutableStateOf(tabs.first()) }
     var subRoute by remember { mutableStateOf<SubRoute?>(null) }
+    var approvalsWeekTrigger by remember { mutableIntStateOf(0) }
 
     BackHandler(enabled = subRoute != null) {
         subRoute = null
@@ -218,7 +219,12 @@ fun RoleBasedHomeScreen(user: User) {
                 TabId.TEACHER_HOME -> TeacherDashboardScreen(
                     user = user,
                     onOpenNotifications = { subRoute = SubRoute.Notifications },
-                    onOpenApprovals = { if (TabId.APPROVALS in tabs) selectedTab = TabId.APPROVALS }
+                    onOpenApprovals = {
+                        if (TabId.APPROVALS in tabs) {
+                            approvalsWeekTrigger += 1
+                            selectedTab = TabId.APPROVALS
+                        }
+                    }
                 )
                 TabId.ROLL_CALL -> {
                     val showEveningSwitch = !user.isStudent && (user.hasPermission("evening_study.view") || user.canTakeEveningStudy || user.isTeacherOrAdmin)
@@ -274,7 +280,7 @@ fun RoleBasedHomeScreen(user: User) {
                         }
                     )
                 }
-                TabId.APPROVALS -> LeaveApprovalsScreen()
+                TabId.APPROVALS -> LeaveApprovalsScreen(openCurrentWeekTrigger = approvalsWeekTrigger)
                 TabId.STUDENTS -> StudentListScreen(
                     onOpenStudent = { subRoute = SubRoute.StudentManageDetail(it) }
                 )
