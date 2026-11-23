@@ -1747,6 +1747,244 @@ class AttendanceController extends Controller
         ];
     }
 
+    /**
+     * 将 /attendance/details 中单个学生的记录按「同日同批次」合并去重，
+     * 避免跨多天/多节次请假被统计为“45次”并刷出重复单日行。
+     *
+     * @param iterable<int, AttendanceRecord> $records
+     * @param array<int, array<string, mixed>> $periodMap
+     * @return array{detail: string, records: array<int, array<string, mixed>>, day_count: int, period_count: int}
+     */
+    public static function summarizeStudentDetailRecords(iterable $records, string $scope, array $periodMap = []): array
+    {
+        $sourceLabels = [
+            'roll_call' => '点名',
+            'manual' => '标记',
+            'manual_bulk' => '标记',
+            'leave_request' => '申请',
+            'self_applied' => '申请',
+        ];
+
+        $items = [];
+        foreach ($records as $record) {
+            $items[] = $record;
+        }
+
+        usort($items, static function (AttendanceRecord $a, AttendanceRecord $b): int {
+            $da = $a->date instanceof \Carbon\Carbon ? $a->date->format('Y-m-d') : (string) $a->date;
+            $db = $b->date instanceof \Carbon\Carbon ? $b->date->format('Y-m-d') : (string) $b->date;
+            if ($da !== $db) {
+                return strcmp($da, $db);
+            }
+            return ((int) ($a->period_id ?? 0)) <=> ((int) ($b->period_id ?? 0));
+        });
+
+        $grouped = [];
+        foreach ($items as $record) {
+            $dateKey = $record->date instanceof \Carbon\Carbon
+                ? $record->date->format('Y-m-d')
+                : substr((string) $record->date, 0, 10);
+
+            $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
+            if (!is_array($details)) {
+                $details = [];
+            }
+
+            $sourceType = $record->source_type ?? 'manual';
+            if ($record->is_self_applied) {
+                $sourceType = 'self_applied';
+            }
+            $scene = $record->scene ?? 'regular';
+
+            if (!empty($record->leave_batch_id)) {
+                $groupKey = implode('|', [
+                    $dateKey,
+                    'batch:' . $record->leave_batch_id,
+                    $scene,
+                    (string) ($record->leave_type_id ?? ''),
+                    (string) $record->status,
+                ]);
+            } elseif ($record->period_id !== null && $sourceType !== 'roll_call') {
+                $groupKey = implode('|', [
+                    $dateKey,
+                    'periods',
+                    $scene,
+                    (string) ($record->leave_type_id ?? ''),
+                    (string) $record->status,
+                    $sourceType,
+                    (string) ($record->approval_status ?? ''),
+                ]);
+            } else {
+                $optionKey = (string) ($details['option'] ?? $details['display_label'] ?? $details['roll_call_type'] ?? '');
+                $periodIdsKey = isset($details['period_ids']) && is_array($details['period_ids'])
+                    ? implode(',', array_map('intval', $details['period_ids']))
+                    : '';
+                $groupKey = implode('|', [
+                    $dateKey,
+                    'single',
+                    $scene,
+                    (string) ($record->leave_type_id ?? ''),
+                    (string) $record->status,
+                    $sourceType,
+                    $optionKey,
+                    $periodIdsKey,
+                    (string) ($details['text'] ?? ''),
+                ]);
+            }
+
+            if (!isset($grouped[$groupKey])) {
+                $grouped[$groupKey] = [
+                    'primary' => $record,
+                    'date' => $dateKey,
+                    'source_type' => $sourceType,
+                    'details' => $details,
+                    'records' => [$record],
+                    'period_ids' => [],
+                ];
+            } else {
+                $grouped[$groupKey]['records'][] = $record;
+            }
+
+            if ($record->period_id !== null) {
+                $grouped[$groupKey]['period_ids'][] = (int) $record->period_id;
+            } elseif (!empty($details['period_ids']) && is_array($details['period_ids'])) {
+                foreach ($details['period_ids'] as $pid) {
+                    $grouped[$groupKey]['period_ids'][] = (int) $pid;
+                }
+            } elseif (!empty($details['periods']) && is_array($details['periods'])) {
+                foreach ($details['periods'] as $pid) {
+                    $grouped[$groupKey]['period_ids'][] = (int) $pid;
+                }
+            }
+        }
+
+        $enrichedRecords = [];
+        $todayParts = [];
+        $uniqueDates = [];
+        $totalPeriods = 0;
+        $hasExplicitPeriods = false;
+
+        foreach ($grouped as $group) {
+            /** @var AttendanceRecord $primary */
+            $primary = $group['primary'];
+            $dateKey = $group['date'];
+            $sourceType = $group['source_type'];
+            $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
+            $details = $group['details'];
+            $uniqueDates[$dateKey] = true;
+
+            $periodIds = array_values(array_unique(array_filter($group['period_ids'], fn ($id) => $id > 0)));
+            $periodNames = [];
+            foreach ($periodIds as $pid) {
+                if (isset($periodMap[$pid]['name'])) {
+                    $periodNames[] = (string) $periodMap[$pid]['name'];
+                } elseif (isset($periodMap[(string) $pid]['name'])) {
+                    $periodNames[] = (string) $periodMap[(string) $pid]['name'];
+                } else {
+                    $periodNames[] = "第{$pid}节";
+                }
+            }
+            if (empty($periodNames) && !empty($details['period_names']) && is_array($details['period_names'])) {
+                $periodNames = array_values(array_unique(array_filter(array_map(
+                    fn ($n) => trim((string) $n),
+                    $details['period_names']
+                ))));
+            }
+
+            $groupPeriodCount = 0;
+            if (!empty($periodIds)) {
+                $groupPeriodCount = count($periodIds);
+                $hasExplicitPeriods = true;
+            } elseif (!empty($periodNames)) {
+                $groupPeriodCount = count($periodNames);
+                $hasExplicitPeriods = true;
+            } elseif (isset($details['option_periods']) && is_numeric($details['option_periods']) && (int) $details['option_periods'] > 0) {
+                $groupPeriodCount = (int) $details['option_periods'];
+                $hasExplicitPeriods = true;
+            } elseif ($sourceType === 'roll_call') {
+                $groupPeriodCount = count($group['records']);
+                $hasExplicitPeriods = true;
+            }
+            $totalPeriods += $groupPeriodCount;
+
+            $detailContent = '';
+            if ($sourceType === 'roll_call') {
+                if (!empty($details['roll_call_type'])) {
+                    $detailContent = (string) $details['roll_call_type'];
+                    if (!empty($details['roll_call_time'])) {
+                        $detailContent .= '(' . $details['roll_call_time'] . ')';
+                    }
+                } else {
+                    $detailContent = '点名记录';
+                }
+            } else {
+                $compact = self::formatCompactCalendarOption(
+                    array_merge($details, !empty($periodIds) ? ['period_ids' => $periodIds] : []),
+                    $periodMap,
+                    count($periodIds) === 1 ? $periodIds[0] : ($primary->period_id ? (int) $primary->period_id : null),
+                    $sourceType,
+                    $primary->relationLoaded('leaveType') ? $primary->leaveType : null
+                );
+
+                if (!empty($periodNames)) {
+                    $mergedPeriodStr = self::formatAttendancePeriodNames($periodNames);
+                    $countSuffix = count($periodNames) > 1 ? ' (' . count($periodNames) . '节)' : '';
+                    $periodText = $mergedPeriodStr . $countSuffix;
+                    $noteText = isset($details['text']) ? trim((string) $details['text']) : '';
+                    if ($noteText !== '' && $noteText !== $mergedPeriodStr) {
+                        $detailContent = "{$periodText} · {$noteText}";
+                    } else {
+                        $detailContent = $periodText;
+                    }
+                } elseif ($compact['option'] !== '') {
+                    $detailContent = $compact['option'];
+                } elseif (!empty($details['option'])) {
+                    $optionMap = [
+                        'morning_half' => '上午',
+                        'afternoon_half' => '下午',
+                        'full_day' => '全天',
+                        'morning_exercise' => '早操',
+                        'evening_exercise' => '晚操',
+                    ];
+                    $detailContent = $optionMap[$details['option']] ?? (string) $details['option'];
+                } else {
+                    $detailContent = '全天';
+                }
+            }
+
+            $lineDetail = $sourceLabel . '：' . $detailContent;
+            $todayParts[] = $lineDetail;
+
+            $recordArray = $primary->toArray();
+            $recordArray['date'] = $dateKey;
+            $recordArray['detail'] = $lineDetail;
+            $recordArray['period_names_display'] = $detailContent;
+            $recordArray['period_count'] = $groupPeriodCount;
+            if (!empty($periodIds)) {
+                $recordDetails = is_array($recordArray['details'] ?? null) ? $recordArray['details'] : $details;
+                $recordDetails['period_ids'] = $periodIds;
+                $recordArray['details'] = $recordDetails;
+            }
+            $enrichedRecords[] = $recordArray;
+        }
+
+        $dayCount = count($uniqueDates);
+        if ($scope === 'today') {
+            $detailText = implode(' | ', $todayParts);
+        } elseif ($hasExplicitPeriods && $totalPeriods > 0) {
+            $detailText = $dayCount > 0 ? "{$dayCount}天 · {$totalPeriods}节" : "{$totalPeriods}节";
+        } else {
+            $detailText = $dayCount > 0 ? "{$dayCount}天" : (count($enrichedRecords) . '次');
+        }
+
+        return [
+            'detail' => $detailText !== '' ? $detailText : '-',
+            'records' => $enrichedRecords,
+            'day_count' => $dayCount,
+            'period_count' => $totalPeriods,
+        ];
+    }
+
     private function attendanceBatchDisplayKey(AttendanceRecord $record): string
     {
         $date = $record->date instanceof \Carbon\Carbon
@@ -3236,334 +3474,30 @@ class AttendanceController extends Controller
         // Load department separately to avoid table name issues
         $students->load('schoolClass.department');
 
-        // 来源类型标签映射（全 scope 复用）
-        $sourceLabels = [
-            'roll_call' => '点名',
-            'manual' => '标记',
-            'manual_bulk' => '标记',
-            'leave_request' => '申请',
-            'self_applied' => '申请',  // 自主申请
-        ];
+        // 一次性加载节次配置，避免循环内重复查询数据库
+        $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
+        $periodsArray = json_decode($periodsConfig ?: '[]', true) ?: [];
+        $periodMap = [];
+        foreach ($periodsArray as $p) {
+            if (isset($p['id'])) {
+                $periodMap[(int) $p['id']] = $p;
+            }
+        }
 
         // Format response
-        $result = $students->map(function($student) use ($scope, $sourceLabels) {
+        $result = $students->map(function($student) use ($scope, $periodMap) {
             try {
-                $records = $student->attendance;
-                
-                // Calculate details based on scope
-                if ($scope === 'today') {
-                    // 去重：按 date + leave_type_id + option 去重，避免同类型记录重复显示
-                    $uniqueRecords = $records->unique(function ($record) {
-                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
-                        $option = is_array($details) ? ($details['option'] ?? $details['display_label'] ?? '') : '';
-                        $periodIds = is_array($details) ? ($details['period_ids'] ?? []) : [];
-                        $periodKey = is_array($periodIds) ? implode(',', $periodIds) : '';
-                        return $record->date . '-' . $record->leave_type_id . '-' . $option . '-' . $periodKey . '-' . $record->source_type;
-                    })->values();
-                    
-                    // For today, show all records with source labels, separated by |
-                    $detailParts = [];
-                    foreach ($uniqueRecords as $record) {
-                        // 判断来源类型：优先使用 is_self_applied 字段
-                        $sourceType = $record->source_type ?? 'manual';
-                        if ($record->is_self_applied) {
-                            $sourceType = 'self_applied';
-                        }
-                        $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
-                        
-                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
-                        $detailContent = '';
-                        
-                        if ($sourceType === 'roll_call') {
-                            // 点名来源：显示点名类型名称 + 时间
-                            if (is_array($details) && isset($details['roll_call_type'])) {
-                                $detailContent = $details['roll_call_type'];
-                                if (isset($details['roll_call_time'])) {
-                                    $detailContent .= '(' . $details['roll_call_time'] . ')';
-                                }
-                            } else {
-                                $detailContent = '点名记录';
-                            }
-                        } elseif (in_array($sourceType, ['leave_request', 'self_applied'])) {
-                            // 请假/申请来源：显示请假类型 + 时段
-                            if ($record->leaveType) {
-                                $detailContent = $record->leaveType->name;
-                            }
-                            if (is_array($details)) {
-                                if (isset($details['display_label'])) {
-                                    $detailContent .= '(' . $details['display_label'] . ')';
-                                } elseif (isset($details['option_label'])) {
-                                    $detailContent .= '(' . $details['option_label'] . ')';
-                                } elseif (isset($details['option'])) {
-                                    $optionMap = [
-                                        'morning_half' => '上午',
-                                        'afternoon_half' => '下午',
-                                        'full_day' => '全天',
-                                        'morning_exercise' => '早操',
-                                        'evening_exercise' => '晚操'
-                                    ];
-                                    $optionText = $optionMap[$details['option']] ?? $details['option'];
-                                    $detailContent .= '(' . $optionText . ')';
-                                }
-                            }
-                        } else {
-                            // 手动标记来源：优先显示display_label，否则显示option_label/time_slot_name，再否则显示节次
-                            if (is_array($details)) {
-                                // 首先检查是否有 period_ids，用于获取节次名称
-                                $periodNamesFromIds = [];
-                                if (isset($details['period_ids']) && !empty($details['period_ids']) && is_array($details['period_ids'])) {
-                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
-                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
-                                    foreach ($details['period_ids'] as $periodId) {
-                                        foreach ($periodsArray as $p) {
-                                            if ((string)$p['id'] === (string)$periodId) {
-                                                $periodNamesFromIds[] = $p['name'];
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                if (isset($details['display_label']) && !empty($details['display_label'])) {
-                                    $detailContent = $details['display_label'];
-                                } elseif (isset($details['text']) && !empty($details['text'])) {
-                                    // 文本输入类型：显示文本 + 合并后的节次（如果有）
-                                    $detailContent = $details['text'];
-                                    if (!empty($periodNamesFromIds)) {
-                                        $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
-                                        $countSuffix = count($periodNamesFromIds) > 1 ? ' (' . count($periodNamesFromIds) . '节)' : '';
-                                        $detailContent .= ' · ' . $mergedNames . $countSuffix;
-                                    }
-                                } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
-                                    $detailContent = $details['option_label'];
-                                } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
-                                    // 时段名称（如早读、晚操等）
-                                    $detailContent = $details['time_slot_name'];
-                                } elseif (isset($details['option']) && !empty($details['option'])) {
-                                    // 尝试映射option为中文
-                                    $optionMap = [
-                                        'morning_half' => '上午',
-                                        'afternoon_half' => '下午',
-                                        'full_day' => '全天',
-                                        'morning_exercise' => '早操',
-                                        'evening_exercise' => '晚操'
-                                    ];
-                                    $detailContent = $optionMap[$details['option']] ?? $details['option'];
-                                } elseif (!empty($periodNamesFromIds)) {
-                                    // 只有 period_ids 节次信息
-                                    $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
-                                    $detailContent = count($periodNamesFromIds) > 1
-                                        ? $mergedNames . ' (' . count($periodNamesFromIds) . '节)'
-                                        : $mergedNames;
-                                } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
-                                    // 使用 period_names（如 ["早读", "第1节"]）
-                                    $mergedNames = self::formatAttendancePeriodNames($details['period_names']);
-                                    $detailContent = count($details['period_names']) > 1
-                                        ? $mergedNames . ' (' . count($details['period_names']) . '节)'
-                                        : $mergedNames;
-                                } elseif (isset($details['periods']) && !empty($details['periods'])) {
-                                    // 根据 periods（节次ID数组）查询系统配置获取节次名称
-                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
-                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
-                                    $periodNames = [];
-                                    foreach ($details['periods'] as $periodId) {
-                                        foreach ($periodsArray as $p) {
-                                            if ((string)$p['id'] === (string)$periodId) {
-                                                $periodNames[] = $p['name'];
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if (!empty($periodNames)) {
-                                        $detailContent = implode('、', $periodNames);
-                                    } else {
-                                        // 如果找不到配置，fallback 显示节次编号
-                                        $detailContent = '第' . implode(',', $details['periods']) . '节';
-                                    }
-                                } elseif (isset($details['period_numbers']) && !empty($details['period_numbers'])) {
-                                    // 根据 period_numbers 查询系统配置获取节次名称
-                                    // period_numbers 可能是：1. 节次ID  2. 节次在数组中的位置（1-based）
-                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
-                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
-                                    $periodNames = [];
-                                    foreach ($details['period_numbers'] as $periodNum) {
-                                        $found = false;
-                                        // 首先尝试按 ID 匹配
-                                        foreach ($periodsArray as $p) {
-                                            if ((string)$p['id'] === (string)$periodNum) {
-                                                $periodNames[] = $p['name'];
-                                                $found = true;
-                                                break;
-                                            }
-                                        }
-                                        // 如果没找到，按索引匹配
-                                        if (!$found) {
-                                            $index = (int)$periodNum - 1;
-                                            if ($index >= 0 && $index < count($periodsArray)) {
-                                                $periodNames[] = $periodsArray[$index]['name'] ?? "第{$periodNum}节";
-                                            } else {
-                                                $periodNames[] = "第{$periodNum}节";
-                                            }
-                                        }
-                                    }
-                                    $detailContent = implode('、', $periodNames);
-                                }
-                            }
-                            if (!$detailContent && $record->period_id) {
-                                // 尝试从period关联获取
-                                $period = $record->period;
-                                if ($period) {
-                                    $detailContent = '第' . $period->period_number . '节';
-                                }
-                            }
-                            // 如果仍然没有内容，尝试使用leave_type名称
-                            if (!$detailContent && $record->leaveType) {
-                                $detailContent = $record->leaveType->name;
-                            }
-                            if (!$detailContent) {
-                                $detailContent = '考勤记录';
-                            }
-                        }
-                        
-                        $detailParts[] = $sourceLabel . '：' . $detailContent;
-                    }
-                    $detailText = implode(' | ', $detailParts);
-                } else {
-                    // For week/month/semester, show count
-                    $detailText = $records->count() . '次';
-                }
+                $summary = self::summarizeStudentDetailRecords($student->attendance, $scope, $periodMap);
 
-                // 为每条记录添加 detail 字段（与 studentRecords 方法保持一致）
-                $enrichedRecords = [];
-                $recordsToEnrich = $scope === 'today' ? $uniqueRecords : $records;
-                foreach ($recordsToEnrich as $index => $record) {
-                    $recordArray = $record->toArray();
-                    // 复用上面循环中已经计算的 detailParts（如果是 today scope）
-                    if ($scope === 'today' && isset($detailParts[$index])) {
-                        $recordArray['detail'] = $detailParts[$index];
-                    } else {
-                        // Fallback: 重新计算 detail（与 studentRecords 逻辑一致）
-                        $sourceType = $record->source_type ?? 'manual';
-                        if ($record->is_self_applied) {
-                            $sourceType = 'self_applied';
-                        }
-                        $sourceLabel = $sourceLabels[$sourceType] ?? '标记';
-                        
-                        $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
-                        $detailContent = '';
-                        
-                        if ($sourceType === 'roll_call') {
-                            if (is_array($details) && isset($details['roll_call_type'])) {
-                                $detailContent = $details['roll_call_type'];
-                                if (isset($details['roll_call_time'])) {
-                                    $detailContent .= '(' . $details['roll_call_time'] . ')';
-                                }
-                            } else {
-                                $detailContent = '点名记录';
-                            }
-                        } elseif (in_array($sourceType, ['leave_request', 'self_applied'])) {
-                            if ($record->leaveType) {
-                                $detailContent = $record->leaveType->name;
-                            }
-                            if (is_array($details)) {
-                                // 获取 period_ids 对应的节次名称
-                                $periodNamesFromIds = [];
-                                if (isset($details['period_ids']) && !empty($details['period_ids']) && is_array($details['period_ids'])) {
-                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
-                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
-                                    foreach ($details['period_ids'] as $periodId) {
-                                        foreach ($periodsArray as $p) {
-                                            if ((string)$p['id'] === (string)$periodId) {
-                                                $periodNamesFromIds[] = $p['name'];
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                if (isset($details['display_label'])) {
-                                    $detailContent .= '(' . $details['display_label'] . ')';
-                                } elseif (isset($details['text'])) {
-                                    $textContent = $details['text'];
-                                    if (!empty($periodNamesFromIds)) {
-                                        $textContent .= '-' . implode('、', $periodNamesFromIds);
-                                    }
-                                    $detailContent .= '(' . $textContent . ')';
-                                } elseif (isset($details['option_label'])) {
-                                    $detailContent .= '(' . $details['option_label'] . ')';
-                                }
-                            }
-                        } else {
-                            if (is_array($details)) {
-                                // 获取 period_ids 对应的节次名称
-                                $periodNamesFromIds = [];
-                                if (isset($details['period_ids']) && !empty($details['period_ids']) && is_array($details['period_ids'])) {
-                                    $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
-                                    $periodsArray = json_decode($periodsConfig, true) ?: [];
-                                    foreach ($details['period_ids'] as $periodId) {
-                                        foreach ($periodsArray as $p) {
-                                            if ((string)$p['id'] === (string)$periodId) {
-                                                $periodNamesFromIds[] = $p['name'];
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                if (isset($details['display_label']) && !empty($details['display_label'])) {
-                                    $detailContent = $details['display_label'];
-                                } elseif (isset($details['text']) && !empty($details['text'])) {
-                                    $detailContent = $details['text'];
-                                    if (!empty($periodNamesFromIds)) {
-                                        $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
-                                        $countSuffix = count($periodNamesFromIds) > 1 ? ' (' . count($periodNamesFromIds) . '节)' : '';
-                                        $detailContent .= ' · ' . $mergedNames . $countSuffix;
-                                    }
-                                } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
-                                    $detailContent = $details['option_label'];
-                                } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
-                                    $detailContent = $details['time_slot_name'];
-                                } elseif (!empty($periodNamesFromIds)) {
-                                    $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
-                                    $detailContent = count($periodNamesFromIds) > 1
-                                        ? $mergedNames . ' (' . count($periodNamesFromIds) . '节)'
-                                        : $mergedNames;
-                                } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
-                                    $mergedNames = self::formatAttendancePeriodNames($details['period_names']);
-                                    $detailContent = count($details['period_names']) > 1
-                                        ? $mergedNames . ' (' . count($details['period_names']) . '节)'
-                                        : $mergedNames;
-                                }
-                            }
-                            if (!$detailContent && $record->leaveType) {
-                                $detailContent = $record->leaveType->name;
-                            }
-                            if (!$detailContent) {
-                                $detailContent = '考勤记录';
-                            }
-                        }
-                        $recordArray['detail'] = $sourceLabel . '：' . $detailContent;
-                    }
-                    $enrichedRecords[] = $recordArray;
-                }
-
-                $studentData = [
+                return [
                     'id' => $student->id,
                     'student_no' => $student->student_no ?? '',
                     'name' => $student->user?->name ?? '-',
                     'department' => $student->schoolClass?->department?->name ?? '-',
                     'class' => $student->schoolClass?->name ?? '-',
-                    'detail' => $detailText ?? '-',
-                    'records' => $enrichedRecords
+                    'detail' => $summary['detail'],
+                    'records' => $summary['records'],
                 ];
-                
-                \Log::info('[details] Student data:', [
-                    'student_id' => $student->id,
-                    'student_no' => $student->student_no,
-                    'returned_id' => $studentData['id']
-                ]);
-                
-                return $studentData;
             } catch (\Exception $e) {
                 \Log::error('Error formatting student data: ' . $e->getMessage(), [
                     'student_id' => $student->id ?? 'unknown',

@@ -418,7 +418,8 @@ data class AttendanceRecord(
     val detailsTimeSlotName: String? = null,
     val detailsDisplayLabel: String? = null,
     val detailsPeriodNames: List<String> = emptyList(),
-    val detailsPeriods: List<Int> = emptyList()
+    val detailsPeriods: List<Int> = emptyList(),
+    val detailsOptionPeriods: Int? = null
 ) {
     val dateKey: String get() = SCDateFormatter.normalizeDateKey(date)
 
@@ -557,7 +558,8 @@ data class AttendanceRecord(
                 detailsTimeSlotName = details?.str("time_slot_name"),
                 detailsDisplayLabel = details?.str("display_label") ?: o.str("display_label"),
                 detailsPeriodNames = details?.strList("period_names").orEmpty(),
-                detailsPeriods = details?.intList("periods").orEmpty()
+                detailsPeriods = details?.intList("periods").orEmpty(),
+                detailsOptionPeriods = details?.intOrNull("option_periods")
             )
         }
     }

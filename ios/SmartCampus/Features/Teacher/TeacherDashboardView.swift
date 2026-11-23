@@ -439,7 +439,9 @@ struct TeacherDashboardView: View {
                 TeacherStatDetailSheet(
                     scope: scope,
                     semesterId: selectedSemesterId,
-                    target: target
+                    target: target,
+                    classPeriods: classPeriods,
+                    timeSlots: timeSlots
                 )
             }
             .sheet(isPresented: $showExportSheet) {
@@ -504,56 +506,68 @@ struct TeacherDashboardView: View {
                         }
                         .padding(.vertical, 8)
                     } else {
-                        // 考勤类型筛选选卡 + 1列/2列切换
-                        HStack(spacing: 6) {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 6) {
-                                    let isAllSelected = (summaryTypeFilter == nil)
-                                    Button {
-                                        withAnimation(.snappy(duration: 0.18)) {
-                                            openSwipeRecordId = nil
-                                            summaryTypeFilter = nil
-                                        }
-                                    } label: {
-                                        Text("全部 \(selectedDaySummaryRecords.count)")
-                                            .font(.caption.weight(isAllSelected ? .semibold : .regular))
-                                            .padding(.horizontal, 9)
-                                            .padding(.vertical, 5)
-                                            .background(isAllSelected ? SCTheme.primary : Color(.tertiarySystemFill))
-                                            .foregroundStyle(isAllSelected ? .white : .primary)
-                                            .clipShape(Capsule())
-                                    }
-                                    .buttonStyle(.plain)
+                        // 考勤类型下拉筛选 + 1列/2列切换
+                        HStack(spacing: 8) {
+                            let activeOption = summaryTypeFilter.flatMap { name in
+                                summaryFilterOptions.first(where: { $0.name == name })
+                            }
+                            let activeTint: Color = activeOption.map { SCTheme.color(for: $0.colorKey) } ?? SCTheme.primary
+                            let filterButtonText: String = {
+                                if let opt = activeOption {
+                                    return "\(opt.name) (\(opt.count))"
+                                }
+                                if let filterName = summaryTypeFilter {
+                                    return "\(filterName) (0)"
+                                }
+                                return "全部 (\(selectedDaySummaryRecords.count))"
+                            }()
 
+                            Menu {
+                                Button {
+                                    withAnimation(.snappy(duration: 0.18)) {
+                                        openSwipeRecordId = nil
+                                        summaryTypeFilter = nil
+                                    }
+                                } label: {
+                                    if summaryTypeFilter == nil {
+                                        Label("全部（\(selectedDaySummaryRecords.count)条）", systemImage: "checkmark")
+                                    } else {
+                                        Text("全部（\(selectedDaySummaryRecords.count)条）")
+                                    }
+                                }
+
+                                if !summaryFilterOptions.isEmpty {
+                                    Divider()
                                     ForEach(summaryFilterOptions) { opt in
-                                        let isSelected = (summaryTypeFilter == opt.name)
-                                        let tint = SCTheme.color(for: opt.colorKey)
                                         Button {
                                             withAnimation(.snappy(duration: 0.18)) {
                                                 openSwipeRecordId = nil
-                                                summaryTypeFilter = isSelected ? nil : opt.name
+                                                summaryTypeFilter = opt.name
                                             }
                                         } label: {
-                                            Text(opt.count > 0 ? "\(opt.name) \(opt.count)" : opt.name)
-                                                .font(.caption.weight(isSelected ? .semibold : .regular))
-                                                .padding(.horizontal, 9)
-                                                .padding(.vertical, 5)
-                                                .background(
-                                                    isSelected
-                                                        ? tint
-                                                        : (opt.count > 0 ? tint.opacity(0.12) : Color(.tertiarySystemFill))
-                                                )
-                                                .foregroundStyle(
-                                                    isSelected
-                                                        ? .white
-                                                        : (opt.count > 0 ? tint : .secondary)
-                                                )
-                                                .clipShape(Capsule())
+                                            if summaryTypeFilter == opt.name {
+                                                Label("\(opt.name)（\(opt.count)条）", systemImage: "checkmark")
+                                            } else {
+                                                Text("\(opt.name)（\(opt.count)条）")
+                                            }
                                         }
-                                        .buttonStyle(.plain)
                                     }
                                 }
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Text(filterButtonText)
+                                        .font(.caption.weight(.semibold))
+                                    Image(systemName: "chevron.down")
+                                        .font(.caption2.weight(.semibold))
+                                }
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 6)
+                                .background(summaryTypeFilter == nil ? Color(.tertiarySystemFill) : activeTint.opacity(0.14))
+                                .foregroundStyle(summaryTypeFilter == nil ? Color.primary : activeTint)
+                                .clipShape(Capsule())
                             }
+
+                            Spacer(minLength: 4)
 
                             // 1列 / 2列切换（持久化记忆）
                             HStack(spacing: 2) {
@@ -2724,6 +2738,8 @@ private struct TeacherStatDetailSheet: View {
     let scope: String
     let semesterId: Int?
     let target: TeacherDashboardView.StatDetailTarget
+    let classPeriods: [ClassPeriod]
+    let timeSlots: [TimeSlot]
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("smartcampus.stat_detail_columns") private var detailColumns: Int = 1
@@ -2731,6 +2747,14 @@ private struct TeacherStatDetailSheet: View {
     @State private var nonPresentList: [NonPresentDetailStudent] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
+
+    private var regularPeriods: [ClassPeriod] {
+        classPeriods.filter { ($0.scene ?? "regular") != "evening_study" }
+    }
+
+    private var totalStudentCount: Int {
+        target.status == "present" ? presentList.count : nonPresentList.count
+    }
 
     var body: some View {
         NavigationStack {
@@ -2742,190 +2766,74 @@ private struct TeacherStatDetailSheet: View {
                 } else if target.status == "present" {
                     if presentList.isEmpty {
                         ContentUnavailableView("暂无出勤记录", systemImage: "checkmark.circle")
-                    } else if detailColumns == 2 {
+                    } else {
                         ScrollView {
-                            LazyVGrid(
-                                columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-                                spacing: 10
-                            ) {
-                                ForEach(presentList) { s in
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                            Text(s.name)
-                                                .font(.subheadline.weight(.semibold))
-                                                .lineLimit(1)
-                                            Spacer(minLength: 2)
-                                            if let rate = s.attendanceRate?.value {
-                                                StatusBadge(
-                                                    text: String(format: "%.0f%%", rate),
-                                                    color: rate >= 95 ? .green : .orange
-                                                )
-                                            }
+                            VStack(spacing: 12) {
+                                detailHeaderBar
+                                if detailColumns == 2 {
+                                    LazyVGrid(
+                                        columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                                        spacing: 10
+                                    ) {
+                                        ForEach(presentList) { s in
+                                            presentCompactCard(s)
                                         }
-                                        Text("\(s.className ?? "") · \(s.studentNo ?? "")")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
                                     }
-                                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                                    .padding(10)
-                                    .background(SCTheme.cardBackground)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                } else {
+                                    LazyVStack(spacing: 10) {
+                                        ForEach(presentList) { s in
+                                            presentFullCard(s)
+                                        }
+                                    }
                                 }
                             }
                             .padding()
                         }
                         .background(SCTheme.background.ignoresSafeArea())
-                    } else {
-                        List(presentList) { s in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(s.name).font(.subheadline.weight(.semibold))
-                                    Text("\(s.className ?? "") · \(s.studentNo ?? "")")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if let rate = s.attendanceRate?.value {
-                                    StatusBadge(text: String(format: "%.1f%%", rate), color: rate >= 95 ? .green : .orange)
-                                }
-                            }
-                        }
                     }
                 } else if nonPresentList.isEmpty {
                     ContentUnavailableView("暂无考勤记录", systemImage: "checkmark.circle")
-                } else if detailColumns == 2 {
+                } else {
                     ScrollView {
-                        LazyVGrid(
-                            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-                            spacing: 10
-                        ) {
-                            ForEach(nonPresentList) { s in
-                                VStack(alignment: .leading, spacing: 5) {
-                                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                        Text(formattedStudentTitle(s))
-                                            .font(.subheadline.weight(.semibold))
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.85)
-                                        Spacer(minLength: 2)
-                                    }
-                                    if let cls = s.className, !cls.isEmpty {
-                                        Text(cls)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    if let detail = s.detail, !detail.isEmpty {
-                                        Text(compactDetailText(detail))
-                                            .font(.caption2)
-                                            .foregroundStyle(.orange)
-                                            .lineLimit(3)
-                                    }
-                                    if let remark = extractedStudentRemark(s) {
-                                        Text("备注：\(remark)")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                    }
-                                    if scope != "today", let recs = s.records, !recs.isEmpty {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            ForEach(recs.prefix(3)) { rec in
-                                                let dateText = rec.dateKey
-                                                let recDetail = compactDetailText(rec.resolvedDetailText)
-                                                Text(recDetail.isEmpty ? dateText : "\(dateText) · \(recDetail)")
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                                    .lineLimit(1)
-                                            }
-                                            if recs.count > 3 {
-                                                Text("共 \(recs.count) 条")
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.tertiary)
-                                            }
-                                        }
+                        VStack(spacing: 12) {
+                            detailHeaderBar
+                            if detailColumns == 2 {
+                                LazyVGrid(
+                                    columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                                    spacing: 10
+                                ) {
+                                    ForEach(nonPresentList) { s in
+                                        let display = StatDetailStudentDisplay.build(
+                                            from: s,
+                                            scope: scope,
+                                            classPeriods: regularPeriods,
+                                            timeSlots: timeSlots
+                                        )
+                                        nonPresentCompactCard(s, display: display)
                                     }
                                 }
-                                .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
-                                .padding(10)
-                                .background(SCTheme.cardBackground)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            } else {
+                                LazyVStack(spacing: 10) {
+                                    ForEach(nonPresentList) { s in
+                                        let display = StatDetailStudentDisplay.build(
+                                            from: s,
+                                            scope: scope,
+                                            classPeriods: regularPeriods,
+                                            timeSlots: timeSlots
+                                        )
+                                        nonPresentFullCard(s, display: display)
+                                    }
+                                }
                             }
                         }
                         .padding()
                     }
                     .background(SCTheme.background.ignoresSafeArea())
-                } else {
-                    List(nonPresentList) { s in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(formattedStudentTitle(s))
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer()
-                                Text(s.className ?? "")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let detail = s.detail, !detail.isEmpty {
-                                Text(compactDetailText(detail))
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                            }
-                            if let remark = extractedStudentRemark(s) {
-                                Text("备注：\(remark)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            if scope != "today", let recs = s.records, !recs.isEmpty {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    ForEach(recs.prefix(5)) { rec in
-                                        let dateText = rec.dateKey
-                                        let recDetail = compactDetailText(rec.resolvedDetailText)
-                                        Text(recDetail.isEmpty ? dateText : "\(dateText) · \(recDetail)")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                    }
-                                    if recs.count > 5 {
-                                        Text("共 \(recs.count) 条记录")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                }
-                                .padding(.top, 2)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
                 }
             }
             .navigationTitle(target.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 2) {
-                        ForEach([1, 2], id: \.self) { cols in
-                            let active = detailColumns == cols
-                            Button {
-                                withAnimation(.snappy(duration: 0.18)) {
-                                    detailColumns = cols
-                                }
-                            } label: {
-                                Text("\(cols)列")
-                                    .font(.caption2.weight(active ? .semibold : .regular))
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 4)
-                                    .background(active ? SCTheme.primary : Color.clear)
-                                    .foregroundStyle(active ? .white : .secondary)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(2)
-                    .background(Color(.tertiarySystemFill))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("关闭") { dismiss() }
                 }
@@ -2952,33 +2860,523 @@ private struct TeacherStatDetailSheet: View {
         }
     }
 
+    /// 顶部控制栏：与「考勤情况」完全一致的 1列/2列 切换交互，持久化记忆
+    private var detailHeaderBar: some View {
+        HStack {
+            Text("共 \(totalStudentCount) 人")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+            HStack(spacing: 2) {
+                ForEach([1, 2], id: \.self) { cols in
+                    let active = detailColumns == cols
+                    Button {
+                        withAnimation(.snappy(duration: 0.18)) {
+                            detailColumns = cols
+                        }
+                    } label: {
+                        Text("\(cols)列")
+                            .font(.caption2.weight(active ? .semibold : .regular))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(active ? SCTheme.primary : Color.clear)
+                            .foregroundStyle(active ? .white : .secondary)
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(2)
+            .background(Color(.tertiarySystemFill))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+    }
+
+    private func presentFullCard(_ s: PresentDetailStudent) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.name).font(.subheadline.weight(.semibold))
+                Text("\(s.className ?? "") · \(s.studentNo ?? "")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let rate = s.attendanceRate?.value {
+                StatusBadge(text: String(format: "%.1f%%", rate), color: rate >= 95 ? .green : .orange)
+            }
+        }
+        .padding(12)
+        .background(SCTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func presentCompactCard(_ s: PresentDetailStudent) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(s.name)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                if let rate = s.attendanceRate?.value {
+                    StatusBadge(
+                        text: String(format: "%.0f%%", rate),
+                        color: rate >= 95 ? .green : .orange
+                    )
+                }
+            }
+            Text("\(s.className ?? "") · \(s.studentNo ?? "")")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(10)
+        .background(SCTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func nonPresentFullCard(_ s: NonPresentDetailStudent, display: StatDetailStudentDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(formattedStudentTitle(s))
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(s.className ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !display.summaryHeadline.isEmpty {
+                Text(display.summaryHeadline)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.orange)
+            }
+            if let remark = display.remark, !remark.isEmpty {
+                Text("备注：\(remark)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if !display.spanLines.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(display.spanLines.prefix(6)) { line in
+                        Text(line.fullText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    if display.spanLines.count > 6 {
+                        Text("共 \(display.spanLines.count) 段记录")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.top, 1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(SCTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func nonPresentCompactCard(_ s: NonPresentDetailStudent, display: StatDetailStudentDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(formattedStudentTitle(s))
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            if let cls = s.className, !cls.isEmpty {
+                Text(cls)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if !display.summaryHeadline.isEmpty {
+                Text(display.summaryHeadline)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+            }
+            if let remark = display.remark, !remark.isEmpty {
+                Text("备注：\(remark)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if !display.spanLines.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(display.spanLines.prefix(2)) { line in
+                        Text(line.compactText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    if display.spanLines.count > 2 {
+                        Text("+\(display.spanLines.count - 2) 段")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
+        .padding(10)
+        .background(SCTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     private func formattedStudentTitle(_ student: NonPresentDetailStudent) -> String {
         if let no = student.studentNo, no.count >= 2 {
             return "\(no.suffix(2)) \(student.name)"
         }
         return student.name
     }
+}
 
-    private func extractedStudentRemark(_ student: NonPresentDetailStudent) -> String? {
-        guard let recs = student.records else { return nil }
-        let detailText = student.detail ?? ""
-        for rec in recs {
-            for raw in [rec.reason, rec.note, rec.details?.value?.text] {
-                if let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !trimmed.isEmpty,
-                   !detailText.contains(trimmed) {
-                    return trimmed
-                }
-            }
-        }
-        return nil
+/// 各类考勤明细的学生记录两级聚合器：
+/// 1) 同日同批次多节记录先合并为单日条目（消除跨天请假重复刷屏与“45次”计数 Bug）；
+/// 2) 连续日期的同批次/同内容条目再折叠为日期段（如「11-23 至 11-27（5天）· 自请 · 早读、早操、第1-6节、晚操 (每天9节)」）。
+private struct StatDetailStudentDisplay {
+    struct SpanLine: Identifiable {
+        let id: String
+        let fullText: String
+        let compactText: String
     }
 
-    private func compactDetailText(_ raw: String) -> String {
+    let summaryHeadline: String
+    let remark: String?
+    let spanLines: [SpanLine]
+
+    private struct DayEntry {
+        let dateKey: String
+        let batchKey: String?
+        let sourceLabel: String
+        let periodLabel: String
+        let periodCount: Int
+        let hasExplicitPeriods: Bool
+        let remark: String?
+    }
+
+    static func build(
+        from student: NonPresentDetailStudent,
+        scope: String,
+        classPeriods: [ClassPeriod],
+        timeSlots: [TimeSlot]
+    ) -> StatDetailStudentDisplay {
+        let rawRecords = student.records ?? []
+        guard !rawRecords.isEmpty else {
+            return StatDetailStudentDisplay(
+                summaryHeadline: compactFallbackDetail(student.detail ?? ""),
+                remark: nil,
+                spanLines: []
+            )
+        }
+
+        // 1. 按同日同批次分组
+        var groupOrder: [String] = []
+        var grouped: [String: [AttendanceRecord]] = [:]
+        for rec in rawRecords {
+            let dk = rec.dateKey
+            let src = normalizedSourceTag(rec)
+            let scene = rec.scene ?? "regular"
+            let key: String
+            if let batch = rec.leaveBatchId, !batch.isEmpty {
+                key = "\(dk)|batch:\(batch)|\(scene)|\(rec.leaveTypeId ?? 0)|\(rec.status)"
+            } else if rec.periodId != nil && src != "点名" {
+                key = "\(dk)|periods|\(scene)|\(rec.leaveTypeId ?? 0)|\(rec.status)|\(src)"
+            } else {
+                let idsKey = rec.extractedPeriodIds(classPeriods: classPeriods).map(String.init).joined(separator: ",")
+                let optKey = rec.details?.value?.option ?? rec.details?.value?.displayLabel ?? rec.details?.value?.rollCallType ?? ""
+                key = "\(dk)|single|\(scene)|\(rec.leaveTypeId ?? 0)|\(rec.status)|\(src)|\(idsKey)|\(optKey)|\(rec.details?.value?.text ?? "")"
+            }
+            if grouped[key] == nil {
+                groupOrder.append(key)
+                grouped[key] = []
+            }
+            grouped[key]?.append(rec)
+        }
+
+        var dayEntries: [DayEntry] = []
+        for key in groupOrder {
+            guard let recs = grouped[key], let first = recs.first else { continue }
+            let dk = first.dateKey
+            let sourceLabel = normalizedSourceTag(first)
+
+            var periodIdSet = Set<Int>()
+            var detailNames: [String] = []
+            var explicitOptionPeriods = 0
+            var foundRemark: String? = nil
+
+            for r in recs {
+                for pid in r.extractedPeriodIds(classPeriods: classPeriods) {
+                    periodIdSet.insert(pid)
+                }
+                if let pNames = r.details?.value?.periodNames {
+                    for n in pNames where !n.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if !detailNames.contains(n) { detailNames.append(n) }
+                    }
+                }
+                if let op = r.details?.value?.optionPeriods?.value, op > explicitOptionPeriods {
+                    explicitOptionPeriods = op
+                }
+                if foundRemark == nil {
+                    for candidate in [r.reason, r.note, r.details?.value?.text] {
+                        if let t = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                            foundRemark = t
+                            break
+                        }
+                    }
+                }
+            }
+
+            let sortedPeriodIds = periodIdSet.sorted()
+            let periodCount: Int
+            let hasExplicit: Bool
+            if !sortedPeriodIds.isEmpty {
+                periodCount = sortedPeriodIds.count
+                hasExplicit = true
+            } else if !detailNames.isEmpty {
+                periodCount = detailNames.count
+                hasExplicit = true
+            } else if explicitOptionPeriods > 0 {
+                periodCount = explicitOptionPeriods
+                hasExplicit = true
+            } else if sourceLabel == "点名" {
+                periodCount = recs.count
+                hasExplicit = true
+            } else {
+                periodCount = 0
+                hasExplicit = false
+            }
+
+            let periodLabel = buildDayPeriodLabel(
+                primary: first,
+                sourceLabel: sourceLabel,
+                periodIds: sortedPeriodIds,
+                detailNames: detailNames,
+                classPeriods: classPeriods,
+                timeSlots: timeSlots
+            )
+
+            dayEntries.append(DayEntry(
+                dateKey: dk,
+                batchKey: first.leaveBatchId?.isEmpty == false ? first.leaveBatchId : nil,
+                sourceLabel: sourceLabel,
+                periodLabel: periodLabel,
+                periodCount: periodCount,
+                hasExplicitPeriods: hasExplicit,
+                remark: foundRemark
+            ))
+        }
+
+        dayEntries.sort {
+            if $0.dateKey != $1.dateKey { return $0.dateKey < $1.dateKey }
+            return $0.sourceLabel < $1.sourceLabel
+        }
+
+        // 提取学生级去重备注
+        let studentRemark = dayEntries.compactMap(\.remark).first
+
+        // 2. 跨天连续日期折叠
+        struct SpanBucket {
+            var startDate: String
+            var endDate: String
+            var batchKey: String?
+            var sourceLabel: String
+            var periodLabel: String
+            var dayCount: Int
+            var totalPeriods: Int
+            var perDayPeriodCounts: Set<Int>
+            var hasExplicitPeriods: Bool
+        }
+
+        var buckets: [SpanBucket] = []
+        for entry in dayEntries {
+            if let lastIdx = buckets.indices.last {
+                let last = buckets[lastIdx]
+                let isNextDay = isConsecutiveDate(last.endDate, entry.dateKey)
+                let sameBatch = (last.batchKey != nil && last.batchKey == entry.batchKey)
+                let sameVisual = (last.sourceLabel == entry.sourceLabel && last.periodLabel == entry.periodLabel)
+                if isNextDay && (sameBatch || (last.batchKey == nil && entry.batchKey == nil && sameVisual)) {
+                    buckets[lastIdx].endDate = entry.dateKey
+                    buckets[lastIdx].dayCount += 1
+                    buckets[lastIdx].totalPeriods += entry.periodCount
+                    if entry.periodCount > 0 {
+                        buckets[lastIdx].perDayPeriodCounts.insert(entry.periodCount)
+                    }
+                    buckets[lastIdx].hasExplicitPeriods = buckets[lastIdx].hasExplicitPeriods || entry.hasExplicitPeriods
+                    if buckets[lastIdx].periodLabel != entry.periodLabel && !sameVisual {
+                        buckets[lastIdx].periodLabel = "多时段"
+                    }
+                    continue
+                }
+            }
+            buckets.append(SpanBucket(
+                startDate: entry.dateKey,
+                endDate: entry.dateKey,
+                batchKey: entry.batchKey,
+                sourceLabel: entry.sourceLabel,
+                periodLabel: entry.periodLabel,
+                dayCount: 1,
+                totalPeriods: entry.periodCount,
+                perDayPeriodCounts: entry.periodCount > 0 ? [entry.periodCount] : [],
+                hasExplicitPeriods: entry.hasExplicitPeriods
+            ))
+        }
+
+        let uniqueDays = Set(dayEntries.map(\.dateKey).filter { !$0.isEmpty }).count
+        let totalPeriods = dayEntries.reduce(0) { $0 + $1.periodCount }
+        let anyExplicit = dayEntries.contains(where: \.hasExplicitPeriods)
+
+        // 生成简洁的顶部摘要
+        let summaryHeadline: String
+        if scope == "today" {
+            let todayParts = dayEntries.map { e -> String in
+                let countSuffix = (e.hasExplicitPeriods && e.periodCount > 1 && !e.periodLabel.contains("节)"))
+                    ? " (\(e.periodCount)节)" : ""
+                return e.periodLabel.isEmpty ? e.sourceLabel : "\(e.sourceLabel) · \(e.periodLabel)\(countSuffix)"
+            }
+            summaryHeadline = todayParts.joined(separator: " | ")
+        } else if uniqueDays > 0 && anyExplicit && totalPeriods > 0 {
+            summaryHeadline = "\(uniqueDays)天 · \(totalPeriods)节"
+        } else if uniqueDays > 0 {
+            summaryHeadline = "\(uniqueDays)天"
+        } else {
+            summaryHeadline = compactFallbackDetail(student.detail ?? "")
+        }
+
+        // 今日范围单条信息已在顶部摘要展示，不再重复展示日期行
+        if scope == "today" && buckets.count <= 1 {
+            return StatDetailStudentDisplay(
+                summaryHeadline: summaryHeadline,
+                remark: studentRemark,
+                spanLines: []
+            )
+        }
+
+        let spanLines: [SpanLine] = buckets.enumerated().map { idx, b in
+            let startShort = shortMonthDay(b.startDate)
+            let endShort = shortMonthDay(b.endDate)
+            let datePart = (b.dayCount > 1 && startShort != endShort)
+                ? "\(startShort) 至 \(endShort)（\(b.dayCount)天）"
+                : startShort
+
+            let periodSuffix: String
+            if b.dayCount > 1 && b.hasExplicitPeriods {
+                if b.perDayPeriodCounts.count == 1, let perDay = b.perDayPeriodCounts.first, perDay > 1 {
+                    periodSuffix = " (每天\(perDay)节)"
+                } else if b.totalPeriods > 0 {
+                    periodSuffix = " (共\(b.totalPeriods)节)"
+                } else {
+                    periodSuffix = ""
+                }
+            } else if b.hasExplicitPeriods && b.totalPeriods > 1 && !b.periodLabel.contains("节)") {
+                periodSuffix = " (\(b.totalPeriods)节)"
+            } else {
+                periodSuffix = ""
+            }
+
+            let detailPart = b.periodLabel.isEmpty ? "" : " · \(b.periodLabel)\(periodSuffix)"
+            let full = "\(datePart) · \(b.sourceLabel)\(detailPart)"
+            let compact = b.dayCount > 1
+                ? "\(datePart) · \(b.sourceLabel)"
+                : "\(datePart) · \(b.periodLabel.isEmpty ? b.sourceLabel : b.periodLabel)"
+            return SpanLine(id: "\(idx)-\(b.startDate)-\(b.endDate)", fullText: full, compactText: compact)
+        }
+
+        return StatDetailStudentDisplay(
+            summaryHeadline: summaryHeadline,
+            remark: studentRemark,
+            spanLines: spanLines
+        )
+    }
+
+    private static func normalizedSourceTag(_ rec: AttendanceRecord) -> String {
+        if rec.isSelfApplied?.value == true || rec.sourceType == "self_applied" || rec.sourceType == "leave_request" {
+            return "自请"
+        }
+        if rec.sourceType == "roll_call" {
+            return "点名"
+        }
+        return "登记"
+    }
+
+    private static func buildDayPeriodLabel(
+        primary: AttendanceRecord,
+        sourceLabel: String,
+        periodIds: [Int],
+        detailNames: [String],
+        classPeriods: [ClassPeriod],
+        timeSlots: [TimeSlot]
+    ) -> String {
+        if sourceLabel == "点名" {
+            let rcType = primary.details?.value?.rollCallType?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let rcTime = primary.details?.value?.rollCallTime?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !rcType.isEmpty {
+                return rcTime.isEmpty ? rcType : "\(rcType) (\(rcTime))"
+            }
+            return "点名记录"
+        }
+        if !periodIds.isEmpty, !classPeriods.isEmpty {
+            let summary = PeriodFormatter.formatDetailedPeriodSummary(
+                periodIds: periodIds,
+                periods: classPeriods,
+                timeSlots: timeSlots,
+                preferredSlotName: primary.details?.value?.timeSlotName
+            )
+            if !summary.isEmpty {
+                return summary
+            }
+        }
+        if !detailNames.isEmpty {
+            let merged = PeriodFormatter.mergePeriodNames(detailNames, separator: "、")
+            if !merged.isEmpty { return merged }
+        }
+        for candidate in [
+            primary.details?.value?.timeSlotName,
+            primary.details?.value?.displayLabel,
+            primary.details?.value?.optionLabel,
+            primary.periodNameSnapshot
+        ] {
+            if let s = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+                let compacted = PeriodFormatter.compactCalendarOption(s).option
+                if !compacted.isEmpty { return compacted }
+            }
+        }
+        if let opt = primary.details?.value?.option {
+            switch opt {
+            case "morning_half": return "上午"
+            case "afternoon_half": return "下午"
+            case "full_day", "all_day": return "全天"
+            case "morning_exercise": return "早操"
+            case "evening_exercise": return "晚操"
+            default: break
+            }
+        }
+        return "全天"
+    }
+
+    private static func isConsecutiveDate(_ d1: String, _ d2: String) -> Bool {
+        guard let date1 = SCDateFormatter.yyyyMMdd.date(from: d1),
+              let date2 = SCDateFormatter.yyyyMMdd.date(from: d2) else {
+            return false
+        }
+        let diff = Calendar(identifier: .gregorian).dateComponents([.day], from: date1, to: date2).day
+        return diff == 1
+    }
+
+    private static func shortMonthDay(_ ymd: String) -> String {
+        if ymd.count == 10 {
+            return String(ymd.dropFirst(5))
+        }
+        return ymd
+    }
+
+    private static func compactFallbackDetail(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let segments = trimmed.components(separatedBy: " | ")
-        let formatted = segments.map { segment -> String in
+        return segments.map { segment -> String in
             if let colonRange = segment.range(of: "：") {
                 let prefix = String(segment[..<colonRange.upperBound])
                 let body = String(segment[colonRange.upperBound...])
@@ -2991,8 +3389,7 @@ private struct TeacherStatDetailSheet: View {
                 }
             }
             return segment
-        }
-        return formatted.joined(separator: " | ")
+        }.joined(separator: " | ")
     }
 }
 

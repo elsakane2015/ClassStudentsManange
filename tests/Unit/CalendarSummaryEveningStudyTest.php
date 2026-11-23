@@ -309,4 +309,51 @@ class CalendarSummaryEveningStudyTest extends TestCase
             AttendanceController::resolveCalendarSummaryNote($textOnly, ['text' => '技能训练'], '技能训练', null)
         );
     }
+
+    public function test_summarizes_multi_day_multi_period_student_details_without_duplicate_rows(): void
+    {
+        $periodMap = [
+            1 => ['id' => 1, 'name' => '早读'],
+            2 => ['id' => 2, 'name' => '早操'],
+            3 => ['id' => 3, 'name' => '第1节'],
+            4 => ['id' => 4, 'name' => '第2节'],
+            5 => ['id' => 5, 'name' => '第3节'],
+            6 => ['id' => 6, 'name' => '第4节'],
+            7 => ['id' => 7, 'name' => '第5节'],
+            8 => ['id' => 8, 'name' => '第6节'],
+            9 => ['id' => 9, 'name' => '晚操'],
+        ];
+
+        // 模拟学生跨 5 天每天 9 节自主申请（共 45 条按单节存的记录）
+        $records = [];
+        $id = 1;
+        foreach (['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27'] as $date) {
+            for ($pid = 1; $pid <= 9; $pid++) {
+                $rec = new AttendanceRecord();
+                $rec->setRawAttributes([
+                    'id' => $id++,
+                    'date' => $date,
+                    'period_id' => $pid,
+                    'status' => 'leave',
+                    'leave_type_id' => 4,
+                    'leave_batch_id' => 'batch-qyx-5days',
+                    'is_self_applied' => true,
+                    'source_type' => 'self_applied',
+                    'scene' => 'regular',
+                    'reason' => '技能训练',
+                    'details' => json_encode(['display_label' => '全天']),
+                ]);
+                $records[] = $rec;
+            }
+        }
+
+        $summary = AttendanceController::summarizeStudentDetailRecords($records, 'week', $periodMap);
+        $this->assertSame('5天 · 45节', $summary['detail']);
+        $this->assertSame(5, $summary['day_count']);
+        $this->assertSame(45, $summary['period_count']);
+        $this->assertCount(5, $summary['records']);
+        $this->assertSame('2026-11-23', $summary['records'][0]['date']);
+        $this->assertSame('2026-11-27', $summary['records'][4]['date']);
+        $this->assertSame('申请：早读、早操、第1-6节、晚操 (9节)', $summary['records'][0]['detail']);
+    }
 }
