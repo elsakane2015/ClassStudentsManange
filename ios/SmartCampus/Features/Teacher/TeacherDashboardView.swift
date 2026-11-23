@@ -228,16 +228,19 @@ struct TeacherDashboardView: View {
                         if let leavesDict = stats.details?.leaves?.dictionary, !leavesDict.isEmpty {
                             SCCard {
                                 VStack(alignment: .leading, spacing: 10) {
-                                    Text("各类考勤异常分布")
+                                    Text("各类考勤")
                                         .font(.subheadline.weight(.semibold))
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 8)], spacing: 8) {
                                         ForEach(leavesDict.sorted(by: { $0.key < $1.key }), id: \.key) { name, summaryText in
                                             let matchedType = leaveTypes.first { $0.name == name }
+                                            let resolvedStatus = resolvedStatDetailStatus(forName: name, matchedType: matchedType)
+                                            let resolvedLeaveTypeId = (resolvedStatus == "leave") ? matchedType?.id : nil
+                                            let badgeColor = SCTheme.color(for: matchedType?.resolvedColorKey ?? fallbackColorKey(forName: name))
                                             Button {
                                                 statDetailTarget = StatDetailTarget(
                                                     title: "\(name)明细",
-                                                    status: matchedType?.slug,
-                                                    leaveTypeId: matchedType?.id
+                                                    status: resolvedStatus,
+                                                    leaveTypeId: resolvedLeaveTypeId
                                                 )
                                             } label: {
                                                 HStack {
@@ -247,11 +250,11 @@ struct TeacherDashboardView: View {
                                                     Spacer()
                                                     Text(summaryText.value)
                                                         .font(.caption.bold())
-                                                        .foregroundStyle(SCTheme.color(for: matchedType?.color ?? "blue"))
+                                                        .foregroundStyle(badgeColor)
                                                 }
                                                 .padding(.horizontal, 10)
                                                 .padding(.vertical, 8)
-                                                .background(SCTheme.color(for: matchedType?.color ?? "blue").opacity(0.1))
+                                                .background(badgeColor.opacity(0.1))
                                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                             }
                                             .buttonStyle(.plain)
@@ -960,7 +963,8 @@ struct TeacherDashboardView: View {
             }
             details["period_ids"] = sortedPeriodIds
             details["period_names"] = names
-            details["option_label"] = names.joined(separator: "、")
+            let mergedLabel = PeriodFormatter.mergePeriodNames(names, separator: "、")
+            details["option_label"] = names.count > 1 ? "\(mergedLabel) (\(names.count)节)" : mergedLabel
             details["is_custom"] = true
         }
         if let existingNote, !existingNote.isEmpty {
@@ -1096,6 +1100,24 @@ struct TeacherDashboardView: View {
         }
     }
 
+    private func resolvedStatDetailStatus(forName name: String, matchedType: LeaveType?) -> String {
+        if let matchedType {
+            return matchedType.mappedAttendanceStatus
+        }
+        if name.contains("旷课") || name.contains("缺勤") { return "absent" }
+        if name.contains("迟到") { return "late" }
+        if name.contains("早退") { return "early_leave" }
+        return "leave"
+    }
+
+    private func fallbackColorKey(forName name: String) -> String {
+        if name.contains("旷课") || name.contains("缺勤") { return "red" }
+        if name.contains("迟到") || name.contains("早退") { return "orange" }
+        if name.contains("病假") { return "purple" }
+        if name.contains("生理") { return "pink" }
+        return "blue"
+    }
+
     private func showQuickToast(_ text: String) {
         withAnimation(.snappy(duration: 0.22)) {
             quickToastMessage = text
@@ -1127,147 +1149,148 @@ private struct SummarySwipeableRecordRow: View {
 
     private let actionWidth: CGFloat = 78
 
-    @State private var dragDelta: CGFloat = 0
-    @State private var dragAxis: DragAxis? = nil
-
-    private enum DragAxis {
-        case horizontal
-        case vertical
+    private enum SwipeSnapTarget: Hashable {
+        case closed
+        case open
     }
 
-    private var currentOffset: CGFloat {
-        let base: CGFloat = isOpen ? -actionWidth : 0
-        return min(0, max(-actionWidth - 18, base + dragDelta))
-    }
+    @State private var scrollTarget: SwipeSnapTarget? = .closed
 
     private var isEveningStudyRecord: Bool {
         record.option?.contains("夜自习") == true
     }
 
     var body: some View {
-        ZStack(alignment: .trailing) {
-            // 底层红色删除按钮（仅在左滑揭开时展示，静止时完全隐藏避免透红）
-            if currentOffset < -1 || isOpen {
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    VStack(spacing: 3) {
-                        if isBusy {
-                            ProgressView()
-                                .tint(.white)
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: "trash.fill")
-                                .font(.subheadline)
-                            Text("删除")
-                                .font(.caption2.weight(.semibold))
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .frame(width: actionWidth)
-                    .frame(maxHeight: .infinity)
-                    .background(Color.red)
-                }
-                .buttonStyle(.plain)
-                .disabled(isBusy)
-                .allowsHitTesting(isOpen && !isBusy)
-            }
+        // 使用原生嵌套水平 ScrollView + 双锚点吸附替代自定义 DragGesture，
+        // 交由 UIKit UIScrollView 原生方向锁与外层纵向 ScrollView 协调，彻底根治上下滑卡顿
+        ScrollView(.horizontal, showsIndicators: false) {
+            ZStack(alignment: .leading) {
+                // 1. 隐形高度基准层：随单行/多行文案动态撑开自然高度
+                rowContent
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .containerRelativeFrame(.horizontal)
+                    .hidden()
+                    .allowsHitTesting(false)
 
-            // 前景记录卡片（不透明底色 + 浅灰叠层，兼顾原有视觉与遮挡底层）
-            rowContent
-                .background(
-                    ZStack {
-                        SCTheme.cardBackground
-                        Color(.tertiarySystemFill).opacity(0.65)
-                    }
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .offset(x: currentOffset)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if isOpen {
-                        onSetOpen(false)
-                    } else if !isBusy {
-                        onTap()
-                    }
+                // 2. 原生吸附轨道：closed(leading=0, w=78) + open(leading=78, w=容器宽)，
+                //    总宽正好等于「容器宽 + 78」，吸附分界线精准位于 39pt
+                HStack(spacing: 0) {
+                    Color.clear
+                        .frame(width: actionWidth)
+                        .id(SwipeSnapTarget.closed)
+                    Color.clear
+                        .containerRelativeFrame(.horizontal)
+                        .id(SwipeSnapTarget.open)
                 }
-                .contextMenu {
-                    if !isEveningStudyRecord && !activeLeaveTypes.isEmpty {
-                        Section("快捷修改考勤类型") {
-                            ForEach(activeLeaveTypes) { lt in
-                                let isCurrent = (lt.name == record.type)
-                                Button {
-                                    if !isCurrent {
-                                        onQuickChangeType(lt)
-                                    }
-                                } label: {
-                                    if isCurrent {
-                                        Label("\(lt.name)（当前）", systemImage: "checkmark")
-                                    } else {
-                                        Label("改为 \(lt.name)", systemImage: iconName(for: lt))
-                                    }
+                .scrollTargetLayout()
+                .allowsHitTesting(false)
+
+                // 3. 真实交互层：左侧 100% 卡片 + 右侧 78pt 红色删除按钮
+                HStack(spacing: 0) {
+                    Button {
+                        if scrollTarget == .open || isOpen {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                scrollTarget = .closed
+                            }
+                            onSetOpen(false)
+                        } else if !isBusy {
+                            onTap()
+                        }
+                    } label: {
+                        rowContent
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                ZStack {
+                                    SCTheme.cardBackground
+                                    Color(.tertiarySystemFill).opacity(0.65)
                                 }
-                                .disabled(isCurrent || isBusy)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contextMenu {
+                        if !isEveningStudyRecord && !activeLeaveTypes.isEmpty {
+                            Section("快捷修改考勤类型") {
+                                ForEach(activeLeaveTypes) { lt in
+                                    let isCurrent = (lt.name == record.type)
+                                    Button {
+                                        if !isCurrent {
+                                            onQuickChangeType(lt)
+                                        }
+                                    } label: {
+                                        if isCurrent {
+                                            Label("\(lt.name)（当前）", systemImage: "checkmark")
+                                        } else {
+                                            Label("改为 \(lt.name)", systemImage: iconName(for: lt))
+                                        }
+                                    }
+                                    .disabled(isCurrent || isBusy)
+                                }
                             }
                         }
-                    }
 
-                    Divider()
+                        Divider()
 
-                    Button {
-                        onTap()
-                    } label: {
-                        Label("详细编辑（节次 / 备注）", systemImage: "slider.horizontal.3")
+                        Button {
+                            onTap()
+                        } label: {
+                            Label("详细编辑（节次 / 备注）", systemImage: "slider.horizontal.3")
+                        }
+
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            Label("删除此记录", systemImage: "trash")
+                        }
+                        .disabled(isBusy)
                     }
+                    .containerRelativeFrame(.horizontal)
 
                     Button(role: .destructive) {
                         onDelete()
                     } label: {
-                        Label("删除此记录", systemImage: "trash")
+                        VStack(spacing: 3) {
+                            if isBusy {
+                                ProgressView()
+                                    .tint(.white)
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "trash.fill")
+                                    .font(.subheadline)
+                                Text("删除")
+                                    .font(.caption2.weight(.semibold))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .frame(width: actionWidth)
+                        .frame(maxHeight: .infinity)
+                        .background(Color.red)
                     }
+                    .buttonStyle(.plain)
                     .disabled(isBusy)
                 }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 14, coordinateSpace: .global)
-                        .onChanged { value in
-                            guard !isBusy else { return }
-                            let tx = value.translation.width
-                            let ty = value.translation.height
-                            if dragAxis == nil {
-                                if abs(tx) > abs(ty) * 1.25 {
-                                    dragAxis = .horizontal
-                                } else if abs(ty) > abs(tx) {
-                                    dragAxis = .vertical
-                                    if isOpen {
-                                        onSetOpen(false)
-                                    }
-                                }
-                            }
-                            guard dragAxis == .horizontal else { return }
-                            // 未展开时只响应向左滑；已展开时响应左右微调
-                            if !isOpen && tx > 0 {
-                                dragDelta = 0
-                            } else {
-                                dragDelta = tx
-                            }
-                        }
-                        .onEnded { value in
-                            defer {
-                                dragAxis = nil
-                                withAnimation(.snappy(duration: 0.22)) {
-                                    dragDelta = 0
-                                }
-                            }
-                            guard dragAxis == .horizontal, !isBusy else { return }
-                            let base: CGFloat = isOpen ? -actionWidth : 0
-                            let projected = base + value.predictedEndTranslation.width
-                            let ended = base + value.translation.width
-                            let shouldOpen = ended < -(actionWidth * 0.45) || projected < -(actionWidth * 0.7)
-                            onSetOpen(shouldOpen)
-                        }
-                )
+            }
         }
+        .scrollTargetBehavior(.viewAligned)
+        .scrollPosition(id: $scrollTarget)
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .scrollDisabled(isBusy)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onChange(of: scrollTarget) { _, newValue in
+            let nowOpen = (newValue == .open)
+            if nowOpen != isOpen {
+                onSetOpen(nowOpen)
+            }
+        }
+        .onChange(of: isOpen) { _, newOpen in
+            let desired: SwipeSnapTarget = newOpen ? .open : .closed
+            if scrollTarget != desired {
+                withAnimation(.snappy(duration: 0.22)) {
+                    scrollTarget = desired
+                }
+            }
+        }
     }
 
     private var rowContent: some View {
@@ -1288,12 +1311,20 @@ private struct SummarySwipeableRecordRow: View {
                         .foregroundStyle(SCTheme.color(for: record.displayColorKey))
                         .lineLimit(2)
                 }
-                Text(record.studentShortLabel)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
+                HStack(spacing: 4) {
+                    Text(record.studentShortLabel)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                    if let note = record.displayNote, !note.isEmpty {
+                        Text("· \(note)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
             if isBusy {
                 ProgressView()
@@ -2387,20 +2418,40 @@ private struct TeacherStatDetailSheet: View {
                     ContentUnavailableView("暂无异常记录", systemImage: "checkmark.circle")
                 } else {
                     List(nonPresentList) { s in
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 5) {
                             HStack {
-                                Text(s.name).font(.subheadline.weight(.semibold))
+                                Text(formattedStudentTitle(s))
+                                    .font(.subheadline.weight(.semibold))
                                 Spacer()
                                 Text(s.className ?? "")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             if let detail = s.detail, !detail.isEmpty {
-                                Text(detail)
+                                Text(compactDetailText(detail))
                                     .font(.caption)
                                     .foregroundStyle(.orange)
                             }
+                            if scope != "today", let recs = s.records, !recs.isEmpty {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    ForEach(recs.prefix(5)) { rec in
+                                        let dateText = rec.dateKey
+                                        let recDetail = compactDetailText(rec.resolvedDetailText)
+                                        Text(recDetail.isEmpty ? dateText : "\(dateText) · \(recDetail)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                    if recs.count > 5 {
+                                        Text("共 \(recs.count) 条记录")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                .padding(.top, 2)
+                            }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
             }
@@ -2431,6 +2482,34 @@ private struct TeacherStatDetailSheet: View {
                 }
             }
         }
+    }
+
+    private func formattedStudentTitle(_ student: NonPresentDetailStudent) -> String {
+        if let no = student.studentNo, no.count >= 2 {
+            return "\(no.suffix(2)) \(student.name)"
+        }
+        return student.name
+    }
+
+    private func compactDetailText(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let segments = trimmed.components(separatedBy: " | ")
+        let formatted = segments.map { segment -> String in
+            if let colonRange = segment.range(of: "：") {
+                let prefix = String(segment[..<colonRange.upperBound])
+                let body = String(segment[colonRange.upperBound...])
+                let compacted = PeriodFormatter.compactCalendarOption(body)
+                if let note = compacted.note, !note.isEmpty, !compacted.option.isEmpty {
+                    return "\(prefix)\(compacted.option) · \(note)"
+                }
+                if !compacted.option.isEmpty {
+                    return "\(prefix)\(compacted.option)"
+                }
+            }
+            return segment
+        }
+        return formatted.joined(separator: " | ")
     }
 }
 

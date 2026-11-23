@@ -126,6 +126,7 @@ import com.litotime.smartcampus.core.designsystem.SCCard
 import com.litotime.smartcampus.core.designsystem.StatMetricCard
 import com.litotime.smartcampus.core.designsystem.StatusBadge
 import com.litotime.smartcampus.core.designsystem.statusColor
+import com.litotime.smartcampus.core.util.PeriodFormatter
 import com.litotime.smartcampus.core.util.SCDateFormatter
 import com.litotime.smartcampus.data.model.*
 import kotlinx.coroutines.delay
@@ -584,17 +585,31 @@ fun TeacherDashboardScreen(
 
                 if (st.leavesBreakdown.isNotEmpty()) {
                     SCCard {
-                        Text("各类考勤异常分布", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text("各类考勤", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             st.leavesBreakdown.entries.sortedBy { it.key }.forEach { (name, summaryText) ->
                                 val matched = leaveTypes.firstOrNull { it.name == name }
-                                val tint = statusColor(matched?.color ?: "blue")
+                                val resolvedStatus = matched?.mappedAttendanceStatus ?: when {
+                                    name.contains("旷课") || name.contains("缺勤") -> "absent"
+                                    name.contains("迟到") -> "late"
+                                    name.contains("早退") -> "early_leave"
+                                    else -> "leave"
+                                }
+                                val resolvedLeaveTypeId = if (resolvedStatus == "leave") matched?.id else null
+                                val fallbackColor = when {
+                                    name.contains("旷课") || name.contains("缺勤") -> "red"
+                                    name.contains("迟到") || name.contains("早退") -> "orange"
+                                    name.contains("病假") -> "purple"
+                                    name.contains("生理") -> "pink"
+                                    else -> "blue"
+                                }
+                                val tint = statusColor(matched?.resolvedColorKey ?: fallbackColor)
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
                                     color = tint.copy(alpha = 0.1f),
                                     modifier = Modifier.fillMaxWidth().clickable {
-                                        statDetailTarget = Triple("${name}明细", matched?.slug, matched?.id)
+                                        statDetailTarget = Triple("${name}明细", resolvedStatus, resolvedLeaveTypeId)
                                     }
                                 ) {
                                     Row(
@@ -1192,7 +1207,18 @@ private fun SummarySwipeableRecordRow(
                             color = statusColor(rec.displayColorKey)
                         )
                     }
-                    Text(rec.studentShortLabel, style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(rec.studentShortLabel, style = MaterialTheme.typography.labelMedium)
+                        rec.displayNote?.takeIf { it.isNotBlank() }?.let { note ->
+                            Text(
+                                "· $note",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
                 if (isBusy) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -2109,12 +2135,38 @@ private fun TeacherStatDetailModal(
                     items(otherList, key = { it.id }) { s ->
                         SCCard {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(s.name, fontWeight = FontWeight.SemiBold)
+                                Text(s.displayTitle, fontWeight = FontWeight.SemiBold)
                                 Text(s.className.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            s.detail?.takeIf { it.isNotBlank() }?.let {
+                            s.detail?.takeIf { it.isNotBlank() }?.let { detail ->
                                 Spacer(Modifier.height(4.dp))
-                                Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFEA580C))
+                                Text(
+                                    PeriodFormatter.compactDetailText(detail),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFEA580C)
+                                )
+                            }
+                            if (scopeKey != "today" && s.records.isNotEmpty()) {
+                                Spacer(Modifier.height(4.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    s.records.take(5).forEach { rec ->
+                                        val recText = PeriodFormatter.compactDetailText(rec.detailText)
+                                        Text(
+                                            if (recText.isEmpty()) rec.dateKey else "${rec.dateKey} · $recText",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (s.records.size > 5) {
+                                        Text(
+                                            "共 ${s.records.size} 条记录",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

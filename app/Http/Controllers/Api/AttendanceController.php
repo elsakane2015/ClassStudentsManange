@@ -1123,9 +1123,13 @@ class AttendanceController extends Controller
             $resolvedLabels = self::resolveCalendarSummaryLabels($record, $leaveTypes);
             $typeLabel = $resolvedLabels['type'];
 
-            // Get time option label
+            // Get time option label & optional remark note
             $optionLabel = '';
+            $noteLabel = null;
             $details = is_string($record->details) ? json_decode($record->details, true) : ($record->details ?? []);
+            if (!is_array($details)) {
+                $details = [];
+            }
             $timeSlotId = $details['time_slot_id'] ?? null;
             $isBatchPeriodRecord = $record->leave_batch_id
                 && $record->period_id
@@ -1136,56 +1140,16 @@ class AttendanceController extends Controller
                 $optionLabel = $resolvedLabels['option'] ?? '';
             } elseif ($isBatchPeriodRecord) {
                 $optionLabel = $periodMap->get((int) $record->period_id)['name'] ?? "第{$record->period_id}节";
-            } elseif (isset($details['display_label'])) {
-                $optionLabel = $details['display_label'];
-                // 附加节次数量
-                if (isset($details['option_periods'])) {
-                    $optionLabel .= ' (' . $details['option_periods'] . '节)';
-                }
-            // 处理文本输入类型：显示文本 + 节次（如果有）
-            } elseif (isset($details['text']) && !empty($details['text'])) {
-                $optionLabel = $details['text'];
-                // 如果有节次信息，添加到文本后面
-                if (isset($details['period_names']) && is_array($details['period_names']) && count($details['period_names']) > 0) {
-                    $optionLabel .= '-' . implode('、', $details['period_names']);
-                } elseif (isset($details['period_ids']) && is_array($details['period_ids']) && count($details['period_ids']) > 0) {
-                    // 从 period_ids 获取节次名称
-                    $periodNames = [];
-                    foreach ($details['period_ids'] as $pid) {
-                        if (isset($periodMap[$pid])) {
-                            $periodNames[] = $periodMap[$pid]['name'] ?? "第{$pid}节";
-                        }
-                    }
-                    if (!empty($periodNames)) {
-                        $optionLabel .= '-' . implode('、', $periodNames);
-                    }
-                }
-            // 其次使用 option_label（考勤标记时生成的自定义节次标签）
-            } elseif (isset($details['option_label'])) {
-                $optionLabel = $details['option_label'];
-            // 其次使用时段名称（自主请假选择的时段，如"上午"、"下午"）—— 但需检查不是自定义选择
-            } elseif (isset($details['time_slot_name']) && !($details['is_custom'] ?? false)) {
-                $optionLabel = $details['time_slot_name'];
-            // 其次检查 period_id（老师/管理员直接标记的具体节次，如"第9节"）
-            } elseif ($record->period_id && isset($periodMap[$record->period_id])) {
-                $optionLabel = $periodMap[$record->period_id]['name'] ?? "第{$record->period_id}节";
-            } elseif ($record->source_type === 'roll_call' && isset($details['roll_call_type'])) {
-                $optionLabel = $details['roll_call_type'];
-            } elseif (isset($details['option']) && $record->leaveType && $record->leaveType->input_config) {
-                $config = is_string($record->leaveType->input_config) 
-                    ? json_decode($record->leaveType->input_config, true) 
-                    : $record->leaveType->input_config;
-                
-                if (isset($config['options'])) {
-                    foreach ($config['options'] as $opt) {
-                        $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
-                        $optLabel = is_array($opt) ? ($opt['label'] ?? $optKey) : $optKey;
-                        if ($optKey === $details['option']) {
-                            $optionLabel = $optLabel;
-                            break;
-                        }
-                    }
-                }
+            } else {
+                $formattedOption = self::formatCompactCalendarOption(
+                    $details,
+                    $periodMap,
+                    $record->period_id ? (int) $record->period_id : null,
+                    $record->source_type,
+                    $record->leaveType
+                );
+                $optionLabel = $formattedOption['option'];
+                $noteLabel = $formattedOption['note'];
             }
             
             // Format time (with correct timezone)
@@ -1210,6 +1174,7 @@ class AttendanceController extends Controller
                         'student_id' => $record->student_id,
                         'type' => $typeLabel,
                         'option' => $optionLabel,
+                        'note' => $noteLabel,
                         'student_name' => $record->student?->user?->name ?? '未知学生',
                         'student_no' => $record->student?->student_no ?? '',
                         'time' => $recordTime,
@@ -1230,7 +1195,7 @@ class AttendanceController extends Controller
                 // 普通记录、夜自习记录或已有 option_label 的记录
                 $mergeKey = $record->scene === 'evening_study'
                     ? $record->student_id . '_evening_' . ($record->period_id ?? 'no_p') . '_' . ($record->leave_type_id ?? 'no_lt') . '_' . ($record->evening_study_status_id ?? $record->requested_evening_status_id ?? 'no_es') . '_' . ($record->approval_status ?? 'none')
-                    : $record->student_id . '_' . $record->scene . '_' . ($timeSlotId ?? $details['option_label'] ?? 'no_ts') . '_' . $record->leave_type_id . '_' . $record->approval_status;
+                    : $record->student_id . '_' . $record->scene . '_' . ($timeSlotId ?? $details['option_label'] ?? ($optionLabel !== '' ? $optionLabel : 'no_ts')) . '_' . $record->leave_type_id . '_' . $record->approval_status;
                 
                 $result[$dateKey][$mergeKey] = [
                     'id' => $record->id,
@@ -1238,6 +1203,7 @@ class AttendanceController extends Controller
                     'student_id' => $record->student_id,
                     'type' => $typeLabel,
                     'option' => $optionLabel,
+                    'note' => $noteLabel,
                     'student_name' => $record->student?->user?->name ?? '未知学生',
                     'student_no' => $record->student?->student_no ?? '',
                     'time' => $recordTime,
@@ -1258,8 +1224,8 @@ class AttendanceController extends Controller
                             fn ($periodId) => $periodMap->get($periodId)['name'] ?? null,
                             $periodIds
                         )));
-                        $rec['option'] = $this->formatAttendancePeriodNames($periodNames);
-                        if (!empty($rec['_include_period_count'])) {
+                        $rec['option'] = self::formatAttendancePeriodNames($periodNames);
+                        if (!empty($rec['_include_period_count']) || count($periodIds) > 1) {
                             $rec['option'] .= ' (' . count($periodIds) . '节)';
                         }
                     }
@@ -1459,23 +1425,34 @@ class AttendanceController extends Controller
         }
     }
 
-    private function formatAttendancePeriodNames(array $periodNames): string
+    /**
+     * 将节次名称数组按校园自然顺序合并连续区间：早读/早操 -> 第1-6节 -> 晚操/晚自习
+     */
+    public static function formatAttendancePeriodNames(array $periodNames): string
     {
+        $morning = [];
         $numbered = [];
-        $special = [];
+        $otherSpecial = [];
 
-        foreach ($periodNames as $name) {
-            if (preg_match('/^第(\d+)节$/', $name, $matches)) {
+        foreach ($periodNames as $rawName) {
+            $name = trim((string) $rawName);
+            if ($name === '') {
+                continue;
+            }
+            if (preg_match('/^第(\d+)节$/u', $name, $matches)) {
                 $numbered[] = (int) $matches[1];
+            } elseif (mb_strpos($name, '早') !== false || mb_strpos($name, '晨') !== false) {
+                $morning[] = $name;
             } else {
-                $special[] = $name;
+                $otherSpecial[] = $name;
             }
         }
 
+        $morning = array_values(array_unique($morning));
         $numbered = array_values(array_unique($numbered));
-        $special = array_values(array_unique($special));
+        $otherSpecial = array_values(array_unique($otherSpecial));
 
-        $parts = [];
+        $parts = $morning;
         if (!empty($numbered)) {
             sort($numbered);
             $ranges = [];
@@ -1494,7 +1471,235 @@ class AttendanceController extends Controller
             $parts[] = '第' . implode(',', $ranges) . '节';
         }
 
-        return implode('、', array_merge($parts, $special));
+        return implode('、', array_merge($parts, $otherSpecial));
+    }
+
+    /**
+     * 规范化并压缩手工标记/时段/节次选项文案，使异常汇总与学生自请一样简练明了
+     *
+     * @param array<string, mixed> $details
+     * @param \Illuminate\Support\Collection|array|null $periodMap
+     * @return array{option: string, note: ?string}
+     */
+    public static function formatCompactCalendarOption(
+        array $details,
+        $periodMap = null,
+        ?int $recordPeriodId = null,
+        ?string $sourceType = null,
+        $leaveType = null
+    ): array {
+        $resolvePeriodNames = static function (array $details, $periodMap): array {
+            $names = [];
+            if (!empty($details['period_ids']) && is_array($details['period_ids'])) {
+                foreach ($details['period_ids'] as $pid) {
+                    $pidInt = (int) $pid;
+                    $entry = null;
+                    if ($periodMap instanceof \Illuminate\Support\Collection) {
+                        $entry = $periodMap->get($pidInt) ?? $periodMap->get((string) $pid);
+                    } elseif (is_array($periodMap)) {
+                        $entry = $periodMap[$pidInt] ?? $periodMap[(string) $pid] ?? null;
+                    }
+                    if (is_array($entry) && !empty($entry['name'])) {
+                        $names[] = (string) $entry['name'];
+                    } elseif (!empty($details['period_names']) && is_array($details['period_names'])) {
+                        $names = [];
+                        break;
+                    } else {
+                        $names[] = "第{$pidInt}节";
+                    }
+                }
+            }
+            if (empty($names) && !empty($details['period_names']) && is_array($details['period_names'])) {
+                foreach ($details['period_names'] as $name) {
+                    $trimmed = trim((string) $name);
+                    if ($trimmed !== '') {
+                        $names[] = $trimmed;
+                    }
+                }
+            }
+            return array_values(array_unique($names));
+        };
+
+        $formatWithCount = static function (array $periodNames): string {
+            $formatted = self::formatAttendancePeriodNames($periodNames);
+            if ($formatted === '') {
+                return '';
+            }
+            $count = count($periodNames);
+            return $count > 1 ? "{$formatted} ({$count}节)" : $formatted;
+        };
+
+        $compactRawLabel = static function (string $raw): string {
+            $trimmed = trim($raw);
+            if ($trimmed === '') {
+                return '';
+            }
+            if (preg_match('/^(.*?)\s*\((\d+)节\)$/u', $trimmed, $m)) {
+                $inner = trim($m[1]);
+                $tokens = array_values(array_filter(array_map('trim', preg_split('/[、\/]/u', $inner) ?: [])));
+                if (count($tokens) >= 2 && self::looksLikePeriodNameList($tokens)) {
+                    return self::formatAttendancePeriodNames($tokens) . ' (' . $m[2] . '节)';
+                }
+                return $trimmed;
+            }
+            $tokens = array_values(array_filter(array_map('trim', preg_split('/[、\/]/u', $trimmed) ?: [])));
+            if (count($tokens) >= 2 && self::looksLikePeriodNameList($tokens)) {
+                $formatted = self::formatAttendancePeriodNames($tokens);
+                return $formatted . ' (' . count($tokens) . '节)';
+            }
+            return $trimmed;
+        };
+
+        $periodNames = $resolvePeriodNames($details, $periodMap);
+        $note = isset($details['text']) ? trim((string) $details['text']) : '';
+        $note = $note !== '' ? $note : null;
+
+        // 1. display_label（优先，并顺手压缩可能平铺的节次）
+        if (!empty($details['display_label'])) {
+            $label = $compactRawLabel((string) $details['display_label']);
+            if (isset($details['option_periods']) && !preg_match('/\(\d+节\)$/u', $label)) {
+                $label .= ' (' . $details['option_periods'] . '节)';
+            }
+            return ['option' => $label, 'note' => $note];
+        }
+
+        // 2. 带自定义文本备注（如「技能训练」）+ 节次：优先用合并后的节次格式，避免超长逐节平铺
+        if ($note !== null) {
+            if (!empty($periodNames)) {
+                $periodSummary = $formatWithCount($periodNames);
+                return [
+                    'option' => "{$periodSummary} · {$note}",
+                    'note' => $note,
+                ];
+            }
+            if (!empty($details['time_slot_name']) && !($details['is_custom'] ?? false)) {
+                $slotName = trim((string) $details['time_slot_name']);
+                if ($slotName !== '' && $slotName !== $note) {
+                    return [
+                        'option' => "{$slotName} · {$note}",
+                        'note' => $note,
+                    ];
+                }
+            }
+            return ['option' => $note, 'note' => null];
+        }
+
+        // 3. 非自定义时段（如"上午"、"下午"、"全天"）
+        if (!empty($details['time_slot_name']) && !($details['is_custom'] ?? false)) {
+            return ['option' => trim((string) $details['time_slot_name']), 'note' => null];
+        }
+
+        // 4. 明确提供了 period_ids 或 period_names（合并为 第1-6节 + 节数）
+        if (!empty($periodNames)) {
+            return ['option' => $formatWithCount($periodNames), 'note' => null];
+        }
+
+        // 5. option_label（兼容历史平铺格式）
+        if (!empty($details['option_label'])) {
+            return ['option' => $compactRawLabel((string) $details['option_label']), 'note' => null];
+        }
+
+        // 6. 单节 period_id
+        if ($recordPeriodId) {
+            $entry = null;
+            if ($periodMap instanceof \Illuminate\Support\Collection) {
+                $entry = $periodMap->get($recordPeriodId) ?? $periodMap->get((string) $recordPeriodId);
+            } elseif (is_array($periodMap)) {
+                $entry = $periodMap[$recordPeriodId] ?? $periodMap[(string) $recordPeriodId] ?? null;
+            }
+            if (is_array($entry) && !empty($entry['name'])) {
+                return ['option' => (string) $entry['name'], 'note' => null];
+            }
+        }
+
+        // 7. 点名来源
+        if ($sourceType === 'roll_call' && !empty($details['roll_call_type'])) {
+            return ['option' => trim((string) $details['roll_call_type']), 'note' => null];
+        }
+
+        // 8. 预设选项配置映射
+        if (!empty($details['option']) && $leaveType && $leaveType->input_config) {
+            $config = is_string($leaveType->input_config)
+                ? json_decode($leaveType->input_config, true)
+                : $leaveType->input_config;
+            if (is_array($config) && isset($config['options']) && is_array($config['options'])) {
+                foreach ($config['options'] as $opt) {
+                    $optKey = is_array($opt) ? ($opt['key'] ?? $opt) : $opt;
+                    $optLabel = is_array($opt) ? ($opt['label'] ?? $optKey) : $optKey;
+                    if ($optKey === $details['option']) {
+                        return ['option' => (string) $optLabel, 'note' => null];
+                    }
+                }
+            }
+        }
+
+        return ['option' => '', 'note' => null];
+    }
+
+    /**
+     * 判断拆分后的词元列表是否属于校园节次列表（用于安全压缩历史平铺字符串）
+     *
+     * @param array<int, string> $tokens
+     */
+    private static function looksLikePeriodNameList(array $tokens): bool
+    {
+        if (empty($tokens)) {
+            return false;
+        }
+        $matchedCount = 0;
+        foreach ($tokens as $token) {
+            if (
+                preg_match('/^第\d+(?:[-,]\d+)*节$/u', $token)
+                || preg_match('/^(早读|早操|晚操|晚自习|夜自习|晨读|晨跑|午休|课间操)$/u', $token)
+            ) {
+                $matchedCount++;
+            }
+        }
+        return $matchedCount === count($tokens);
+    }
+
+    /**
+     * 规范化 /attendance/details 查询模式，兼容 Web 与新旧版本移动端传参
+     *
+     * @return array{mode: string, status: ?string, leave_type_id: ?int}
+     */
+    public static function resolveDetailsQueryMode(?string $status, ?int $leaveTypeId): array
+    {
+        $cleanStatus = is_string($status) ? trim($status) : null;
+        if ($cleanStatus === '') {
+            $cleanStatus = null;
+        }
+
+        if ($cleanStatus === 'absent') {
+            return [
+                'mode' => 'absent',
+                'status' => 'absent',
+                'leave_type_id' => null,
+            ];
+        }
+
+        if (in_array($cleanStatus, ['late', 'early_leave'], true)) {
+            return [
+                'mode' => 'direct_status',
+                'status' => $cleanStatus,
+                'leave_type_id' => null,
+            ];
+        }
+
+        // 任何请假类型查询（含旧版客户端误传 status=sick/personal/special/menstrual 等 slug）
+        if ($leaveTypeId !== null && $leaveTypeId > 0) {
+            return [
+                'mode' => 'leave_type',
+                'status' => 'leave',
+                'leave_type_id' => $leaveTypeId,
+            ];
+        }
+
+        return [
+            'mode' => 'fallback',
+            'status' => $cleanStatus,
+            'leave_type_id' => $leaveTypeId,
+        ];
     }
 
     private function attendanceBatchDisplayKey(AttendanceRecord $record): string
@@ -2923,18 +3128,23 @@ class AttendanceController extends Controller
             return $this->getAttendanceDetails($request, $classIds, $dateRange, $scope, $filterType);
         }
 
+        $queryMode = self::resolveDetailsQueryMode(
+            is_string($status) ? $status : null,
+            $leaveTypeId !== null && $leaveTypeId !== '' ? (int) $leaveTypeId : null
+        );
+
         // For 'absent' status, we need to include roll_call source records with leave_type.slug='absent'
         $absenceLeaveTypeId = null;
-        if ($status === 'absent') {
+        if ($queryMode['mode'] === 'absent') {
             $absenceLeaveType = \App\Models\LeaveType::where('slug', 'absent')->first();
             $absenceLeaveTypeId = $absenceLeaveType?->id;
         }
 
-        // Build the attendance query conditions
-        $attendanceCondition = function($q) use ($dateRange, $status, $leaveTypeId, $absenceLeaveTypeId) {
+        // Build the attendance query conditions (shared between whereHas & eager-load)
+        $attendanceCondition = function($q) use ($dateRange, $queryMode, $absenceLeaveTypeId) {
             $q->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
-            
-            if ($status === 'absent' && $absenceLeaveTypeId) {
+
+            if ($queryMode['mode'] === 'absent' && $absenceLeaveTypeId) {
                 // For absent: include both status='absent' AND (source_type='roll_call' with leave_type_id=absent)
                 $q->where(function($q2) use ($absenceLeaveTypeId) {
                     $q2->where('status', 'absent')
@@ -2943,19 +3153,23 @@ class AttendanceController extends Controller
                               ->where('leave_type_id', $absenceLeaveTypeId);
                        });
                 });
-            } elseif ($leaveTypeId && in_array($status, ['leave', 'excused'])) {
+            } elseif ($queryMode['mode'] === 'leave_type' && $queryMode['leave_type_id']) {
                 // For leave types: include both 'leave' and 'excused' status with the specified leave_type_id
                 // Also filter out rejected requests (approval_status != 'rejected')
                 $q->whereIn('status', ['leave', 'excused'])
-                  ->where('leave_type_id', $leaveTypeId)
+                  ->where('leave_type_id', $queryMode['leave_type_id'])
                   ->where(function($q2) {
                       $q2->where('approval_status', 'approved')
                          ->orWhereNull('approval_status');
                   });
+            } elseif ($queryMode['mode'] === 'direct_status' && $queryMode['status']) {
+                $q->where('status', $queryMode['status']);
             } else {
-                $q->where('status', $status);
-                if ($leaveTypeId) {
-                    $q->where('leave_type_id', $leaveTypeId);
+                if ($queryMode['status']) {
+                    $q->where('status', $queryMode['status']);
+                }
+                if ($queryMode['leave_type_id']) {
+                    $q->where('leave_type_id', $queryMode['leave_type_id']);
                 }
             }
         };
@@ -2966,31 +3180,8 @@ class AttendanceController extends Controller
             ->with([
                 'user',
                 'schoolClass',
-                'attendance' => function($q) use ($dateRange, $status, $leaveTypeId, $absenceLeaveTypeId) {
-                    $q->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
-                    
-                    if ($status === 'absent' && $absenceLeaveTypeId) {
-                        $q->where(function($q2) use ($absenceLeaveTypeId) {
-                            $q2->where('status', 'absent')
-                               ->orWhere(function($q3) use ($absenceLeaveTypeId) {
-                                   $q3->where('source_type', 'roll_call')
-                                      ->where('leave_type_id', $absenceLeaveTypeId);
-                               });
-                        });
-                    } elseif ($leaveTypeId && in_array($status, ['leave', 'excused'])) {
-                        // For leave types: include both 'leave' and 'excused' status
-                        $q->whereIn('status', ['leave', 'excused'])
-                          ->where('leave_type_id', $leaveTypeId)
-                          ->where(function($q2) {
-                              $q2->where('approval_status', 'approved')
-                                 ->orWhereNull('approval_status');
-                          });
-                    } else {
-                        $q->where('status', $status);
-                        if ($leaveTypeId) {
-                            $q->where('leave_type_id', $leaveTypeId);
-                        }
-                    }
+                'attendance' => function($q) use ($attendanceCondition) {
+                    $attendanceCondition($q);
                     $q->with(['leaveType']);
                 }
             ])
@@ -3000,22 +3191,22 @@ class AttendanceController extends Controller
         // Load department separately to avoid table name issues
         $students->load('schoolClass.department');
 
+        // 来源类型标签映射（全 scope 复用）
+        $sourceLabels = [
+            'roll_call' => '点名',
+            'manual' => '标记',
+            'manual_bulk' => '标记',
+            'leave_request' => '申请',
+            'self_applied' => '申请',  // 自主申请
+        ];
+
         // Format response
-        $result = $students->map(function($student) use ($scope) {
+        $result = $students->map(function($student) use ($scope, $sourceLabels) {
             try {
                 $records = $student->attendance;
                 
                 // Calculate details based on scope
                 if ($scope === 'today') {
-                    // 来源类型标签映射
-                    $sourceLabels = [
-                        'roll_call' => '点名',
-                        'manual' => '标记',
-                        'manual_bulk' => '标记',
-                        'leave_request' => '申请',
-                        'self_applied' => '申请',  // 自主申请
-                    ];
-                    
                     // 去重：按 date + leave_type_id + option 去重，避免同类型记录重复显示
                     $uniqueRecords = $records->unique(function ($record) {
                         $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
@@ -3091,10 +3282,12 @@ class AttendanceController extends Controller
                                 if (isset($details['display_label']) && !empty($details['display_label'])) {
                                     $detailContent = $details['display_label'];
                                 } elseif (isset($details['text']) && !empty($details['text'])) {
-                                    // 文本输入类型：显示文本 + 节次（如果有）
+                                    // 文本输入类型：显示文本 + 合并后的节次（如果有）
                                     $detailContent = $details['text'];
                                     if (!empty($periodNamesFromIds)) {
-                                        $detailContent .= '-' . implode('、', $periodNamesFromIds);
+                                        $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
+                                        $countSuffix = count($periodNamesFromIds) > 1 ? ' (' . count($periodNamesFromIds) . '节)' : '';
+                                        $detailContent .= ' · ' . $mergedNames . $countSuffix;
                                     }
                                 } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                                     $detailContent = $details['option_label'];
@@ -3113,10 +3306,16 @@ class AttendanceController extends Controller
                                     $detailContent = $optionMap[$details['option']] ?? $details['option'];
                                 } elseif (!empty($periodNamesFromIds)) {
                                     // 只有 period_ids 节次信息
-                                    $detailContent = implode('、', $periodNamesFromIds);
+                                    $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
+                                    $detailContent = count($periodNamesFromIds) > 1
+                                        ? $mergedNames . ' (' . count($periodNamesFromIds) . '节)'
+                                        : $mergedNames;
                                 } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
                                     // 使用 period_names（如 ["早读", "第1节"]）
-                                    $detailContent = implode('、', $details['period_names']);
+                                    $mergedNames = self::formatAttendancePeriodNames($details['period_names']);
+                                    $detailContent = count($details['period_names']) > 1
+                                        ? $mergedNames . ' (' . count($details['period_names']) . '节)'
+                                        : $mergedNames;
                                 } elseif (isset($details['periods']) && !empty($details['periods'])) {
                                     // 根据 periods（节次ID数组）查询系统配置获取节次名称
                                     $periodsConfig = \App\Models\SystemSetting::where('key', 'attendance_periods')->value('value');
@@ -3271,16 +3470,24 @@ class AttendanceController extends Controller
                                 } elseif (isset($details['text']) && !empty($details['text'])) {
                                     $detailContent = $details['text'];
                                     if (!empty($periodNamesFromIds)) {
-                                        $detailContent .= '-' . implode('、', $periodNamesFromIds);
+                                        $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
+                                        $countSuffix = count($periodNamesFromIds) > 1 ? ' (' . count($periodNamesFromIds) . '节)' : '';
+                                        $detailContent .= ' · ' . $mergedNames . $countSuffix;
                                     }
                                 } elseif (isset($details['option_label']) && !empty($details['option_label'])) {
                                     $detailContent = $details['option_label'];
                                 } elseif (isset($details['time_slot_name']) && !empty($details['time_slot_name'])) {
                                     $detailContent = $details['time_slot_name'];
                                 } elseif (!empty($periodNamesFromIds)) {
-                                    $detailContent = implode('、', $periodNamesFromIds);
+                                    $mergedNames = self::formatAttendancePeriodNames($periodNamesFromIds);
+                                    $detailContent = count($periodNamesFromIds) > 1
+                                        ? $mergedNames . ' (' . count($periodNamesFromIds) . '节)'
+                                        : $mergedNames;
                                 } elseif (isset($details['period_names']) && !empty($details['period_names'])) {
-                                    $detailContent = implode('、', $details['period_names']);
+                                    $mergedNames = self::formatAttendancePeriodNames($details['period_names']);
+                                    $detailContent = count($details['period_names']) > 1
+                                        ? $mergedNames . ' (' . count($details['period_names']) . '节)'
+                                        : $mergedNames;
                                 }
                             }
                             if (!$detailContent && $record->leaveType) {

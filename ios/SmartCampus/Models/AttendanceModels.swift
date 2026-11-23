@@ -173,6 +173,7 @@ struct CalendarSummaryRecord: Decodable, Identifiable, Hashable {
     let studentId: Int?
     let type: String
     let option: String?
+    let note: String?
     let studentName: String
     let studentNo: String?
     let time: String?
@@ -181,7 +182,7 @@ struct CalendarSummaryRecord: Decodable, Identifiable, Hashable {
     let approvalStatus: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, type, option, time, status
+        case id, type, option, note, time, status
         case recordIds = "record_ids"
         case studentId = "student_id"
         case studentName = "student_name"
@@ -220,9 +221,17 @@ struct CalendarSummaryRecord: Decodable, Identifiable, Hashable {
         return true
     }
 
+    var compactDisplay: (option: String, note: String?) {
+        PeriodFormatter.compactCalendarOption(option, explicitNote: note)
+    }
+
+    var displayNote: String? {
+        compactDisplay.note
+    }
+
     var typeWithOption: String {
         let cleanType = type.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanOpt = option?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanOpt = compactDisplay.option
         if cleanType.isEmpty || cleanType == "未知" {
             if !cleanOpt.isEmpty {
                 return cleanOpt

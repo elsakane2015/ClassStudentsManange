@@ -191,4 +191,95 @@ class CalendarSummaryEveningStudyTest extends TestCase
             date_default_timezone_set($prevTz);
         }
     }
+
+    public function test_formats_attendance_period_names_in_natural_school_order(): void
+    {
+        $names = ['第1节', '第2节', '第3节', '第4节', '第5节', '第6节', '早读', '早操', '晚操'];
+        $this->assertSame(
+            '早读、早操、第1-6节、晚操',
+            AttendanceController::formatAttendancePeriodNames($names)
+        );
+
+        $this->assertSame(
+            '早读、第1-3,5节、晚操',
+            AttendanceController::formatAttendancePeriodNames(['第2节', '第5节', '第1节', '晚操', '第3节', '早读'])
+        );
+    }
+
+    public function test_formats_manual_marked_calendar_option_compactly(): void
+    {
+        $periodMap = [
+            1 => ['id' => 1, 'name' => '早读'],
+            2 => ['id' => 2, 'name' => '早操'],
+            3 => ['id' => 3, 'name' => '第1节'],
+            4 => ['id' => 4, 'name' => '第2节'],
+            5 => ['id' => 5, 'name' => '第3节'],
+            6 => ['id' => 6, 'name' => '第4节'],
+            7 => ['id' => 7, 'name' => '第5节'],
+            8 => ['id' => 8, 'name' => '第6节'],
+            9 => ['id' => 9, 'name' => '晚操'],
+        ];
+
+        // 1. 手工标记带 text（技能训练）+ period_names（9节未合并）
+        $manualWithText = AttendanceController::formatCompactCalendarOption([
+            'text' => '技能训练',
+            'period_names' => ['早读', '早操', '第1节', '第2节', '第3节', '第4节', '第5节', '第6节', '晚操'],
+        ], $periodMap);
+        $this->assertSame('早读、早操、第1-6节、晚操 (9节) · 技能训练', $manualWithText['option']);
+        $this->assertSame('技能训练', $manualWithText['note']);
+
+        // 2. 仅有 period_ids 自定义节次（无 text、无 option_label）
+        $periodIdsOnly = AttendanceController::formatCompactCalendarOption([
+            'period_ids' => [1, 2, 3, 4, 5],
+            'is_custom' => true,
+        ], $periodMap);
+        $this->assertSame('早读、早操、第1-3节 (5节)', $periodIdsOnly['option']);
+        $this->assertNull($periodIdsOnly['note']);
+
+        // 3. 历史平铺的 option_label
+        $legacyOptionLabel = AttendanceController::formatCompactCalendarOption([
+            'option_label' => '早读、早操、第1节、第2节、第3节',
+        ], $periodMap);
+        $this->assertSame('早读、早操、第1-3节 (5节)', $legacyOptionLabel['option']);
+
+        // 4. 仅文本无节次
+        $textOnly = AttendanceController::formatCompactCalendarOption([
+            'text' => '技能训练',
+        ], $periodMap);
+        $this->assertSame('技能训练', $textOnly['option']);
+        $this->assertNull($textOnly['note']);
+    }
+
+    public function test_resolves_details_query_mode_for_leave_types_and_legacy_slugs(): void
+    {
+        // 标准 Web / 新移动端传参：status=leave + leave_type_id
+        $this->assertSame(
+            ['mode' => 'leave_type', 'status' => 'leave', 'leave_type_id' => 2],
+            AttendanceController::resolveDetailsQueryMode('leave', 2)
+        );
+
+        // 兼容老版客户端误传 status=sick/personal/special/menstrual 等 slug
+        $this->assertSame(
+            ['mode' => 'leave_type', 'status' => 'leave', 'leave_type_id' => 2],
+            AttendanceController::resolveDetailsQueryMode('sick', 2)
+        );
+        $this->assertSame(
+            ['mode' => 'leave_type', 'status' => 'leave', 'leave_type_id' => 5],
+            AttendanceController::resolveDetailsQueryMode('special', 5)
+        );
+
+        // 旷课/迟到/早退直查状态，避免额外叠加 leave_type_id 过滤漏记录
+        $this->assertSame(
+            ['mode' => 'absent', 'status' => 'absent', 'leave_type_id' => null],
+            AttendanceController::resolveDetailsQueryMode('absent', 9)
+        );
+        $this->assertSame(
+            ['mode' => 'direct_status', 'status' => 'late', 'leave_type_id' => null],
+            AttendanceController::resolveDetailsQueryMode('late', 10)
+        );
+        $this->assertSame(
+            ['mode' => 'direct_status', 'status' => 'early_leave', 'leave_type_id' => null],
+            AttendanceController::resolveDetailsQueryMode('early_leave', 11)
+        );
+    }
 }

@@ -299,6 +299,7 @@ data class CalendarSummaryRecord(
     val studentId: Int? = null,
     val type: String,
     val option: String?,
+    val note: String? = null,
     val studentName: String,
     val studentNo: String?,
     val time: String?,
@@ -328,10 +329,16 @@ data class CalendarSummaryRecord(
             return true
         }
 
+    val compactDisplay: Pair<String, String?>
+        get() = PeriodFormatter.compactCalendarOption(option, note)
+
+    val displayNote: String?
+        get() = compactDisplay.second
+
     val typeWithOption: String
         get() {
             val cleanType = type.trim()
-            val cleanOpt = option?.trim().orEmpty()
+            val cleanOpt = compactDisplay.first
             if (cleanType.isEmpty() || cleanType == "未知") {
                 if (cleanOpt.isNotEmpty()) return cleanOpt
                 return when (status) {
@@ -368,6 +375,7 @@ data class CalendarSummaryRecord(
             studentId = o.intOrNull("student_id"),
             type = o.str("type").orEmpty(),
             option = o.str("option"),
+            note = o.str("note"),
             studentName = o.str("student_name").orEmpty(),
             studentNo = o.str("student_no"),
             time = o.str("time"),
@@ -828,16 +836,25 @@ data class PresentDetailStudent(
 
 data class NonPresentDetailStudent(
     val id: Int,
+    val studentNo: String? = null,
     val name: String,
     val className: String?,
-    val detail: String?
+    val detail: String?,
+    val records: List<AttendanceRecord> = emptyList()
 ) {
+    val displayTitle: String
+        get() = if (!studentNo.isNullOrBlank() && studentNo.length >= 2) {
+            "${studentNo.takeLast(2)} $name"
+        } else name
+
     companion object {
         fun fromJson(o: JsonObject) = NonPresentDetailStudent(
             id = o.intVal("id"),
+            studentNo = o.str("student_no"),
             name = o.str("name").orEmpty(),
             className = o.str("class"),
-            detail = o.str("detail")
+            detail = o.str("detail"),
+            records = o.arrOrEmpty("records").mapNotNull { it.asObjectOrNull()?.let(AttendanceRecord::fromJson) }
         )
     }
 }

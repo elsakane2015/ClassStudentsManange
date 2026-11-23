@@ -118,6 +118,122 @@ enum PeriodFormatter {
         parts.append(contentsOf: otherSpecialNames)
         return parts.joined(separator: separator)
     }
+
+    /// 压缩并规整异常汇总中的 option 文案，将手工标记的平铺节次压缩为简练格式并拆分备注
+    /// - 例如："技能训练-早读、早操、第1节、第2节、第3节、第4节、第5节、第6节、晚操"
+    ///   -> (option: "早读、早操、第1-6节、晚操 (9节)", note: "技能训练")
+    /// - 例如："早读、早操、第1-6节、晚操 (9节) · 技能训练"
+    ///   -> (option: "早读、早操、第1-6节、晚操 (9节)", note: "技能训练")
+    /// - 例如："第1-6节、早读、早操、晚操 (9节)"
+    ///   -> (option: "早读、早操、第1-6节、晚操 (9节)", note: nil)
+    static func compactCalendarOption(
+        _ rawOption: String?,
+        explicitNote: String? = nil
+    ) -> (option: String, note: String?) {
+        let trimmed = rawOption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var note = explicitNote?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if note?.isEmpty == true { note = nil }
+
+        guard !trimmed.isEmpty else {
+            return ("", note)
+        }
+
+        // 1. 新版后端格式："<节次/时段> · <备注>"
+        if let dotRange = trimmed.range(of: " · ") {
+            let left = String(trimmed[..<dotRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let right = String(trimmed[dotRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !left.isEmpty && !right.isEmpty {
+                let compactedLeft = compactPeriodSummaryString(left) ?? left
+                return (compactedLeft, note ?? right)
+            }
+        }
+
+        // 2. 旧版后端手工标记带备注格式："<备注>-<顿号分隔的多节次>"
+        if let dashIndex = trimmed.firstIndex(of: "-") {
+            let left = String(trimmed[..<dashIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let right = String(trimmed[trimmed.index(after: dashIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let leftLooksLikePeriodRange = left.hasPrefix("第") && left.last?.isNumber == true
+            if !left.isEmpty && !leftLooksLikePeriodRange,
+               let compactedRight = compactPeriodSummaryString(right, requireMultiple: false) {
+                return (compactedRight, note ?? left)
+            }
+        }
+
+        // 3. 纯节次列表或已带 (N节) 尾缀的节次汇总：按校园自然顺序重排并合并连续区间
+        if let compacted = compactPeriodSummaryString(trimmed, requireMultiple: false) {
+            return (compacted, note)
+        }
+
+        // 4. 若 option 本身就等于 explicitNote，则不重复显示副行备注
+        if let n = note, n == trimmed {
+            return (trimmed, nil)
+        }
+
+        return (trimmed, note)
+    }
+
+    private static func compactPeriodSummaryString(_ raw: String, requireMultiple: Bool = true) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var inner = trimmed
+        var explicitCount: Int? = nil
+        if let regex = try? NSRegularExpression(pattern: "^(.*?)\\s*\\((\\d+)节\\)$"),
+           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+           let bodyRange = Range(match.range(at: 1), in: trimmed),
+           let countRange = Range(match.range(at: 2), in: trimmed) {
+            inner = String(trimmed[bodyRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            explicitCount = Int(trimmed[countRange])
+        }
+
+        let tokens = inner
+            .components(separatedBy: CharacterSet(charactersIn: "、/"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !tokens.isEmpty else { return nil }
+        if requireMultiple && tokens.count < 2 {
+            return nil
+        }
+
+        var expandedNames: [String] = []
+        let numberedRangeRegex = try? NSRegularExpression(pattern: "^第([\\d,-]+)节$")
+        let knownSpecials: Set<String> = ["早读", "早操", "晚操", "晚自习", "夜自习", "晨读", "晨跑", "午休", "课间操"]
+
+        for token in tokens {
+            let nsRange = NSRange(token.startIndex..., in: token)
+            if let match = numberedRangeRegex?.firstMatch(in: token, range: nsRange),
+               let bodyRange = Range(match.range(at: 1), in: token) {
+                let body = String(token[bodyRange])
+                for seg in body.split(separator: ",") {
+                    let bounds = seg.split(separator: "-")
+                    if bounds.count == 1, let n = Int(bounds[0]) {
+                        expandedNames.append("第\(n)节")
+                    } else if bounds.count == 2, let s = Int(bounds[0]), let e = Int(bounds[1]), s <= e, e - s <= 20 {
+                        for n in s...e {
+                            expandedNames.append("第\(n)节")
+                        }
+                    } else {
+                        return nil
+                    }
+                }
+            } else if knownSpecials.contains(token) {
+                expandedNames.append(token)
+            } else {
+                return nil
+            }
+        }
+
+        guard !expandedNames.isEmpty else { return nil }
+        var seen = Set<String>()
+        let uniqueNames = expandedNames.filter { seen.insert($0).inserted }
+        let merged = mergePeriodNames(uniqueNames, separator: "、")
+        let count = explicitCount ?? uniqueNames.count
+        if count > 1 {
+            return "\(merged) (\(count)节)"
+        }
+        return merged
+    }
 }
 
 enum SCDateFormatter {

@@ -127,6 +127,130 @@ object PeriodFormatter {
         parts.addAll(otherSpecialNames)
         return parts.joinToString(separator)
     }
+
+    private val countSuffixRegex = Regex("^(.*?)\\s*\\((\\d+)节\\)$")
+    private val numberedRangeRegex = Regex("^第([\\d,-]+)节$")
+    private val knownSpecialPeriods = setOf("早读", "早操", "晚操", "晚自习", "夜自习", "晨读", "晨跑", "午休", "课间操")
+
+    /**
+     * 压缩并规整异常汇总中的 option 文案，将手工标记的平铺节次压缩为简练格式并拆分备注
+     */
+    fun compactCalendarOption(
+        rawOption: String?,
+        explicitNote: String? = null
+    ): Pair<String, String?> {
+        val trimmed = rawOption?.trim().orEmpty()
+        val note = explicitNote?.trim()?.takeIf { it.isNotEmpty() }
+
+        if (trimmed.isEmpty()) return "" to note
+
+        // 1. 新版后端格式："<节次/时段> · <备注>"
+        val dotIdx = trimmed.indexOf(" · ")
+        if (dotIdx > 0) {
+            val left = trimmed.substring(0, dotIdx).trim()
+            val right = trimmed.substring(dotIdx + 3).trim()
+            if (left.isNotEmpty() && right.isNotEmpty()) {
+                val compactedLeft = compactPeriodSummaryString(left, requireMultiple = false) ?: left
+                return compactedLeft to (note ?: right)
+            }
+        }
+
+        // 2. 旧版后端手工标记带备注格式："<备注>-<顿号分隔的多节次>"
+        val dashIdx = trimmed.indexOf('-')
+        if (dashIdx > 0) {
+            val left = trimmed.substring(0, dashIdx).trim()
+            val right = trimmed.substring(dashIdx + 1).trim()
+            val leftLooksLikePeriodRange = left.startsWith("第") && left.lastOrNull()?.isDigit() == true
+            if (left.isNotEmpty() && !leftLooksLikePeriodRange) {
+                val compactedRight = compactPeriodSummaryString(right, requireMultiple = false)
+                if (compactedRight != null) {
+                    return compactedRight to (note ?: left)
+                }
+            }
+        }
+
+        // 3. 纯节次列表或带 (N节) 尾缀的节次汇总
+        val compacted = compactPeriodSummaryString(trimmed, requireMultiple = false)
+        if (compacted != null) {
+            return compacted to note
+        }
+
+        if (note != null && note == trimmed) {
+            return trimmed to null
+        }
+        return trimmed to note
+    }
+
+    fun compactDetailText(raw: String?): String {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty()) return ""
+        return trimmed.split(" | ").joinToString(" | ") { segment ->
+            val colonIdx = segment.indexOf('：')
+            if (colonIdx >= 0) {
+                val prefix = segment.substring(0, colonIdx + 1)
+                val body = segment.substring(colonIdx + 1)
+                val (opt, note) = compactCalendarOption(body)
+                when {
+                    opt.isNotEmpty() && !note.isNullOrBlank() -> "$prefix$opt · $note"
+                    opt.isNotEmpty() -> "$prefix$opt"
+                    else -> segment
+                }
+            } else {
+                segment
+            }
+        }
+    }
+
+    private fun compactPeriodSummaryString(raw: String, requireMultiple: Boolean = true): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+
+        var inner = trimmed
+        var explicitCount: Int? = null
+        val suffixMatch = countSuffixRegex.matchEntire(trimmed)
+        if (suffixMatch != null) {
+            inner = suffixMatch.groupValues[1].trim()
+            explicitCount = suffixMatch.groupValues[2].toIntOrNull()
+        }
+
+        val tokens = inner.split('、', '/').map { it.trim() }.filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return null
+        if (requireMultiple && tokens.size < 2) return null
+
+        val expandedNames = mutableListOf<String>()
+        for (token in tokens) {
+            val rangeMatch = numberedRangeRegex.matchEntire(token)
+            if (rangeMatch != null) {
+                val body = rangeMatch.groupValues[1]
+                for (seg in body.split(',')) {
+                    val bounds = seg.split('-')
+                    when (bounds.size) {
+                        1 -> {
+                            val n = bounds[0].toIntOrNull() ?: return null
+                            expandedNames.add("第${n}节")
+                        }
+                        2 -> {
+                            val s = bounds[0].toIntOrNull() ?: return null
+                            val e = bounds[1].toIntOrNull() ?: return null
+                            if (s > e || e - s > 20) return null
+                            for (n in s..e) expandedNames.add("第${n}节")
+                        }
+                        else -> return null
+                    }
+                }
+            } else if (token in knownSpecialPeriods) {
+                expandedNames.add(token)
+            } else {
+                return null
+            }
+        }
+
+        if (expandedNames.isEmpty()) return null
+        val uniqueNames = expandedNames.distinct()
+        val merged = mergePeriodNames(uniqueNames, separator = "、")
+        val count = explicitCount ?: uniqueNames.size
+        return if (count > 1) "$merged (${count}节)" else merged
+    }
 }
 
 object SCDateFormatter {
