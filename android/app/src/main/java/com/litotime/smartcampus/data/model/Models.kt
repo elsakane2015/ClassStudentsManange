@@ -420,7 +420,8 @@ data class AttendanceRecord(
     val detailsDisplayLabel: String? = null,
     val detailsPeriodNames: List<String> = emptyList(),
     val detailsPeriods: List<Int> = emptyList(),
-    val detailsOptionPeriods: Int? = null
+    val detailsOptionPeriods: Int? = null,
+    val destination: String? = null
 ) {
     val dateKey: String get() = SCDateFormatter.normalizeDateKey(date)
 
@@ -560,7 +561,8 @@ data class AttendanceRecord(
                 detailsDisplayLabel = details?.str("display_label") ?: o.str("display_label"),
                 detailsPeriodNames = details?.strList("period_names").orEmpty(),
                 detailsPeriods = details?.intList("periods").orEmpty(),
-                detailsOptionPeriods = details?.intOrNull("option_periods")
+                detailsOptionPeriods = details?.intOrNull("option_periods"),
+                destination = o.str("destination")
             )
         }
     }
@@ -824,16 +826,29 @@ data class PresentDetailStudent(
     val name: String,
     val studentNo: String?,
     val className: String?,
-    val attendanceRate: Double
+    val attendanceRate: Double,
+    val presentDays: Int = 0,
+    val totalDays: Int = 0,
+    val isPresent: Boolean = attendanceRate >= 100.0,
+    val hasRecords: Boolean = attendanceRate < 100.0
 ) {
     companion object {
-        fun fromJson(o: JsonObject) = PresentDetailStudent(
-            id = o.intVal("id"),
-            name = o.str("name").orEmpty(),
-            studentNo = o.str("student_no"),
-            className = o.str("class_name"),
-            attendanceRate = o.doubleVal("attendance_rate")
-        )
+        fun fromJson(o: JsonObject): PresentDetailStudent {
+            val rate = o.doubleVal("attendance_rate")
+            val isPresent = if (o.containsKey("is_present")) o.boolVal("is_present", rate >= 100.0) else rate >= 100.0
+            val hasRecords = if (o.containsKey("has_records")) o.boolVal("has_records", rate < 100.0) else rate < 100.0
+            return PresentDetailStudent(
+                id = o.intVal("id"),
+                name = o.str("name").orEmpty(),
+                studentNo = o.str("student_no"),
+                className = o.str("class_name"),
+                attendanceRate = rate,
+                presentDays = o.intVal("present_days"),
+                totalDays = o.intVal("total_days"),
+                isPresent = isPresent,
+                hasRecords = hasRecords
+            )
+        }
     }
 }
 

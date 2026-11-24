@@ -3293,11 +3293,16 @@ class AttendanceController extends Controller
             return collect($records)->pluck('date')->unique()->count();
         });
         
-        // Get any attendance record count per student (for "has_record" filter)
+        // Get any non-present attendance record count per student (for "has_record" filter)
         $recordsByStudent = \DB::table('attendance_records')
             ->whereIn('class_id', $classIds)
             ->whereBetween('date', [$dateRange['start'], min($dateRange['end'], now()->format('Y-m-d'))])
             ->where('counts_in_day_stats', true)
+            ->where('status', '!=', 'present')
+            ->where(function ($q) {
+                $q->whereNull('approval_status')
+                  ->orWhere('approval_status', '!=', 'rejected');
+            })
             ->select('student_id', \DB::raw('COUNT(*) as record_count'))
             ->groupBy('student_id')
             ->pluck('record_count', 'student_id');
@@ -3329,6 +3334,9 @@ class AttendanceController extends Controller
         if ($filterType === 'present') {
             // 出勤：没有达到缺勤阈值的学生
             $result = $result->filter(fn($s) => $s['is_present']);
+        } elseif ($filterType === 'has_record') {
+            // 有记录：该时段存在请假/旷课/迟到/早退等考勤记录的学生
+            $result = $result->filter(fn($s) => $s['has_records']);
         } elseif ($filterType === 'absent') {
             // 缺勤：有达到缺勤阈值的学生
             $result = $result->filter(fn($s) => !$s['is_present']);
@@ -3579,6 +3587,9 @@ class AttendanceController extends Controller
         $user = auth()->user();
         $studentId = $request->input('student_id');
         $scope = $request->input('scope', 'today');
+        $semesterId = $request->input('semester_id');
+        $statusFilter = $request->input('status');
+        $leaveTypeIdFilter = $request->input('leave_type_id');
 
         if (!$studentId) {
             return response()->json(['error' => 'student_id is required'], 400);
@@ -3593,15 +3604,51 @@ class AttendanceController extends Controller
             }
             $dateRange = ['start' => $startDate, 'end' => $endDate];
         } else {
-            $dateRange = $this->getDateRangeForScope($scope);
+            $dateRange = $this->getDateRangeForScope($scope, $semesterId);
         }
         
         \Log::info('[studentRecords] Date range:', $dateRange);
 
-        // Get all abnormal attendance records for this student (exclude present = normal state)
-        $records = \App\Models\AttendanceRecord::where('student_id', $studentId)
+        // Get attendance records for this student (exclude present = normal state)
+        $query = \App\Models\AttendanceRecord::where('student_id', $studentId)
             ->whereBetween('date', [$dateRange['start'], $dateRange['end']])
-            ->where('status', '!=', 'present')
+            ->where('status', '!=', 'present');
+
+        // 支持按考勤类型筛选（例如从「事假明细」点进学生记录时仅查该类型记录）
+        $hasTypeFilter = (is_string($statusFilter) && trim($statusFilter) !== '' && trim($statusFilter) !== 'present')
+            || ($leaveTypeIdFilter !== null && $leaveTypeIdFilter !== '');
+        if ($hasTypeFilter) {
+            $queryMode = self::resolveDetailsQueryMode(
+                is_string($statusFilter) ? $statusFilter : null,
+                $leaveTypeIdFilter !== null && $leaveTypeIdFilter !== '' ? (int) $leaveTypeIdFilter : null
+            );
+            if ($queryMode['mode'] === 'absent') {
+                $absenceLeaveType = \App\Models\LeaveType::where('slug', 'absent')->first();
+                $absenceLeaveTypeId = $absenceLeaveType?->id;
+                if ($absenceLeaveTypeId) {
+                    $query->where(function ($q2) use ($absenceLeaveTypeId) {
+                        $q2->where('status', 'absent')
+                           ->orWhere(function ($q3) use ($absenceLeaveTypeId) {
+                               $q3->where('source_type', 'roll_call')
+                                  ->where('leave_type_id', $absenceLeaveTypeId);
+                           });
+                    });
+                } else {
+                    $query->where('status', 'absent');
+                }
+            } elseif ($queryMode['mode'] === 'leave_type' && $queryMode['leave_type_id']) {
+                $query->whereIn('status', ['leave', 'excused'])
+                    ->where('leave_type_id', $queryMode['leave_type_id'])
+                    ->where(function ($q2) {
+                        $q2->where('approval_status', 'approved')
+                           ->orWhereNull('approval_status');
+                    });
+            } elseif ($queryMode['mode'] === 'direct_status' && $queryMode['status']) {
+                $query->where('status', $queryMode['status']);
+            }
+        }
+
+        $records = $query
             ->with(['leaveType'])
             ->orderBy('date', 'desc')
             ->orderBy('created_at', 'desc')
@@ -3625,13 +3672,13 @@ class AttendanceController extends Controller
             'self_applied' => '申请',  // 自主申请
         ];
         
-        // 去重：按 date + leave_type_id + option + period_ids + source_type 去重
+        // 去重：保留 period_id 维度，避免按单节存储的同一天多节记录被误删只剩 1 节
         $uniqueRecords = $records->unique(function ($record) {
             $details = is_string($record->details) ? json_decode($record->details, true) : $record->details;
             $option = is_array($details) ? ($details['option'] ?? $details['display_label'] ?? '') : '';
             $periodIds = is_array($details) ? ($details['period_ids'] ?? []) : [];
             $periodKey = is_array($periodIds) ? implode(',', $periodIds) : '';
-            return $record->date . '-' . $record->leave_type_id . '-' . $option . '-' . $periodKey . '-' . $record->source_type;
+            return $record->date . '-' . ($record->period_id ?? 'null') . '-' . $record->leave_type_id . '-' . $option . '-' . $periodKey . '-' . $record->source_type;
         })->values();
         
         // 为每条记录添加 detail 字段（使用与 details 方法完全相同的逻辑）

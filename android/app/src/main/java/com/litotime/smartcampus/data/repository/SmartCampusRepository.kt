@@ -112,13 +112,19 @@ class SmartCampusRepository(private val api: ApiClient) {
         studentId: Int,
         scope: String,
         startDate: String? = null,
-        endDate: String? = null
+        endDate: String? = null,
+        semesterId: Int? = null,
+        status: String? = null,
+        leaveTypeId: Int? = null
     ): List<AttendanceRecord> {
         val query = mutableMapOf("student_id" to studentId.toString(), "scope" to scope)
         if (scope == "custom") {
             startDate?.let { query["start_date"] = it }
             endDate?.let { query["end_date"] = it }
         }
+        semesterId?.let { query["semester_id"] = it.toString() }
+        status?.takeIf { it.isNotBlank() }?.let { query["status"] = it }
+        leaveTypeId?.let { query["leave_type_id"] = it.toString() }
         return api.requestElement("/attendance/student-records", query = query)
             .asArrayOrEmpty().mapNotNull { it.asObjectOrNull()?.let(AttendanceRecord::fromJson) }
     }

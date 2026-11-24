@@ -66,6 +66,7 @@ struct TeacherDashboardView: View {
     struct StatDetailTarget: Identifiable {
         let id = UUID()
         let title: String
+        let typeName: String?
         let status: String?
         let leaveTypeId: Int?
     }
@@ -247,7 +248,7 @@ struct TeacherDashboardView: View {
                             )
 
                             Button {
-                                statDetailTarget = StatDetailTarget(title: "出勤明细", status: "present", leaveTypeId: nil)
+                                statDetailTarget = StatDetailTarget(title: "出勤明细", typeName: nil, status: "present", leaveTypeId: nil)
                             } label: {
                                 StatMetricCard(
                                     title: scope == "today" ? "今日出勤" : "综合出勤率",
@@ -276,7 +277,7 @@ struct TeacherDashboardView: View {
                             let absentVal = stats.periodStats?.absentPeriods?.value ?? 0
                             let lateVal = stats.periodStats?.latePeriods?.value ?? 0
                             Button {
-                                statDetailTarget = StatDetailTarget(title: "缺勤明细", status: "absent", leaveTypeId: nil)
+                                statDetailTarget = StatDetailTarget(title: "缺勤明细", typeName: "旷课", status: "absent", leaveTypeId: nil)
                             } label: {
                                 StatMetricCard(
                                     title: "缺勤节次",
@@ -304,6 +305,7 @@ struct TeacherDashboardView: View {
                                             Button {
                                                 statDetailTarget = StatDetailTarget(
                                                     title: "\(name)明细",
+                                                    typeName: name,
                                                     status: resolvedStatus,
                                                     leaveTypeId: resolvedLeaveTypeId
                                                 )
@@ -439,6 +441,7 @@ struct TeacherDashboardView: View {
                 TeacherStatDetailSheet(
                     scope: scope,
                     semesterId: selectedSemesterId,
+                    semesters: semesters,
                     target: target,
                     classPeriods: classPeriods,
                     timeSlots: timeSlots
@@ -2734,15 +2737,45 @@ struct StudentAttendanceActionSheet: View {
     }
 }
 
+private struct StudentRecordDrillTarget: Hashable {
+    let studentId: Int
+    let studentName: String
+    let studentNo: String?
+    let className: String?
+
+    var displayTitle: String {
+        if let no = studentNo, no.count >= 2 {
+            return "\(no.suffix(2)) \(studentName)"
+        }
+        return studentName
+    }
+}
+
+private struct StudentRecordTypeFilter: Hashable {
+    let typeName: String
+    let status: String?
+    let leaveTypeId: Int?
+}
+
 private struct TeacherStatDetailSheet: View {
     let scope: String
     let semesterId: Int?
+    let semesters: [Semester]
     let target: TeacherDashboardView.StatDetailTarget
     let classPeriods: [ClassPeriod]
     let timeSlots: [TimeSlot]
     @Environment(\.dismiss) private var dismiss
 
+    private enum PresentDetailFilter: String, CaseIterable, Identifiable {
+        case all = "全部"
+        case present = "出勤"
+        case hasRecords = "有记录"
+
+        var id: String { rawValue }
+    }
+
     @AppStorage("smartcampus.stat_detail_columns") private var detailColumns: Int = 1
+    @State private var presentFilter: PresentDetailFilter = .all
     @State private var presentList: [PresentDetailStudent] = []
     @State private var nonPresentList: [NonPresentDetailStudent] = []
     @State private var isLoading = true
@@ -2752,8 +2785,47 @@ private struct TeacherStatDetailSheet: View {
         classPeriods.filter { ($0.scene ?? "regular") != "evening_study" }
     }
 
+    private func isStudentPresent(_ s: PresentDetailStudent) -> Bool {
+        if let flag = s.isPresent?.value { return flag }
+        return (s.attendanceRate?.value ?? 100) >= 100
+    }
+
+    private func doesStudentHaveRecords(_ s: PresentDetailStudent) -> Bool {
+        if let flag = s.hasRecords?.value, flag { return true }
+        return (s.attendanceRate?.value ?? 100) < 100
+    }
+
+    private var presentCount: Int {
+        presentList.filter { isStudentPresent($0) }.count
+    }
+
+    private var hasRecordsCount: Int {
+        presentList.filter { doesStudentHaveRecords($0) }.count
+    }
+
+    private var filteredPresentList: [PresentDetailStudent] {
+        switch presentFilter {
+        case .all:
+            return presentList
+        case .present:
+            return presentList.filter { isStudentPresent($0) }
+        case .hasRecords:
+            return presentList.filter { doesStudentHaveRecords($0) }
+        }
+    }
+
+    private var activeTypeFilter: StudentRecordTypeFilter? {
+        guard target.status != "present" else { return nil }
+        let name = target.typeName ?? target.title.replacingOccurrences(of: "明细", with: "")
+        return StudentRecordTypeFilter(
+            typeName: name,
+            status: target.status,
+            leaveTypeId: target.leaveTypeId
+        )
+    }
+
     private var totalStudentCount: Int {
-        target.status == "present" ? presentList.count : nonPresentList.count
+        target.status == "present" ? filteredPresentList.count : nonPresentList.count
     }
 
     var body: some View {
@@ -2769,20 +2841,41 @@ private struct TeacherStatDetailSheet: View {
                     } else {
                         ScrollView {
                             VStack(spacing: 12) {
-                                detailHeaderBar
-                                if detailColumns == 2 {
+                                presentHeaderBar
+                                if filteredPresentList.isEmpty {
+                                    Text("当前筛选「\(presentFilter.rawValue)」下暂无学生")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.vertical, 24)
+                                } else if detailColumns == 2 {
                                     LazyVGrid(
                                         columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
                                         spacing: 10
                                     ) {
-                                        ForEach(presentList) { s in
-                                            presentCompactCard(s)
+                                        ForEach(filteredPresentList) { s in
+                                            NavigationLink(value: StudentRecordDrillTarget(
+                                                studentId: s.id,
+                                                studentName: s.name,
+                                                studentNo: s.studentNo,
+                                                className: s.className
+                                            )) {
+                                                presentCompactCard(s)
+                                            }
+                                            .buttonStyle(.plain)
                                         }
                                     }
                                 } else {
                                     LazyVStack(spacing: 10) {
-                                        ForEach(presentList) { s in
-                                            presentFullCard(s)
+                                        ForEach(filteredPresentList) { s in
+                                            NavigationLink(value: StudentRecordDrillTarget(
+                                                studentId: s.id,
+                                                studentName: s.name,
+                                                studentNo: s.studentNo,
+                                                className: s.className
+                                            )) {
+                                                presentFullCard(s)
+                                            }
+                                            .buttonStyle(.plain)
                                         }
                                     }
                                 }
@@ -2809,7 +2902,15 @@ private struct TeacherStatDetailSheet: View {
                                             classPeriods: regularPeriods,
                                             timeSlots: timeSlots
                                         )
-                                        nonPresentCompactCard(s, display: display)
+                                        NavigationLink(value: StudentRecordDrillTarget(
+                                            studentId: s.id,
+                                            studentName: s.name,
+                                            studentNo: s.studentNo,
+                                            className: s.className
+                                        )) {
+                                            nonPresentCompactCard(s, display: display)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                             } else {
@@ -2821,7 +2922,15 @@ private struct TeacherStatDetailSheet: View {
                                             classPeriods: regularPeriods,
                                             timeSlots: timeSlots
                                         )
-                                        nonPresentFullCard(s, display: display)
+                                        NavigationLink(value: StudentRecordDrillTarget(
+                                            studentId: s.id,
+                                            studentName: s.name,
+                                            studentNo: s.studentNo,
+                                            className: s.className
+                                        )) {
+                                            nonPresentFullCard(s, display: display)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                             }
@@ -2837,6 +2946,18 @@ private struct TeacherStatDetailSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("关闭") { dismiss() }
                 }
+            }
+            .navigationDestination(for: StudentRecordDrillTarget.self) { drill in
+                StudentStatRecordsDetailView(
+                    student: drill,
+                    initialScope: scope,
+                    initialSemesterId: semesterId,
+                    semesters: semesters,
+                    typeFilter: activeTypeFilter,
+                    classPeriods: regularPeriods,
+                    timeSlots: timeSlots,
+                    onCloseSheet: { dismiss() }
+                )
             }
             .task {
                 isLoading = true
@@ -2860,42 +2981,94 @@ private struct TeacherStatDetailSheet: View {
         }
     }
 
-    /// 顶部控制栏：与「考勤情况」完全一致的 1列/2列 切换交互，持久化记忆
-    private var detailHeaderBar: some View {
-        HStack {
-            Text("共 \(totalStudentCount) 人")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Spacer()
-            HStack(spacing: 2) {
-                ForEach([1, 2], id: \.self) { cols in
-                    let active = detailColumns == cols
-                    Button {
-                        withAnimation(.snappy(duration: 0.18)) {
-                            detailColumns = cols
+    /// 出勤明细顶部控制栏：全部 / 出勤 / 有记录 筛选 + 1列/2列切换
+    private var presentHeaderBar: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(PresentDetailFilter.allCases) { f in
+                        let cnt: Int = {
+                            switch f {
+                            case .all: return presentList.count
+                            case .present: return presentCount
+                            case .hasRecords: return hasRecordsCount
+                            }
+                        }()
+                        let isSelected = presentFilter == f
+                        Button {
+                            withAnimation(.snappy(duration: 0.18)) {
+                                presentFilter = f
+                            }
+                        } label: {
+                            Text("\(f.rawValue) \(cnt)")
+                                .font(.caption.weight(isSelected ? .semibold : .regular))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(isSelected ? SCTheme.primary : Color(.tertiarySystemFill))
+                                .foregroundStyle(isSelected ? .white : .primary)
+                                .clipShape(Capsule())
                         }
-                    } label: {
-                        Text("\(cols)列")
-                            .font(.caption2.weight(active ? .semibold : .regular))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(active ? SCTheme.primary : Color.clear)
-                            .foregroundStyle(active ? .white : .secondary)
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(2)
-            .background(Color(.tertiarySystemFill))
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            columnsToggleControl
         }
     }
 
-    private func presentFullCard(_ s: PresentDetailStudent) -> some View {
+    /// 各类考勤明细顶部控制栏：总人数 + 1列/2列 切换
+    private var detailHeaderBar: some View {
         HStack {
+            Text("共 \(totalStudentCount) 人 · 点击卡片看历史记录")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+            columnsToggleControl
+        }
+    }
+
+    private var columnsToggleControl: some View {
+        HStack(spacing: 2) {
+            ForEach([1, 2], id: \.self) { cols in
+                let active = detailColumns == cols
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) {
+                        detailColumns = cols
+                    }
+                } label: {
+                    Text("\(cols)列")
+                        .font(.caption2.weight(active ? .semibold : .regular))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(active ? SCTheme.primary : Color.clear)
+                        .foregroundStyle(active ? .white : .secondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Color(.tertiarySystemFill))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func presentFullCard(_ s: PresentDetailStudent) -> some View {
+        HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(s.name).font(.subheadline.weight(.semibold))
+                HStack(spacing: 6) {
+                    Text(s.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if doesStudentHaveRecords(s) {
+                        Text("有记录")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.14))
+                            .foregroundStyle(.orange)
+                            .clipShape(Capsule())
+                    }
+                }
                 Text("\(s.className ?? "") · \(s.studentNo ?? "")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -2904,10 +3077,14 @@ private struct TeacherStatDetailSheet: View {
             if let rate = s.attendanceRate?.value {
                 StatusBadge(text: String(format: "%.1f%%", rate), color: rate >= 95 ? .green : .orange)
             }
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
         .padding(12)
         .background(SCTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func presentCompactCard(_ s: PresentDetailStudent) -> some View {
@@ -2915,6 +3092,7 @@ private struct TeacherStatDetailSheet: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(s.name)
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer(minLength: 2)
                 if let rate = s.attendanceRate?.value {
@@ -2924,15 +3102,24 @@ private struct TeacherStatDetailSheet: View {
                     )
                 }
             }
-            Text("\(s.className ?? "") · \(s.studentNo ?? "")")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text("\(s.className ?? "") · \(s.studentNo ?? "")")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                if doesStudentHaveRecords(s) {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 6, height: 6)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(10)
         .background(SCTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func nonPresentFullCard(_ s: NonPresentDetailStudent, display: StatDetailStudentDisplay) -> some View {
@@ -2940,10 +3127,14 @@ private struct TeacherStatDetailSheet: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(formattedStudentTitle(s))
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
                 Spacer()
                 Text(s.className ?? "")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             if !display.summaryHeadline.isEmpty {
                 Text(display.summaryHeadline)
@@ -2981,10 +3172,17 @@ private struct TeacherStatDetailSheet: View {
 
     private func nonPresentCompactCard(_ s: NonPresentDetailStudent, display: StatDetailStudentDisplay) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(formattedStudentTitle(s))
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+            HStack(spacing: 4) {
+                Text(formattedStudentTitle(s))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 2)
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
             if let cls = s.className, !cls.isEmpty {
                 Text(cls)
                     .font(.caption2)
@@ -3023,6 +3221,7 @@ private struct TeacherStatDetailSheet: View {
         .padding(10)
         .background(SCTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func formattedStudentTitle(_ student: NonPresentDetailStudent) -> String {
@@ -3390,6 +3589,689 @@ private struct StatDetailStudentDisplay {
             }
             return segment
         }.joined(separator: " | ")
+    }
+}
+
+/// 学生历史考勤钻取详情页（从「出勤明细」或「各类考勤明细」点击学生卡片进入）
+/// 支持 5 档范围切换：日（支持翻日/日历选任意日） / 本周 / 本月 / 选月（支持翻月/下拉选月） / 本学期
+/// - `typeFilter == nil`：查看该学生全部考勤记录（出勤明细入口）
+/// - `typeFilter != nil`：仅查看该学生该类型考勤记录（如事假、病假、特殊、旷课等入口）
+private struct StudentStatRecordsDetailView: View {
+    let student: StudentRecordDrillTarget
+    let initialScope: String
+    let initialSemesterId: Int?
+    let semesters: [Semester]
+    let typeFilter: StudentRecordTypeFilter?
+    let classPeriods: [ClassPeriod]
+    let timeSlots: [TimeSlot]
+    let onCloseSheet: () -> Void
+
+    private enum RecordScopeMode: String, CaseIterable, Identifiable {
+        case day = "日"
+        case week = "本周"
+        case month = "本月"
+        case pickMonth = "选月"
+        case semester = "本学期"
+
+        var id: String { rawValue }
+    }
+
+    private struct MonthOption: Identifiable, Hashable {
+        let year: Int
+        let month: Int
+        var id: String { String(format: "%04d-%02d", year, month) }
+        var title: String { "\(year)年\(month)月" }
+    }
+
+    @State private var scopeMode: RecordScopeMode
+    @State private var selectedDay: Date = Date()
+    @State private var selectedMonthDate: Date = Date()
+    @State private var selectedSemesterId: Int?
+    @State private var showDayPickerSheet = false
+    @State private var records: [AttendanceRecord] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    init(
+        student: StudentRecordDrillTarget,
+        initialScope: String,
+        initialSemesterId: Int?,
+        semesters: [Semester],
+        typeFilter: StudentRecordTypeFilter?,
+        classPeriods: [ClassPeriod],
+        timeSlots: [TimeSlot],
+        onCloseSheet: @escaping () -> Void
+    ) {
+        self.student = student
+        self.initialScope = initialScope
+        self.initialSemesterId = initialSemesterId
+        self.semesters = semesters
+        self.typeFilter = typeFilter
+        self.classPeriods = classPeriods
+        self.timeSlots = timeSlots
+        self.onCloseSheet = onCloseSheet
+
+        let defaultMode: RecordScopeMode = {
+            switch initialScope {
+            case "today": return .day
+            case "week": return .week
+            case "month": return .month
+            case "semester": return .semester
+            default: return .month
+            }
+        }()
+        _scopeMode = State(initialValue: defaultMode)
+        _selectedSemesterId = State(initialValue: initialSemesterId)
+    }
+
+    private var gregorian: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = Locale(identifier: "zh_CN")
+        return cal
+    }
+
+    private var currentMonthKey: String {
+        SCDateFormatter.yyyyMM.string(from: selectedMonthDate)
+    }
+
+    private var selectedDayKey: String {
+        SCDateFormatter.yyyyMMdd.string(from: selectedDay)
+    }
+
+    private var isSelectedDayToday: Bool {
+        gregorian.isDateInToday(selectedDay)
+    }
+
+    private var monthOptions: [MonthOption] {
+        var seen = Set<String>()
+        var items: [MonthOption] = []
+
+        func appendMonth(_ date: Date) {
+            let comps = gregorian.dateComponents([.year, .month], from: date)
+            guard let y = comps.year, let m = comps.month else { return }
+            let opt = MonthOption(year: y, month: m)
+            if seen.insert(opt.id).inserted {
+                items.append(opt)
+            }
+        }
+
+        let now = Date()
+        for offset in -18...2 {
+            if let d = gregorian.date(byAdding: .month, value: offset, to: now) {
+                appendMonth(d)
+            }
+        }
+        for sem in semesters {
+            if let start = SCDateFormatter.parseDate(sem.startDate) {
+                let weeks = max(sem.totalWeeks ?? 20, 1)
+                let end = gregorian.date(byAdding: .day, value: weeks * 7 - 1, to: start) ?? start
+                var cursor = start
+                while cursor <= end {
+                    appendMonth(cursor)
+                    guard let next = gregorian.date(byAdding: .month, value: 1, to: cursor) else { break }
+                    cursor = next
+                }
+                appendMonth(end)
+            }
+        }
+        appendMonth(selectedMonthDate)
+        return items.sorted { ($0.year, $0.month) > ($1.year, $1.month) }
+    }
+
+    private var selectedSemester: Semester? {
+        if let sid = selectedSemesterId {
+            return semesters.first(where: { $0.id == sid })
+        }
+        return semesters.first(where: { $0.isCurrentFlag }) ?? semesters.first
+    }
+
+    private var querySignature: String {
+        "\(student.studentId)|\(scopeMode.rawValue)|\(selectedDayKey)|\(currentMonthKey)|\(selectedSemesterId ?? -1)|\(typeFilter?.status ?? "")|\(typeFilter?.leaveTypeId ?? -1)"
+    }
+
+    private var activeScopeSubtitle: String {
+        switch scopeMode {
+        case .day:
+            return SCDateFormatter.cnMonthDay.string(from: selectedDay)
+        case .week:
+            return "本周"
+        case .month:
+            return "本月（\(SCDateFormatter.cnYearMonth.string(from: Date()))）"
+        case .pickMonth:
+            return SCDateFormatter.cnYearMonth.string(from: selectedMonthDate)
+        case .semester:
+            if let sid = selectedSemesterId, let sem = semesters.first(where: { $0.id == sid }) {
+                return sem.name
+            }
+            return selectedSemester?.name ?? "本学期"
+        }
+    }
+
+    private var filteredRecords: [AttendanceRecord] {
+        records.filter { rec in
+            guard !rec.isNormalPresentRecord else { return false }
+            guard let tf = typeFilter else { return true }
+            if rec.approvalStatus == "rejected" { return false }
+
+            if tf.status == "absent" {
+                return rec.status == "absent"
+                    || rec.leaveType?.slug == "absent"
+                    || rec.titleText.contains("旷课")
+                    || rec.titleText.contains("缺勤")
+            }
+            if tf.status == "late" {
+                return rec.status == "late"
+                    || rec.leaveType?.slug == "late"
+                    || rec.titleText.contains("迟到")
+            }
+            if tf.status == "early_leave" {
+                return rec.status == "early_leave"
+                    || rec.leaveType?.slug == "early_leave"
+                    || rec.titleText.contains("早退")
+            }
+            if let ltId = tf.leaveTypeId {
+                if rec.leaveTypeId == ltId || rec.leaveType?.id == ltId {
+                    return true
+                }
+            }
+            let cleanName = tf.typeName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleanName.isEmpty && rec.titleText == cleanName {
+                return true
+            }
+            return false
+        }
+    }
+
+    private var groupedRecords: [DayRecordGroup] {
+        DayRecordGroup.build(
+            from: filteredRecords,
+            classPeriods: classPeriods,
+            timeSlots: timeSlots,
+            groupByDate: true
+        ).sorted { lhs, rhs in
+            if lhs.dateKey != rhs.dateKey { return lhs.dateKey > rhs.dateKey }
+            return lhs.primary.id > rhs.primary.id
+        }
+    }
+
+    private var uniqueDaysCount: Int {
+        Set(groupedRecords.map(\.dateKey).filter { !$0.isEmpty }).count
+    }
+
+    private var totalPeriodsCount: Int {
+        groupedRecords.reduce(0) { sum, g in
+            if !g.periodIds.isEmpty { return sum + g.periodIds.count }
+            let optPeriods = g.records.compactMap { $0.details?.value?.optionPeriods?.value }.max() ?? 0
+            if optPeriods > 0 { return sum + optPeriods }
+            return sum + max(g.records.count, 1)
+        }
+    }
+
+    private var typeBadgeTint: Color {
+        guard let tf = typeFilter else { return SCTheme.primary }
+        if tf.status == "absent" || tf.typeName.contains("旷课") || tf.typeName.contains("缺勤") { return .red }
+        if tf.status == "late" || tf.status == "early_leave" { return .orange }
+        if tf.typeName.contains("病假") { return .purple }
+        if tf.typeName.contains("生理") { return .pink }
+        return .blue
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                studentHeaderCard
+                scopeModeBar
+                if scopeMode == .day {
+                    daySelectorBar
+                } else if scopeMode == .pickMonth {
+                    monthSelectorBar
+                } else if scopeMode == .semester && semesters.count > 1 {
+                    semesterSelectorBar
+                }
+
+                if let errorMessage {
+                    ErrorBannerView(message: errorMessage)
+                }
+
+                if isLoading {
+                    ProgressView("加载考勤记录...")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 36)
+                } else if groupedRecords.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.secondary.opacity(0.6))
+                        Text(typeFilter == nil ? "\(activeScopeSubtitle)暂无考勤记录" : "\(activeScopeSubtitle)暂无「\(typeFilter!.typeName)」记录")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                    .background(SCTheme.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                } else {
+                    LazyVStack(spacing: 10) {
+                        ForEach(groupedRecords) { group in
+                            recordGroupCard(group)
+                        }
+                    }
+                }
+            }
+            .padding()
+        }
+        .background(SCTheme.background.ignoresSafeArea())
+        .navigationTitle(typeFilter == nil ? "\(student.studentName) · 全部记录" : "\(student.studentName) · \(typeFilter!.typeName)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("关闭") { onCloseSheet() }
+            }
+        }
+        .sheet(isPresented: $showDayPickerSheet) {
+            NavigationStack {
+                VStack {
+                    DatePicker("选择日期", selection: $selectedDay, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .environment(\.locale, Locale(identifier: "zh_CN"))
+                        .padding()
+                    Spacer()
+                }
+                .navigationTitle("选择查询日期")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("今天") {
+                            selectedDay = Date()
+                            showDayPickerSheet = false
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("确定") { showDayPickerSheet = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+        .task(id: querySignature) {
+            await loadStudentRecords()
+        }
+    }
+
+    private var studentHeaderCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(student.displayTitle)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    let subParts = [student.className, student.studentNo].compactMap { $0?.isEmpty == false ? $0 : nil }
+                    if !subParts.isEmpty {
+                        Text(subParts.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                StatusBadge(
+                    text: typeFilter?.typeName ?? "全部考勤",
+                    color: typeBadgeTint
+                )
+            }
+
+            Divider()
+
+            HStack {
+                Text(activeScopeSubtitle)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if isLoading {
+                    Text("统计中...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if groupedRecords.isEmpty {
+                    Text("0 条记录")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green)
+                } else {
+                    Text("共 \(uniqueDaysCount) 天 · \(groupedRecords.count) 条 · \(totalPeriodsCount) 节")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(typeBadgeTint)
+                }
+            }
+        }
+        .padding(14)
+        .background(SCTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var scopeModeBar: some View {
+        HStack(spacing: 4) {
+            ForEach(RecordScopeMode.allCases) { mode in
+                let selected = scopeMode == mode
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) {
+                        scopeMode = mode
+                    }
+                } label: {
+                    Text(mode.rawValue)
+                        .font(.caption.weight(selected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(selected ? SCTheme.primary : Color.clear)
+                        .foregroundStyle(selected ? .white : .primary)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Color(.tertiarySystemFill))
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private var daySelectorBar: some View {
+        HStack(spacing: 8) {
+            Button {
+                if let prev = gregorian.date(byAdding: .day, value: -1, to: selectedDay) {
+                    selectedDay = prev
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 32, height: 32)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showDayPickerSheet = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar")
+                        .font(.caption)
+                        .foregroundStyle(SCTheme.primary)
+                    Text(SCDateFormatter.cnMonthDay.string(from: selectedDay))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(SCTheme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                if let next = gregorian.date(byAdding: .day, value: 1, to: selectedDay) {
+                    selectedDay = next
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 32, height: 32)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+
+            if !isSelectedDayToday {
+                Button {
+                    selectedDay = Date()
+                } label: {
+                    Text("今")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 30, height: 30)
+                        .background(SCTheme.primary.opacity(0.14))
+                        .foregroundStyle(SCTheme.primary)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var monthSelectorBar: some View {
+        HStack(spacing: 8) {
+            Button {
+                if let prev = gregorian.date(byAdding: .month, value: -1, to: selectedMonthDate) {
+                    selectedMonthDate = prev
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 32, height: 32)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+
+            Menu {
+                ForEach(monthOptions) { opt in
+                    Button {
+                        if let d = gregorian.date(from: DateComponents(year: opt.year, month: opt.month, day: 1)) {
+                            selectedMonthDate = d
+                        }
+                    } label: {
+                        if opt.id == currentMonthKey {
+                            Label(opt.title, systemImage: "checkmark")
+                        } else {
+                            Text(opt.title)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.caption)
+                        .foregroundStyle(SCTheme.primary)
+                    Text(SCDateFormatter.cnYearMonth.string(from: selectedMonthDate))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(SCTheme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            Button {
+                if let next = gregorian.date(byAdding: .month, value: 1, to: selectedMonthDate) {
+                    selectedMonthDate = next
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 32, height: 32)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var semesterSelectorBar: some View {
+        Menu {
+            Button {
+                selectedSemesterId = nil
+            } label: {
+                if selectedSemesterId == nil {
+                    Label("当前学期", systemImage: "checkmark")
+                } else {
+                    Text("当前学期")
+                }
+            }
+            ForEach(semesters) { sem in
+                Button {
+                    selectedSemesterId = sem.id
+                } label: {
+                    if selectedSemesterId == sem.id {
+                        Label(sem.name, systemImage: "checkmark")
+                    } else {
+                        Text(sem.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "graduationcap")
+                    .font(.caption)
+                    .foregroundStyle(SCTheme.primary)
+                Text(selectedSemesterId == nil ? "当前学期" : (selectedSemester?.name ?? "选择学期"))
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(SCTheme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    private func recordGroupCard(_ group: DayRecordGroup) -> some View {
+        let rec = group.primary
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text(formattedRecordDate(group.dateKey))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                StatusBadge(text: rec.titleText, color: SCTheme.color(for: rec.badgeColorKey))
+                if let src = rec.sourceBadgeText {
+                    Text(src)
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(.tertiarySystemFill))
+                        .foregroundStyle(.secondary)
+                        .clipShape(Capsule())
+                }
+                if let ap = rec.approvalStatus, !ap.isEmpty {
+                    let apText = ap == "pending" ? "待审" : (ap == "approved" ? "已批" : "驳回")
+                    StatusBadge(text: apText, color: SCTheme.color(for: ap))
+                }
+                Spacer(minLength: 4)
+                if let t = rec.displayTimeText {
+                    Text(t)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "clock")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(group.periodDetailText.isEmpty ? "全天" : group.periodDetailText)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+                if group.periodIds.count > 1 && !group.periodDetailText.contains("节)") {
+                    Text("共\(group.periodIds.count)节")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let dest = rec.destination?.trimmingCharacters(in: .whitespacesAndNewlines), !dest.isEmpty {
+                Text("去向：\(dest)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let remark = group.remark, !remark.isEmpty {
+                Text("备注/事由：\(remark)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(SCTheme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func formattedRecordDate(_ dateKey: String) -> String {
+        guard let d = SCDateFormatter.parseDate(dateKey) else { return dateKey }
+        let weekdayNames = ["", "周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+        let wd = gregorian.component(.weekday, from: d)
+        let suffix = (wd >= 1 && wd <= 7) ? " \(weekdayNames[wd])" : ""
+        return "\(dateKey)\(suffix)"
+    }
+
+    private func loadStudentRecords() async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        var reqScope = "month"
+        var startDate: String? = nil
+        var endDate: String? = nil
+        var reqSemesterId: Int? = nil
+
+        switch scopeMode {
+        case .day:
+            reqScope = "custom"
+            let dk = selectedDayKey
+            startDate = dk
+            endDate = dk
+        case .week:
+            reqScope = "week"
+        case .month:
+            reqScope = "month"
+        case .pickMonth:
+            reqScope = "custom"
+            let comps = gregorian.dateComponents([.year, .month], from: selectedMonthDate)
+            if let monthStart = gregorian.date(from: DateComponents(year: comps.year, month: comps.month, day: 1)),
+               let dayRange = gregorian.range(of: .day, in: .month, for: monthStart),
+               let monthEnd = gregorian.date(from: DateComponents(year: comps.year, month: comps.month, day: dayRange.count)) {
+                startDate = SCDateFormatter.yyyyMMdd.string(from: monthStart)
+                endDate = SCDateFormatter.yyyyMMdd.string(from: monthEnd)
+            }
+        case .semester:
+            reqSemesterId = selectedSemesterId
+            if let sid = selectedSemesterId,
+               let sem = semesters.first(where: { $0.id == sid }),
+               !sem.isCurrentFlag,
+               let semStart = SCDateFormatter.parseDate(sem.startDate) {
+                // 兼容老版后端不支持 semester_id 参数的情况：非当前学期自动转 custom 起止日期
+                reqScope = "custom"
+                let weeks = max(sem.totalWeeks ?? 20, 1)
+                let semEnd = gregorian.date(byAdding: .day, value: weeks * 7 - 1, to: semStart) ?? semStart
+                startDate = SCDateFormatter.yyyyMMdd.string(from: semStart)
+                endDate = SCDateFormatter.yyyyMMdd.string(from: semEnd)
+            } else {
+                reqScope = "semester"
+            }
+        }
+
+        do {
+            records = try await AttendanceRepository.fetchStudentRecords(
+                studentId: student.studentId,
+                scope: reqScope,
+                startDate: startDate,
+                endDate: endDate,
+                semesterId: reqSemesterId,
+                status: typeFilter?.status,
+                leaveTypeId: typeFilter?.leaveTypeId
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            records = []
+        }
     }
 }
 

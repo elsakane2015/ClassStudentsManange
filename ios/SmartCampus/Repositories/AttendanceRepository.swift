@@ -102,7 +102,10 @@ enum AttendanceRepository {
         studentId: Int,
         scope: String,
         startDate: String? = nil,
-        endDate: String? = nil
+        endDate: String? = nil,
+        semesterId: Int? = nil,
+        status: String? = nil,
+        leaveTypeId: Int? = nil
     ) async throws -> [AttendanceRecord] {
         var query: [String: String?] = [
             "student_id": String(studentId),
@@ -112,6 +115,9 @@ enum AttendanceRepository {
             query["start_date"] = startDate
             query["end_date"] = endDate
         }
+        if let semesterId { query["semester_id"] = String(semesterId) }
+        if let status, !status.isEmpty { query["status"] = status }
+        if let leaveTypeId { query["leave_type_id"] = String(leaveTypeId) }
         return try await APIClient.shared.request("/attendance/student-records", query: query)
     }
 
