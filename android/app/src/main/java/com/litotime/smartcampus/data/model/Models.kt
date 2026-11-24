@@ -12,6 +12,7 @@ import com.litotime.smartcampus.core.util.intVal
 import com.litotime.smartcampus.core.util.objOrNull
 import com.litotime.smartcampus.core.util.str
 import com.litotime.smartcampus.core.util.strList
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
@@ -898,6 +899,9 @@ data class LeaveRequestGroup(
     val eveningStudyLabel: String?,
     val destination: String?,
     val reason: String?,
+    val detailsText: String? = null,
+    val detailsReason: String? = null,
+    val note: String? = null,
     val images: List<String>,
     val status: String,
     val approverName: String?,
@@ -913,10 +917,39 @@ data class LeaveRequestGroup(
             else -> status
         }
 
+    /** 统一提取请假原因/补充说明（兼容 reason、details.text、details.reason、note） */
+    val displayReason: String?
+        get() {
+            val cleanReason = reason?.trim().orEmpty()
+            val cleanDetailText = detailsText?.trim().orEmpty()
+            val cleanDetailReason = detailsReason?.trim().orEmpty()
+            val cleanNote = note?.trim().orEmpty()
+
+            val primaryReason = cleanReason.ifEmpty { cleanDetailReason }
+            val primaryText = cleanDetailText
+
+            if (primaryText.isNotEmpty() && primaryReason.isNotEmpty()) {
+                return when {
+                    primaryText == primaryReason || primaryReason.contains(primaryText) -> primaryReason
+                    primaryText.contains(primaryReason) -> primaryText
+                    else -> "$primaryText · $primaryReason"
+                }
+            }
+            if (primaryReason.isNotEmpty()) return primaryReason
+            if (primaryText.isNotEmpty()) return primaryText
+            if (cleanNote.isNotEmpty()) return cleanNote
+            return null
+        }
+
     companion object {
+        private val lenientJson = Json { ignoreUnknownKeys = true }
+
         fun fromJson(o: JsonObject): LeaveRequestGroup {
             val studentObj = o.objOrNull("student")
             val ltObj = o.objOrNull("leave_type")
+            val detailsObj = o.objOrNull("details") ?: o.str("details")?.let { raw ->
+                runCatching { lenientJson.parseToJsonElement(raw).asObjectOrNull() }.getOrNull()
+            }
             val start = o.str("start_date").orEmpty()
             val end = o.str("end_date").orEmpty()
             val range = o.str("date_range_text").takeUnless { it.isNullOrBlank() }
@@ -936,6 +969,9 @@ data class LeaveRequestGroup(
                 eveningStudyLabel = o.str("evening_study_label"),
                 destination = o.str("destination"),
                 reason = o.str("reason"),
+                detailsText = detailsObj?.str("text"),
+                detailsReason = detailsObj?.str("reason"),
+                note = o.str("note") ?: detailsObj?.str("note"),
                 images = o.strList("images"),
                 status = o.str("approval_status") ?: o.str("status") ?: "pending",
                 approverName = o.str("approver_name"),

@@ -937,11 +937,15 @@ fun LeaveRequestFormScreen(user: User) {
                     scope.launch {
                         submitting = true
                         error = null
+                        val trimmedReason = reason.trim()
+                        val trimmedCustomText = customDetailText.trim()
+                        val effectiveReason = trimmedReason.ifEmpty { trimmedCustomText }
+                        val effectiveDetailText = trimmedCustomText.ifEmpty { trimmedReason }
                         val payload = buildJsonObject {
                             put("type", selectedSlug)
                             put("start_date", startDate.format(SCDateFormatter.yyyyMMdd))
                             put("end_date", endDate.format(SCDateFormatter.yyyyMMdd))
-                            put("reason", reason)
+                            put("reason", effectiveReason)
                             selectedSlotId?.let { put("time_slot_id", it) }
                             if (selectedPeriodIds.isNotEmpty()) {
                                 put("sessions", JsonArray(selectedPeriodIds.sorted().map { JsonPrimitive(it) }))
@@ -954,12 +958,12 @@ fun LeaveRequestFormScreen(user: User) {
                             }
                             val hasDetails = selectedOptionKey.isNotBlank() ||
                                 selectedType?.inputType == "time" ||
-                                (selectedType?.inputType == "text" && customDetailText.isNotBlank())
+                                (selectedType?.inputType == "text" && effectiveDetailText.isNotEmpty())
                             if (hasDetails) {
                                 put("details", buildJsonObject {
                                     if (selectedOptionKey.isNotBlank()) put("option", selectedOptionKey)
                                     if (selectedType?.inputType == "time") put("time", timeInputText.trim())
-                                    if (selectedType?.inputType == "text" && customDetailText.isNotBlank()) put("text", customDetailText.trim())
+                                    if (selectedType?.inputType == "text" && effectiveDetailText.isNotEmpty()) put("text", effectiveDetailText)
                                 })
                             }
                             if (hasEveningSelected) {
@@ -972,6 +976,7 @@ fun LeaveRequestFormScreen(user: User) {
                                 showSuccess = true
                                 selectedSlotId = null
                                 selectedPeriodIds = emptySet()
+                                customDetailText = ""
                                 reason = ""
                                 destination = ""
                                 uploadedPaths.clear()
@@ -1181,7 +1186,7 @@ fun LeaveHistoryScreen(user: User) {
                             req.eveningStudyLabel?.takeIf { it.isNotBlank() }?.let {
                                 Text("夜自习：$it" + (req.destination?.let { d -> "（去向：$d）" }.orEmpty()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                             }
-                            req.reason?.takeIf { it.isNotBlank() }?.let {
+                            req.displayReason?.takeIf { it.isNotBlank() }?.let {
                                 Spacer(Modifier.height(4.dp))
                                 Text("事由：$it", style = MaterialTheme.typography.bodySmall)
                             }

@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Http\Controllers\Api\LeaveRequestController;
+use App\Models\AttendanceRecord;
 use Illuminate\Support\Collection;
 use PHPUnit\Framework\TestCase;
 
@@ -44,5 +45,37 @@ class LeaveRequestPaginationTest extends TestCase
         $beyond = LeaveRequestController::paginateGroupedRequests($items, 5, 20);
         $this->assertCount(0, $beyond['data']);
         $this->assertFalse($beyond['meta']['has_more']);
+    }
+
+    public function test_resolve_leave_group_reason_reads_details_text_and_reason_without_duplication(): void
+    {
+        // 1. 「特殊」假类仅把原因存在 details.text，reason 为空
+        $special = new AttendanceRecord();
+        $special->setRawAttributes([
+            'reason' => null,
+            'details' => json_encode(['text' => '参加技能大赛集训']),
+        ]);
+        $this->assertSame('参加技能大赛集训', LeaveRequestController::resolveLeaveGroupReason([$special]));
+
+        // 2. 同时填写了 details.text 和不同内容的 reason 时合并展示
+        $both = new AttendanceRecord();
+        $both->setRawAttributes([
+            'reason' => '全天在实训室',
+            'details' => json_encode(['text' => '技能训练']),
+        ]);
+        $this->assertSame('技能训练 · 全天在实训室', LeaveRequestController::resolveLeaveGroupReason([$both]));
+
+        // 3. 两者相同时去重不重复
+        $same = new AttendanceRecord();
+        $same->setRawAttributes([
+            'reason' => '技能训练',
+            'details' => json_encode(['text' => '技能训练']),
+        ]);
+        $this->assertSame('技能训练', LeaveRequestController::resolveLeaveGroupReason([$same]));
+
+        // 4. 普通病假仅填 reason
+        $sick = new AttendanceRecord();
+        $sick->setRawAttributes(['reason' => '感冒发烧需要去医院']);
+        $this->assertSame('感冒发烧需要去医院', LeaveRequestController::resolveLeaveGroupReason([$sick]));
     }
 }

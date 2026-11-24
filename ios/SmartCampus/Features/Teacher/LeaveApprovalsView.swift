@@ -874,7 +874,7 @@ private struct ApprovalItemRow: View {
                         .foregroundStyle(.indigo)
                 }
 
-                if let reason = request.reason, !reason.isEmpty {
+                if let reason = request.displayReason, !reason.isEmpty {
                     Text("请假事由：\(reason)")
                         .font(.footnote)
                         .padding(10)

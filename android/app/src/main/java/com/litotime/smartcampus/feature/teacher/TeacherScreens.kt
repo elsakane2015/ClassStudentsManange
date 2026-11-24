@@ -3527,7 +3527,7 @@ fun LeaveApprovalsScreen(
                             req.eveningStudyLabel?.takeIf { it.isNotBlank() }?.let {
                                 Text("夜自习：$it" + (req.destination?.let { d -> " · 去向：$d" }.orEmpty()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                             }
-                            req.reason?.takeIf { it.isNotBlank() }?.let {
+                            req.displayReason?.takeIf { it.isNotBlank() }?.let {
                                 Spacer(Modifier.height(6.dp))
                                 Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)) {
                                     Text("事由：$it", style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().padding(10.dp))

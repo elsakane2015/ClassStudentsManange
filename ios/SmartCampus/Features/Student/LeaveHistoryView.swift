@@ -312,7 +312,7 @@ private struct LeaveRecordCard: View {
                         .foregroundStyle(.indigo)
                 }
 
-                if let reason = request.reason, !reason.isEmpty {
+                if let reason = request.displayReason, !reason.isEmpty {
                     Text("事由：\(reason)")
                         .font(.footnote)
                         .foregroundStyle(.primary)

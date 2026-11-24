@@ -201,7 +201,8 @@ class LeaveRequestController extends Controller
                 'half_day' => $primaryRecord->details['option'] ?? null,
                 'half_day_label' => $regularPeriodLabel ?: ($batchDisplayLabel ?: $this->getOptionLabel($primaryRecord)),
                 'details' => $primaryRecord->details,
-                'reason' => $primaryRecord->reason,
+                'reason' => self::resolveLeaveGroupReason($group),
+                'note' => $primaryRecord->note,
                 'scene' => $scenes->count() > 1 ? 'mixed' : ($scenes->first() ?? 'regular'),
                 'has_evening_study' => $eveningRecord !== null,
                 'period_ids' => $selectedPeriodIds->all(),
@@ -369,6 +370,14 @@ class LeaveRequestController extends Controller
                     $details[$key] = $value;
                 }
             }
+        }
+
+        // 统一归一化学生填写的请假原因：兼容 text 输入型假类（如「特殊」把说明填在 details.text）与通用 reason 字段
+        $trimmedReason = is_string($request->reason) ? trim($request->reason) : '';
+        $trimmedDetailText = isset($details['text']) && is_string($details['text']) ? trim($details['text']) : '';
+        $resolvedReason = $trimmedReason !== '' ? $trimmedReason : ($trimmedDetailText !== '' ? $trimmedDetailText : null);
+        if (($leaveType->input_type ?? null) === 'text' && $trimmedDetailText === '' && $trimmedReason !== '') {
+            $details['text'] = $trimmedReason;
         }
         
         // 处理时段：优先使用用户自定义选择的节次，否则使用时段的默认节次
@@ -664,7 +673,7 @@ class LeaveRequestController extends Controller
                             'images' => !empty($images) ? $images : null,
                             'is_self_applied' => true,
                             'approval_status' => 'pending',
-                            'reason' => $request->reason,
+                            'reason' => $resolvedReason,
                             'source_type' => 'self_applied',
                             'scene' => $period['scene'],
                             'counts_in_day_stats' => $period['counts_in_day_stats'],
@@ -692,7 +701,7 @@ class LeaveRequestController extends Controller
                         'images' => !empty($images) ? $images : null,
                         'is_self_applied' => true,
                         'approval_status' => 'pending',
-                        'reason' => $request->reason,
+                        'reason' => $resolvedReason,
                         'source_type' => 'self_applied',
                     ]);
                     $createdRecords[] = $record;
@@ -1270,5 +1279,60 @@ class LeaveRequestController extends Controller
         $parts = array_merge($parts, $specialPeriods);
         
         return implode('、', $parts);
+    }
+
+    /**
+     * 统一提取同批次请假申请的原因/说明文本（兼容 reason、details.text、details.reason、note），
+     * 确保「特殊」等文本输入型假类与普通请假在班主任/班级考勤员审批及学生请假记录中均完整展示。
+     *
+     * @param iterable<int, AttendanceRecord> $records
+     */
+    public static function resolveLeaveGroupReason(iterable $records): ?string
+    {
+        $detailText = null;
+        $reasonText = null;
+        $fallbackNote = null;
+
+        foreach ($records as $record) {
+            $rawReason = is_string($record->reason ?? null) ? trim($record->reason) : '';
+            if ($reasonText === null && $rawReason !== '') {
+                $reasonText = $rawReason;
+            }
+
+            $details = is_string($record->details ?? null)
+                ? json_decode($record->details, true)
+                : ($record->details ?? null);
+            if (is_array($details)) {
+                $rawText = is_string($details['text'] ?? null) ? trim($details['text']) : '';
+                if ($detailText === null && $rawText !== '') {
+                    $detailText = $rawText;
+                }
+                $rawDetailReason = is_string($details['reason'] ?? null) ? trim($details['reason']) : '';
+                if ($reasonText === null && $rawDetailReason !== '') {
+                    $reasonText = $rawDetailReason;
+                }
+                $rawDetailNote = is_string($details['note'] ?? null) ? trim($details['note']) : '';
+                if ($fallbackNote === null && $rawDetailNote !== '') {
+                    $fallbackNote = $rawDetailNote;
+                }
+            }
+
+            $rawNote = is_string($record->note ?? null) ? trim($record->note) : '';
+            if ($fallbackNote === null && $rawNote !== '') {
+                $fallbackNote = $rawNote;
+            }
+        }
+
+        if ($detailText !== null && $reasonText !== null) {
+            if ($detailText === $reasonText || mb_strpos($reasonText, $detailText) !== false) {
+                return $reasonText;
+            }
+            if (mb_strpos($detailText, $reasonText) !== false) {
+                return $detailText;
+            }
+            return "{$detailText} · {$reasonText}";
+        }
+
+        return $reasonText ?? $detailText ?? $fallbackNote;
     }
 }

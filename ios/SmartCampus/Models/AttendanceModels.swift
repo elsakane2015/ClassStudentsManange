@@ -279,11 +279,13 @@ struct AttendanceDetails: Decodable, Hashable {
     let timeSlotName: String?
     let displayLabel: String?
     let text: String?
+    let reason: String?
+    let note: String?
     let rollCallType: String?
     let rollCallTime: String?
 
     enum CodingKeys: String, CodingKey {
-        case option, text, periods
+        case option, text, reason, note, periods
         case optionLabel = "option_label"
         case optionPeriods = "option_periods"
         case periodIds = "period_ids"

@@ -53,7 +53,9 @@ struct LeaveRequestGroup: Decodable, Identifiable, Hashable {
     let totalDays: FlexibleInt?
     let halfDay: String?
     let halfDayLabel: String?
+    let details: PHPObject<AttendanceDetails>?
     let reason: String?
+    let note: String?
     let scene: String?
     let hasEveningStudy: FlexibleBool?
     let periodIds: [Int]?
@@ -71,7 +73,7 @@ struct LeaveRequestGroup: Decodable, Identifiable, Hashable {
     let records: [LeaveSubRecord]?
 
     enum CodingKeys: String, CodingKey {
-        case id, student, type, reason, scene, destination, images, status, records
+        case id, student, type, details, reason, note, scene, destination, images, status, records
         case leaveBatchId = "leave_batch_id"
         case studentId = "student_id"
         case schoolClass = "class"
@@ -112,6 +114,34 @@ struct LeaveRequestGroup: Decodable, Identifiable, Hashable {
             return s == e ? s : "\(s) 至 \(e)"
         }
         return startDate ?? "-"
+    }
+
+    /// 统一提取请假原因/补充说明（兼容 reason、details.text、details.reason、note），
+    /// 解决「特殊」等文本输入型假类在审批页与请假记录页不显示原因的问题
+    var displayReason: String? {
+        let cleanReason = reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanDetailText = details?.value?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanDetailReason = details?.value?.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanNote = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanDetailNote = details?.value?.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let primaryReason = !cleanReason.isEmpty ? cleanReason : cleanDetailReason
+        let primaryText = cleanDetailText
+
+        if !primaryText.isEmpty && !primaryReason.isEmpty {
+            if primaryText == primaryReason || primaryReason.contains(primaryText) {
+                return primaryReason
+            }
+            if primaryText.contains(primaryReason) {
+                return primaryText
+            }
+            return "\(primaryText) · \(primaryReason)"
+        }
+        if !primaryReason.isEmpty { return primaryReason }
+        if !primaryText.isEmpty { return primaryText }
+        if !cleanNote.isEmpty { return cleanNote }
+        if !cleanDetailNote.isEmpty { return cleanDetailNote }
+        return nil
     }
 }
 

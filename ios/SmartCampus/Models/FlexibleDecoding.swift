@@ -146,6 +146,14 @@ struct PHPObject<T: Decodable>: Decodable {
             self.value = decoded
             return
         }
+        // 兼容后端历史记录将 details 序列化为 JSON 字符串的情况
+        if let single = try? decoder.singleValueContainer(),
+           let rawString = try? single.decode(String.self),
+           let data = rawString.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(T.self, from: data) {
+            self.value = decoded
+            return
+        }
         self.value = nil
     }
 }

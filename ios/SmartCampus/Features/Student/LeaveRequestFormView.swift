@@ -464,11 +464,15 @@ struct LeaveRequestFormView: View {
         isSubmitting = true
         defer { isSubmitting = false }
 
+        let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCustomText = customTextDetail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveReason = trimmedReason.isEmpty ? trimmedCustomText : trimmedReason
+
         var payload: [String: Any] = [
             "type": selectedTypeSlug,
             "start_date": SCDateFormatter.yyyyMMdd.string(from: startDate),
             "end_date": SCDateFormatter.yyyyMMdd.string(from: endDate),
-            "reason": reason
+            "reason": effectiveReason
         ]
 
         if let slotId = selectedTimeSlotId {
@@ -491,8 +495,11 @@ struct LeaveRequestFormView: View {
         if selectedLeaveType?.inputType == "time" {
             details["time"] = SCDateFormatter.hhmm.string(from: selectedTime)
         }
-        if selectedLeaveType?.inputType == "text", !customTextDetail.trimmingCharacters(in: .whitespaces).isEmpty {
-            details["text"] = customTextDetail.trimmingCharacters(in: .whitespaces)
+        if selectedLeaveType?.inputType == "text" {
+            let effectiveDetailText = trimmedCustomText.isEmpty ? trimmedReason : trimmedCustomText
+            if !effectiveDetailText.isEmpty {
+                details["text"] = effectiveDetailText
+            }
         }
         if !details.isEmpty {
             payload["details"] = details
