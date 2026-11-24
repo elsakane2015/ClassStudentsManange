@@ -101,6 +101,8 @@ fun ProfileScreen(
     var wechatState by remember { mutableStateOf<TeacherWechatConfigState?>(null) }
     var wechatPushEnabled by remember { mutableStateOf(true) }
     var togglingWechatPush by remember { mutableStateOf(false) }
+    var bindingPushStates by remember { mutableStateOf<Map<Int, Boolean>>(emptyMap()) }
+    var togglingBindingIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var wechatFeedback by remember { mutableStateOf<String?>(null) }
     var wechatFeedbackIsError by remember { mutableStateOf(false) }
     var showChangePassword by remember { mutableStateOf(false) }
@@ -124,6 +126,7 @@ fun ProfileScreen(
             runCatching { container.repository.fetchTeacherWechatConfig() }.getOrNull()?.let { st ->
                 wechatState = st
                 st.config?.let { wechatPushEnabled = it.pushEnabled }
+                bindingPushStates = st.bindings.associate { it.id to it.pushEnabled }
             }
         }
     }
@@ -357,6 +360,92 @@ fun ProfileScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+
+                        if (wc.bindings.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            HorizontalDivider()
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                if (wechatPushEnabled) {
+                                    "已绑定用户独立开关（${wc.bindingCount}人）"
+                                } else {
+                                    "已绑定用户独立开关（总开关关闭时暂不推送）"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            wc.bindings.forEach { binding ->
+                                val bEnabled = bindingPushStates[binding.id] ?: binding.pushEnabled
+                                val bBusy = binding.id in togglingBindingIds
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text(binding.userName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                                            if (binding.roleDisplayText.isNotEmpty()) {
+                                                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                                                    Text(
+                                                        binding.roleDisplayText,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        val subParts = buildList {
+                                            binding.nickname?.takeIf { it.isNotBlank() && it != "-" }?.let { add(it) }
+                                            if (bEnabled && !wechatPushEnabled) add("待总开关开启")
+                                        }
+                                        if (subParts.isNotEmpty()) {
+                                            Text(
+                                                subParts.joinToString(" · "),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (bEnabled && !wechatPushEnabled) Color(0xFFEA580C) else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    if (bBusy) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    }
+                                    Switch(
+                                        checked = bEnabled,
+                                        enabled = !bBusy,
+                                        onCheckedChange = { nextEnabled ->
+                                            if (binding.id in togglingBindingIds) return@Switch
+                                            val previous = bEnabled
+                                            bindingPushStates = bindingPushStates + (binding.id to nextEnabled)
+                                            togglingBindingIds = togglingBindingIds + binding.id
+                                            wechatFeedback = null
+                                            wechatFeedbackIsError = false
+                                            scope.launch {
+                                                runCatching {
+                                                    container.repository.toggleTeacherWechatBindingPush(binding.id, nextEnabled)
+                                                }.onSuccess { (finalState, _) ->
+                                                    bindingPushStates = bindingPushStates + (binding.id to finalState)
+                                                    val msg = "${binding.userName}：${if (finalState) "已开启微信推送" else "已关闭微信推送"}"
+                                                    wechatFeedback = msg
+                                                    wechatFeedbackIsError = false
+                                                    togglingBindingIds = togglingBindingIds - binding.id
+                                                    delay(2500)
+                                                    if (wechatFeedback == msg) wechatFeedback = null
+                                                }.onFailure { err ->
+                                                    bindingPushStates = bindingPushStates + (binding.id to previous)
+                                                    wechatFeedbackIsError = true
+                                                    wechatFeedback = "切换失败：${err.localizedMessage ?: "请稍后重试"}"
+                                                    togglingBindingIds = togglingBindingIds - binding.id
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
                         wechatFeedback?.let { fb ->
                             Spacer(Modifier.height(6.dp))
                             Text(

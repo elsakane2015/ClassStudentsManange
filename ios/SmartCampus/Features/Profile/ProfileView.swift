@@ -15,6 +15,8 @@ struct ProfileView: View {
     @State private var wechatConfigRes: TeacherWechatConfigResponse?
     @State private var wechatPushEnabled = true
     @State private var isTogglingWechatPush = false
+    @State private var bindingPushStates: [Int: Bool] = [:]
+    @State private var togglingBindingIds: Set<Int> = []
     @State private var wechatToggleFeedback: String?
     @State private var wechatToggleIsError = false
 
@@ -192,6 +194,53 @@ struct ProfileView: View {
                                     .foregroundStyle(.secondary)
                             }
 
+                            if let bindings = wechat.bindings, !bindings.isEmpty {
+                                ForEach(bindings) { binding in
+                                    let bEnabled = bindingPushStates[binding.id] ?? binding.isPushEnabled
+                                    let bBusy = togglingBindingIds.contains(binding.id)
+                                    Toggle(isOn: Binding(
+                                        get: { bEnabled },
+                                        set: { nextVal in
+                                            Task { await updateBindingPushEnabled(binding, enabled: nextVal) }
+                                        }
+                                    )) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack(spacing: 6) {
+                                                Text(binding.userName ?? "微信用户")
+                                                    .font(.subheadline.weight(.medium))
+                                                if !binding.roleDisplayText.isEmpty {
+                                                    Text(binding.roleDisplayText)
+                                                        .font(.caption2)
+                                                        .padding(.horizontal, 6)
+                                                        .padding(.vertical, 1)
+                                                        .background(Color(.tertiarySystemFill))
+                                                        .foregroundStyle(.secondary)
+                                                        .clipShape(Capsule())
+                                                }
+                                                if bBusy {
+                                                    ProgressView()
+                                                        .controlSize(.mini)
+                                                }
+                                            }
+                                            HStack(spacing: 4) {
+                                                if let nick = binding.nickname, !nick.isEmpty, nick != "-" {
+                                                    Text(nick)
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                                if bEnabled && !wechatPushEnabled {
+                                                    Text("· 待总开关开启")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.orange)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .tint(SCTheme.primary)
+                                    .disabled(bBusy)
+                                }
+                            }
+
                             if let fb = wechatToggleFeedback {
                                 Text(fb)
                                     .font(.caption)
@@ -355,6 +404,40 @@ struct ProfileView: View {
             if let cfg = res.config {
                 wechatPushEnabled = cfg.isPushEnabled
             }
+            var states: [Int: Bool] = [:]
+            for b in res.bindings ?? [] {
+                states[b.id] = b.isPushEnabled
+            }
+            bindingPushStates = states
+        }
+    }
+
+    private func updateBindingPushEnabled(_ binding: TeacherWechatBindingSummary, enabled nextEnabled: Bool) async {
+        guard !togglingBindingIds.contains(binding.id) else { return }
+        let previous = bindingPushStates[binding.id] ?? binding.isPushEnabled
+        bindingPushStates[binding.id] = nextEnabled
+        togglingBindingIds.insert(binding.id)
+        wechatToggleFeedback = nil
+        wechatToggleIsError = false
+
+        do {
+            let res = try await NotificationRepository.toggleTeacherWechatBindingPush(bindingId: binding.id, enabled: nextEnabled)
+            let finalState = res.pushEnabled?.value ?? nextEnabled
+            bindingPushStates[binding.id] = finalState
+            let name = binding.userName ?? "该用户"
+            wechatToggleFeedback = "\(name)：\(finalState ? "已开启微信推送" : "已关闭微信推送")"
+            wechatToggleIsError = false
+            togglingBindingIds.remove(binding.id)
+            let shown = wechatToggleFeedback
+            try? await Task.sleep(for: .seconds(2.5))
+            if wechatToggleFeedback == shown {
+                wechatToggleFeedback = nil
+            }
+        } catch {
+            bindingPushStates[binding.id] = previous
+            wechatToggleIsError = true
+            wechatToggleFeedback = "切换失败：\(error.localizedDescription)"
+            togglingBindingIds.remove(binding.id)
         }
     }
 

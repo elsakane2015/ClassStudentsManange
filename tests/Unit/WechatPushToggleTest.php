@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Http\Controllers\Api\WechatController;
+use App\Models\WechatBinding;
 use App\Models\WechatConfig;
 use App\Services\WechatPushService;
 use PHPUnit\Framework\TestCase;
@@ -99,5 +100,31 @@ class WechatPushToggleTest extends TestCase
         $this->assertTrue($attrs['push_enabled']);
         $this->assertFalse($attrs['is_verified']);
         $this->assertNull($attrs['appsecret']);
+    }
+
+    public function test_binding_push_toggle_filters_only_enabled_bindings(): void
+    {
+        $enabledBinding = new WechatBinding(['user_id' => 1, 'openid' => 'o_1', 'push_enabled' => true]);
+        $disabledBinding = new WechatBinding(['user_id' => 2, 'openid' => 'o_2', 'push_enabled' => false]);
+        $legacyBinding = new WechatBinding(['user_id' => 3, 'openid' => 'o_3']);
+
+        $this->assertTrue($enabledBinding->isPushEnabled());
+        $this->assertFalse($disabledBinding->isPushEnabled());
+        $this->assertTrue($legacyBinding->isPushEnabled());
+
+        $this->assertTrue(WechatPushService::shouldSendToBinding($enabledBinding));
+        $this->assertFalse(WechatPushService::shouldSendToBinding($disabledBinding));
+        $this->assertTrue(WechatPushService::shouldSendToBinding($legacyBinding));
+
+        $filtered = WechatPushService::filterPushEnabledBindings([
+            $enabledBinding,
+            $disabledBinding,
+            $legacyBinding,
+        ]);
+        $this->assertCount(2, $filtered);
+        $this->assertSame(['o_1', 'o_3'], array_map(fn ($b) => $b->openid, $filtered));
+
+        $allDisabled = WechatPushService::filterPushEnabledBindings([$disabledBinding]);
+        $this->assertSame([], $allDisabled);
     }
 }

@@ -627,6 +627,14 @@ class SmartCampusRepository(private val api: ApiClient) {
         return finalEnabled to msg
     }
 
+    suspend fun toggleTeacherWechatBindingPush(bindingId: Int, enabled: Boolean): Pair<Boolean, String> {
+        val body = buildJsonObject { put("push_enabled", enabled) }
+        val obj = api.requestElement("/wechat/teacher-binding/$bindingId/toggle", method = "POST", jsonBody = body.toString()).asObjectOrNull()
+        val finalEnabled = obj?.boolVal("push_enabled", enabled) ?: enabled
+        val msg = obj?.str("message") ?: if (finalEnabled) "已开启该用户的微信推送" else "已关闭该用户的微信推送"
+        return finalEnabled to msg
+    }
+
     suspend fun changePassword(currentPassword: String, newPassword: String, confirmPassword: String) {
         val body = buildJsonObject {
             put("current_password", currentPassword)

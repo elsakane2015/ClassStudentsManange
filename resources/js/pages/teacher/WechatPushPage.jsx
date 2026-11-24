@@ -9,8 +9,10 @@ export default function WechatPushPage() {
     const [saving, setSaving] = useState(false);
     const [verifying, setVerifying] = useState(false);
     const [togglingPush, setTogglingPush] = useState(false);
+    const [togglingBindingIds, setTogglingBindingIds] = useState({});
     const [message, setMessage] = useState('');
     const [toggleNotice, setToggleNotice] = useState('');
+    const [bindingNotice, setBindingNotice] = useState('');
     const [qrcodeUrl, setQrcodeUrl] = useState('');
     const [qrcodeLoading, setQrcodeLoading] = useState(false);
 
@@ -131,6 +133,50 @@ export default function WechatPushPage() {
             fetchConfig();
         } catch (error) {
             alert('解除绑定失败: ' + (error.response?.data?.error || error.message));
+        }
+    };
+
+    const handleToggleBindingPush = async (binding) => {
+        if (togglingBindingIds[binding.id]) return;
+        const currentEnabled = binding.push_enabled ?? true;
+        const nextEnabled = !currentEnabled;
+
+        setTogglingBindingIds((prev) => ({ ...prev, [binding.id]: true }));
+        setBindingNotice('');
+        setData((prev) => (prev ? {
+            ...prev,
+            bindings: (prev.bindings || []).map((item) =>
+                item.id === binding.id ? { ...item, push_enabled: nextEnabled } : item
+            ),
+        } : prev));
+
+        try {
+            const res = await axios.post(`/wechat/teacher-binding/${binding.id}/toggle`, {
+                push_enabled: nextEnabled,
+            });
+            const finalEnabled = res.data.push_enabled ?? nextEnabled;
+            setData((prev) => (prev ? {
+                ...prev,
+                bindings: (prev.bindings || []).map((item) =>
+                    item.id === binding.id ? { ...item, push_enabled: finalEnabled } : item
+                ),
+            } : prev));
+            setBindingNotice(`${binding.user_name}：${finalEnabled ? '已开启微信推送' : '已关闭微信推送'}`);
+            setTimeout(() => setBindingNotice(''), 3000);
+        } catch (error) {
+            setData((prev) => (prev ? {
+                ...prev,
+                bindings: (prev.bindings || []).map((item) =>
+                    item.id === binding.id ? { ...item, push_enabled: currentEnabled } : item
+                ),
+            } : prev));
+            setBindingNotice('切换失败: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setTogglingBindingIds((prev) => {
+                const next = { ...prev };
+                delete next[binding.id];
+                return next;
+            });
         }
     };
 
@@ -435,40 +481,79 @@ export default function WechatPushPage() {
                 {/* 已绑定用户列表 */}
                 {data?.bindings?.length > 0 && (
                     <div className="bg-white rounded-lg shadow overflow-hidden">
-                        <div className="px-6 py-4 border-b border-gray-200">
-                            <h2 className="text-lg font-medium text-gray-900">已绑定用户 ({data.bindings.length}人)</h2>
+                        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
+                            <div>
+                                <h2 className="text-lg font-medium text-gray-900">已绑定用户 ({data.bindings.length}人)</h2>
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                    {pushEnabled
+                                        ? '可针对每位已绑定用户单独开启或关闭微信推送（关闭后仍保留绑定关系）'
+                                        : '当前整体公众号推送总开关已关闭，下方独立开关配置将在开启总开关后生效'}
+                                </p>
+                            </div>
+                            {bindingNotice && (
+                                <span className={`text-xs ${bindingNotice.includes('失败') ? 'text-red-600' : 'text-green-600'}`}>
+                                    {bindingNotice}
+                                </span>
+                            )}
                         </div>
-                        <table className="min-w-full divide-y divide-gray-200">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">姓名</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">角色</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">微信昵称</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">绑定时间</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {data.bindings.map((binding) => (
-                                    <tr key={binding.id}>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{binding.user_name}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {binding.user_role === 'teacher' ? '班主任' : binding.user_role === 'student' ? '班级考勤员' : binding.user_role}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.nickname}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.created_at}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                            <button
-                                                onClick={() => handleUnbind(binding.id)}
-                                                className="text-red-600 hover:text-red-900"
-                                            >
-                                                解除绑定
-                                            </button>
-                                        </td>
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">姓名</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">角色</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">微信昵称</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">绑定时间</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">推送开关</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {data.bindings.map((binding) => {
+                                        const itemEnabled = binding.push_enabled ?? true;
+                                        const itemBusy = Boolean(togglingBindingIds[binding.id]);
+                                        return (
+                                            <tr key={binding.id}>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{binding.user_name}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                    {binding.user_role === 'teacher' ? '班主任' : binding.user_role === 'student' ? '班级考勤员' : binding.user_role}
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.nickname}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.created_at}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <div className="flex items-center gap-2.5">
+                                                        <button
+                                                            type="button"
+                                                            role="switch"
+                                                            aria-checked={itemEnabled}
+                                                            aria-label={`切换 ${binding.user_name} 的微信推送开关`}
+                                                            disabled={itemBusy}
+                                                            onClick={() => handleToggleBindingPush(binding)}
+                                                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 disabled:opacity-60 ${itemEnabled ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                                                        >
+                                                            <span
+                                                                className={`inline-block h-5 w-5 translate-y-0.5 rounded-full bg-white shadow transition-transform ${itemEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}
+                                                            />
+                                                        </button>
+                                                        <span className={`text-xs font-medium ${itemEnabled ? (pushEnabled ? 'text-green-700' : 'text-amber-700') : 'text-gray-500'}`}>
+                                                            {itemEnabled ? (pushEnabled ? '已开启' : '待总开关') : '已关闭'}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <button
+                                                        onClick={() => handleUnbind(binding.id)}
+                                                        className="text-red-600 hover:text-red-900"
+                                                    >
+                                                        解除绑定
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 )}
 

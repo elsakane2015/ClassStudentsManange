@@ -1395,20 +1395,46 @@ data class TeacherWechatConfigSummary(
     }
 }
 
+data class TeacherWechatBindingItem(
+    val id: Int,
+    val userName: String,
+    val userRole: String,
+    val nickname: String?,
+    val pushEnabled: Boolean
+) {
+    val roleDisplayText: String
+        get() = when (userRole) {
+            "teacher" -> "班主任"
+            "student" -> "班级考勤员"
+            else -> userRole
+        }
+
+    companion object {
+        fun fromJson(o: JsonObject) = TeacherWechatBindingItem(
+            id = o.intVal("id"),
+            userName = o.str("user_name") ?: "微信用户",
+            userRole = o.str("user_role").orEmpty(),
+            nickname = o.str("nickname"),
+            pushEnabled = o.boolVal("push_enabled", true)
+        )
+    }
+}
+
 data class TeacherWechatConfigState(
     val useSystemEnabled: Boolean,
     val customConfigEnabled: Boolean,
     val config: TeacherWechatConfigSummary?,
-    val bindingCount: Int
+    val bindings: List<TeacherWechatBindingItem>
 ) {
     val isAvailable: Boolean get() = useSystemEnabled || customConfigEnabled || config != null
+    val bindingCount: Int get() = bindings.size
 
     companion object {
         fun fromJson(o: JsonObject) = TeacherWechatConfigState(
             useSystemEnabled = o.boolVal("use_system_enabled", false),
             customConfigEnabled = o.boolVal("custom_config_enabled", false),
             config = o.objOrNull("config")?.let(TeacherWechatConfigSummary::fromJson),
-            bindingCount = o.arrOrEmpty("bindings").size
+            bindings = o.arrOrEmpty("bindings").mapNotNull { it.asObjectOrNull()?.let(TeacherWechatBindingItem::fromJson) }
         )
     }
 }

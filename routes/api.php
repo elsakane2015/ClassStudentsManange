@@ -140,6 +140,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/wechat/teacher-config', [WechatController::class, 'saveTeacherConfig']); // Teacher: save my config
     Route::post('/wechat/teacher-config/toggle', [WechatController::class, 'toggleTeacherPush']); // Teacher: toggle push switch
     Route::post('/wechat/verify-config', [WechatController::class, 'verifyTeacherConfig']); // Teacher: verify config
+    Route::post('/wechat/teacher-binding/{bindingId}/toggle', [WechatController::class, 'toggleTeacherBindingPush']); // Teacher: toggle binding push switch
     Route::delete('/wechat/teacher-unbind/{bindingId}', [WechatController::class, 'teacherUnbind']); // Teacher: unbind user
     Route::get('/wechat/manager-status', [WechatController::class, 'getManagerBindStatus']); // Manager: get bind status
     Route::delete('/wechat/manager-unbind', [WechatController::class, 'managerUnbind']); // Manager: unbind self

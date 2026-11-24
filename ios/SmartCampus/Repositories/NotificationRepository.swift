@@ -21,11 +21,24 @@ struct TeacherWechatConfigItem: Decodable, Hashable {
 struct TeacherWechatBindingSummary: Decodable, Identifiable, Hashable {
     let id: Int
     let userName: String?
+    let userRole: String?
     let nickname: String?
+    let pushEnabled: FlexibleBool?
 
     enum CodingKeys: String, CodingKey {
         case id, nickname
         case userName = "user_name"
+        case userRole = "user_role"
+        case pushEnabled = "push_enabled"
+    }
+
+    var isPushEnabled: Bool { pushEnabled?.value ?? true }
+    var roleDisplayText: String {
+        switch userRole {
+        case "teacher": return "班主任"
+        case "student": return "班级考勤员"
+        default: return userRole ?? ""
+        }
     }
 }
 
@@ -104,6 +117,17 @@ enum NotificationRepository {
         }
         return try await APIClient.shared.request(
             "/wechat/teacher-config/toggle",
+            method: "POST",
+            body: Payload(push_enabled: enabled)
+        )
+    }
+
+    static func toggleTeacherWechatBindingPush(bindingId: Int, enabled: Bool) async throws -> TeacherWechatToggleResponse {
+        struct Payload: Encodable {
+            let push_enabled: Bool
+        }
+        return try await APIClient.shared.request(
+            "/wechat/teacher-binding/\(bindingId)/toggle",
             method: "POST",
             body: Payload(push_enabled: enabled)
         )

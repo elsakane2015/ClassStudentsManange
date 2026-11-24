@@ -58,8 +58,13 @@ class WechatPushService
             return ['error' => '未配置模板ID'];
         }
 
-        // 获取需要推送的用户
-        $bindingsToNotify = WechatBinding::where('config_id', $config->id)->get();
+        // 获取需要推送的用户（过滤掉单独关闭微信推送的绑定用户）
+        $allBindings = WechatBinding::where('config_id', $config->id)->get();
+        $bindingsToNotify = self::filterPushEnabledBindings($allBindings);
+
+        if ($allBindings->isNotEmpty() && empty($bindingsToNotify)) {
+            return ['skipped' => true, 'message' => '所有已绑定用户均已关闭公众号推送'];
+        }
 
         foreach ($bindingsToNotify as $binding) {
             $result = $this->sendTemplateMessage(
@@ -93,6 +98,31 @@ class WechatPushService
             return 'push_disabled';
         }
         return null;
+    }
+
+    /**
+     * 判断单个绑定用户是否允许接收公众号推送
+     */
+    public static function shouldSendToBinding(WechatBinding $binding): bool
+    {
+        return $binding->isPushEnabled();
+    }
+
+    /**
+     * 过滤出开启了独立推送开关的绑定用户列表
+     *
+     * @param iterable<WechatBinding> $bindings
+     * @return WechatBinding[]
+     */
+    public static function filterPushEnabledBindings(iterable $bindings): array
+    {
+        $enabled = [];
+        foreach ($bindings as $binding) {
+            if (self::shouldSendToBinding($binding)) {
+                $enabled[] = $binding;
+            }
+        }
+        return $enabled;
     }
 
     /**

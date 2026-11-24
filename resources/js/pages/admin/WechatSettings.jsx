@@ -299,13 +299,14 @@ export default function WechatSettings() {
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">绑定公众号</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">绑定时间</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">推送开关</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {bindings.length === 0 ? (
                                 <tr>
-                                    <td colSpan="6" className="px-6 py-4 text-center text-gray-500">暂无绑定用户</td>
+                                    <td colSpan="7" className="px-6 py-4 text-center text-gray-500">暂无绑定用户</td>
                                 </tr>
                             ) : (
                                 bindings.map((binding) => (
@@ -317,6 +318,13 @@ export default function WechatSettings() {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.nickname}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.config_owner}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{binding.created_at}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {(binding.push_enabled ?? true) ? (
+                                                <span className="px-2 py-1 text-xs font-medium rounded-full bg-indigo-100 text-indigo-800">已启用</span>
+                                            ) : (
+                                                <span className="px-2 py-1 text-xs font-medium rounded-full bg-amber-100 text-amber-800">已关闭</span>
+                                            )}
+                                        </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                                             <button
                                                 onClick={() => handleUnbind(binding.id)}

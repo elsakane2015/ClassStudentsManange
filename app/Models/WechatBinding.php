@@ -15,7 +15,17 @@ class WechatBinding extends Model
         'openid',
         'nickname',
         'headimgurl',
+        'push_enabled',
     ];
+
+    protected $casts = [
+        'push_enabled' => 'boolean',
+    ];
+
+    public function isPushEnabled(): bool
+    {
+        return $this->push_enabled ?? true;
+    }
 
     public function user()
     {

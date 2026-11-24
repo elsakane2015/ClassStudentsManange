@@ -141,6 +141,7 @@ class WechatController extends Controller
                     'user_role' => $binding->user->role ?? '-',
                     'nickname' => $binding->nickname ?? '-',
                     'config_owner' => $binding->config ? $binding->config->user->name : '系统公众号',
+                    'push_enabled' => $binding->isPushEnabled(),
                     'created_at' => $binding->created_at->format('Y-m-d H:i'),
                 ];
             });
@@ -208,6 +209,7 @@ class WechatController extends Controller
                         'user_name' => $binding->user->name ?? '-',
                         'user_role' => $binding->user->role ?? '-',
                         'nickname' => $binding->nickname ?? '-',
+                        'push_enabled' => $binding->isPushEnabled(),
                         'created_at' => $binding->created_at->format('Y-m-d H:i'),
                     ];
                 });
@@ -441,6 +443,47 @@ class WechatController extends Controller
 
         $binding->delete();
         return response()->json(['message' => '解除绑定成功']);
+    }
+
+    /**
+     * 班主任切换单个已绑定用户的微信推送开关
+     */
+    public function toggleTeacherBindingPush(Request $request, $bindingId)
+    {
+        $user = $request->user();
+        if ($user->role !== 'teacher') {
+            return response()->json(['error' => '无权限'], 403);
+        }
+
+        $validated = $request->validate([
+            'push_enabled' => 'required|boolean',
+        ]);
+
+        $config = WechatConfig::where('user_id', $user->id)->first();
+        if (!$config) {
+            return response()->json(['error' => '未配置公众号'], 400);
+        }
+
+        $binding = WechatBinding::where('id', $bindingId)
+            ->where('config_id', $config->id)
+            ->first();
+
+        if (!$binding) {
+            return response()->json(['error' => '绑定不存在'], 404);
+        }
+
+        if (!Schema::hasColumn('wechat_bindings', 'push_enabled')) {
+            return response()->json(['error' => '数据库尚未升级，请稍后再试'], 503);
+        }
+
+        $enabled = (bool) $validated['push_enabled'];
+        $binding->update(['push_enabled' => $enabled]);
+
+        return response()->json([
+            'message' => $enabled ? '已开启该用户的微信推送' : '已关闭该用户的微信推送',
+            'binding_id' => $binding->id,
+            'push_enabled' => $enabled,
+        ]);
     }
 
     /**
