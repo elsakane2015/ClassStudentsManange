@@ -12,6 +12,7 @@ use App\Models\SystemSetting;
 use App\Models\Student;
 use EasyWeChat\OfficialAccount\Application;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class WechatController extends Controller
@@ -112,6 +113,8 @@ class WechatController extends Controller
                     'classes' => $teacher->teacherClasses->pluck('name')->join(', '),
                     'config_type' => $config ? ($config->use_system ? '系统公众号' : '自己的公众号') : '未配置',
                     'is_verified' => $config ? $config->is_verified : false,
+                    'push_enabled' => $config ? $config->isPushEnabled() : false,
+                    'has_config' => (bool) $config,
                     'binding_count' => $config ? $config->bindings->count() : 0,
                 ];
             });
@@ -224,6 +227,7 @@ class WechatController extends Controller
                 'token' => $config->token,
                 'template_id' => $config->template_id,
                 'is_verified' => $config->is_verified,
+                'push_enabled' => $config->isPushEnabled(),
                 'has_secret' => !empty($config->getDecryptedAppsecret()),
             ] : null,
             'bindings' => $bindings,
@@ -252,6 +256,7 @@ class WechatController extends Controller
             'appsecret' => 'nullable|string|max:100',
             'token' => 'nullable|string|max:100',
             'template_id' => 'nullable|string|max:100',
+            'push_enabled' => 'sometimes|boolean',
         ]);
 
         // 检查权限
@@ -267,19 +272,97 @@ class WechatController extends Controller
             }
         }
 
+        $existing = WechatConfig::where('user_id', $user->id)->first();
+        $hasPushEnabledCol = Schema::hasColumn('wechat_configs', 'push_enabled');
+        $attributes = self::buildTeacherConfigSaveAttributes($existing, $validated, $hasPushEnabledCol);
+
         $config = WechatConfig::updateOrCreate(
             ['user_id' => $user->id],
-            [
-                'use_system' => $validated['use_system'],
-                'appid' => $validated['appid'] ?? null,
-                'appsecret' => ($validated['appsecret'] && $validated['appsecret'] !== '******') ? $validated['appsecret'] : null,
-                'token' => $validated['token'] ?? null,
-                'template_id' => $validated['template_id'] ?? null,
-                'is_verified' => false,
-            ]
+            $attributes
         );
 
-        return response()->json(['message' => '保存成功', 'config_id' => $config->id]);
+        return response()->json([
+            'message' => '保存成功',
+            'config_id' => $config->id,
+            'push_enabled' => $config->isPushEnabled(),
+        ]);
+    }
+
+    /**
+     * 组装班主任保存公众号配置时的字段（保留掩码密文与未变凭据的验证状态）
+     */
+    public static function buildTeacherConfigSaveAttributes(?WechatConfig $existing, array $validated, bool $hasPushEnabledCol = true): array
+    {
+        $useSystem = (bool) $validated['use_system'];
+        $incomingAppid = $validated['appid'] ?? null;
+        $incomingToken = $validated['token'] ?? null;
+        $incomingTemplateId = $validated['template_id'] ?? null;
+        $incomingSecret = $validated['appsecret'] ?? null;
+        $hasNewSecret = is_string($incomingSecret) && $incomingSecret !== '' && $incomingSecret !== '******';
+
+        $credentialsChanged = !$existing
+            || ((bool) $existing->use_system !== $useSystem)
+            || (!$useSystem && (
+                ($existing->appid ?? null) !== $incomingAppid
+                || ($existing->token ?? null) !== $incomingToken
+                || $hasNewSecret
+            ));
+
+        $attributes = [
+            'use_system' => $useSystem,
+            'appid' => $incomingAppid,
+            'token' => $incomingToken,
+            'template_id' => $incomingTemplateId,
+            'is_verified' => $credentialsChanged ? false : (bool) $existing->is_verified,
+        ];
+
+        if ($hasNewSecret) {
+            $attributes['appsecret'] = $incomingSecret;
+        } elseif (!$existing) {
+            $attributes['appsecret'] = null;
+        }
+
+        if ($hasPushEnabledCol) {
+            if (array_key_exists('push_enabled', $validated)) {
+                $attributes['push_enabled'] = (bool) $validated['push_enabled'];
+            } else {
+                $attributes['push_enabled'] = $existing ? $existing->isPushEnabled() : true;
+            }
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * 班主任切换公众号推送开关（仅更新 push_enabled，保留原配置、验证态与绑定关系）
+     */
+    public function toggleTeacherPush(Request $request)
+    {
+        $user = $request->user();
+        if ($user->role !== 'teacher') {
+            return response()->json(['error' => '无权限'], 403);
+        }
+
+        $validated = $request->validate([
+            'push_enabled' => 'required|boolean',
+        ]);
+
+        $config = WechatConfig::where('user_id', $user->id)->first();
+        if (!$config) {
+            return response()->json(['error' => '请先保存公众号配置后再切换推送开关'], 400);
+        }
+
+        if (!Schema::hasColumn('wechat_configs', 'push_enabled')) {
+            return response()->json(['error' => '数据库尚未升级，请稍后再试'], 503);
+        }
+
+        $enabled = (bool) $validated['push_enabled'];
+        $config->update(['push_enabled' => $enabled]);
+
+        return response()->json([
+            'message' => $enabled ? '已开启公众号推送' : '已关闭公众号推送',
+            'push_enabled' => $enabled,
+        ]);
     }
 
     /**

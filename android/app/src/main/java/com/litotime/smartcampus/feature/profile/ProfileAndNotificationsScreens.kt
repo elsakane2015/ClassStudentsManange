@@ -46,6 +46,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -74,6 +75,7 @@ import com.litotime.smartcampus.core.designsystem.StatusBadge
 import com.litotime.smartcampus.core.util.SCDateFormatter
 import com.litotime.smartcampus.data.model.AppNotificationItem
 import com.litotime.smartcampus.data.model.MobileDeviceItem
+import com.litotime.smartcampus.data.model.TeacherWechatConfigState
 import com.litotime.smartcampus.data.model.User
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -96,6 +98,11 @@ fun ProfileScreen(
     var devices by remember { mutableStateOf<List<MobileDeviceItem>>(emptyList()) }
     var isSyncingPush by remember { mutableStateOf(false) }
     var pushSyncFeedback by remember { mutableStateOf<String?>(null) }
+    var wechatState by remember { mutableStateOf<TeacherWechatConfigState?>(null) }
+    var wechatPushEnabled by remember { mutableStateOf(true) }
+    var togglingWechatPush by remember { mutableStateOf(false) }
+    var wechatFeedback by remember { mutableStateOf<String?>(null) }
+    var wechatFeedbackIsError by remember { mutableStateOf(false) }
     var showChangePassword by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
@@ -113,6 +120,12 @@ fun ProfileScreen(
         hasNotifPerm = container.pushManager.hasNotificationPermission()
         container.pushManager.refreshUnreadCount()
         devices = runCatching { container.repository.fetchDevices() }.getOrDefault(emptyList())
+        if (user.role == "teacher") {
+            runCatching { container.repository.fetchTeacherWechatConfig() }.getOrNull()?.let { st ->
+                wechatState = st
+                st.config?.let { wechatPushEnabled = it.pushEnabled }
+            }
+        }
     }
 
     Scaffold(
@@ -259,6 +272,115 @@ fun ProfileScreen(
                         color = Color(0xFF16A34A),
                         fontWeight = FontWeight.Medium
                     )
+                }
+            }
+
+            // WeChat Official Account Push Switch (Teacher Only)
+            val wc = wechatState
+            if (user.role == "teacher" && wc != null && wc.isAvailable) {
+                SCCard {
+                    Text("微信公众号推送", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    val cfg = wc.config
+                    if (cfg != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("启用公众号推送", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Text(
+                                    if (wechatPushEnabled) {
+                                        "学生提交请假时，自动推送微信模板消息"
+                                    } else {
+                                        "已暂停微信推送（保留原配置与绑定，随时可开启）"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (togglingWechatPush) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            }
+                            Switch(
+                                checked = wechatPushEnabled,
+                                enabled = !togglingWechatPush,
+                                onCheckedChange = { nextEnabled ->
+                                    if (togglingWechatPush) return@Switch
+                                    val previous = wechatPushEnabled
+                                    wechatPushEnabled = nextEnabled
+                                    togglingWechatPush = true
+                                    wechatFeedback = null
+                                    wechatFeedbackIsError = false
+                                    scope.launch {
+                                        runCatching {
+                                            container.repository.toggleTeacherWechatPush(nextEnabled)
+                                        }.onSuccess { (finalState, msg) ->
+                                            wechatPushEnabled = finalState
+                                            wechatFeedback = msg
+                                            wechatFeedbackIsError = false
+                                            togglingWechatPush = false
+                                            delay(2500)
+                                            if (wechatFeedback == msg) wechatFeedback = null
+                                        }.onFailure { err ->
+                                            wechatPushEnabled = previous
+                                            wechatFeedbackIsError = true
+                                            wechatFeedback = "切换失败：${err.localizedMessage ?: "请稍后重试"}"
+                                            togglingWechatPush = false
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                if (cfg.useSystem) "系统公众号" else "自定义测试公众号",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            StatusBadge(
+                                text = if (cfg.isVerified) "已验证" else "未验证",
+                                color = if (cfg.isVerified) Color(0xFF16A34A) else Color(0xFFEA580C)
+                            )
+                            Text(
+                                "已绑定 ${wc.bindingCount} 人",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        wechatFeedback?.let { fb ->
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = fb,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (wechatFeedbackIsError) Color(0xFFDC2626) else Color(0xFF16A34A),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("配置状态", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Text("未配置", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "请在网页端「微信推送」完成配置并验证后，即可在此随时开启或关闭公众号推送。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 

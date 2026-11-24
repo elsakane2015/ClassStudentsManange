@@ -614,6 +614,19 @@ class SmartCampusRepository(private val api: ApiClient) {
         return obj?.arrOrEmpty("data")?.mapNotNull { it.asObjectOrNull()?.let(MobileDeviceItem::fromJson) }.orEmpty()
     }
 
+    suspend fun fetchTeacherWechatConfig(): TeacherWechatConfigState? {
+        val obj = api.requestElement("/wechat/teacher-config").asObjectOrNull() ?: return null
+        return TeacherWechatConfigState.fromJson(obj)
+    }
+
+    suspend fun toggleTeacherWechatPush(enabled: Boolean): Pair<Boolean, String> {
+        val body = buildJsonObject { put("push_enabled", enabled) }
+        val obj = api.requestElement("/wechat/teacher-config/toggle", method = "POST", jsonBody = body.toString()).asObjectOrNull()
+        val finalEnabled = obj?.boolVal("push_enabled", enabled) ?: enabled
+        val msg = obj?.str("message") ?: if (finalEnabled) "已开启公众号推送" else "已关闭公众号推送"
+        return finalEnabled to msg
+    }
+
     suspend fun changePassword(currentPassword: String, newPassword: String, confirmPassword: String) {
         val body = buildJsonObject {
             put("current_password", currentPassword)

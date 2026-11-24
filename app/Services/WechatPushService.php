@@ -40,12 +40,13 @@ class WechatPushService
         }
 
         // 获取班主任的公众号配置
-        $config = WechatConfig::where('user_id', $teacher->id)
-            ->where('is_verified', true)
-            ->first();
+        $config = WechatConfig::where('user_id', $teacher->id)->first();
 
-        if (!$config) {
-            return ['error' => '班主任未配置公众号'];
+        if ($skipReason = self::shouldSkipPushReason($config)) {
+            if ($skipReason === 'push_disabled') {
+                return ['skipped' => true, 'message' => '班主任已关闭公众号推送'];
+            }
+            return ['error' => $skipReason === 'not_verified' ? '班主任公众号配置未验证' : '班主任未配置公众号'];
         }
 
         // 确定模板ID
@@ -73,6 +74,25 @@ class WechatPushService
         }
 
         return $results;
+    }
+
+    /**
+     * 判断当前班主任公众号配置是否应跳过推送
+     *
+     * @return string|null 返回 null 表示可正常推送；否则返回跳过原因标识
+     */
+    public static function shouldSkipPushReason(?WechatConfig $config): ?string
+    {
+        if (!$config) {
+            return 'not_configured';
+        }
+        if (!$config->is_verified) {
+            return 'not_verified';
+        }
+        if (!$config->isPushEnabled()) {
+            return 'push_disabled';
+        }
+        return null;
     }
 
     /**

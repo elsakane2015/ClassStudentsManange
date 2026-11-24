@@ -12,6 +12,11 @@ struct ProfileView: View {
     @State private var isRefreshingPush = false
     @State private var pushRefreshFeedback: String?
     @State private var devices: [MobileDeviceItem] = []
+    @State private var wechatConfigRes: TeacherWechatConfigResponse?
+    @State private var wechatPushEnabled = true
+    @State private var isTogglingWechatPush = false
+    @State private var wechatToggleFeedback: String?
+    @State private var wechatToggleIsError = false
 
     var body: some View {
         NavigationStack {
@@ -145,6 +150,70 @@ struct ProfileView: View {
                     .disabled(isRefreshingPush)
                 }
 
+                // WeChat Official Account Push Switch (Teacher Only)
+                if user.role == "teacher", let wechat = wechatConfigRes, wechat.isAvailable {
+                    Section {
+                        if let cfg = wechat.config {
+                            Toggle(isOn: Binding(
+                                get: { wechatPushEnabled },
+                                set: { nextVal in
+                                    Task { await updateWechatPushEnabled(nextVal) }
+                                }
+                            )) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 6) {
+                                        Label("微信公众号推送", systemImage: "message.badge.waveform")
+                                        if isTogglingWechatPush {
+                                            ProgressView()
+                                                .controlSize(.mini)
+                                        }
+                                    }
+                                    Text(wechatPushEnabled
+                                         ? "学生提交请假时，自动推送微信模板消息"
+                                         : "已暂停微信推送（保留原配置与绑定，随时可开启）")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .tint(SCTheme.primary)
+                            .disabled(isTogglingWechatPush)
+
+                            HStack(spacing: 8) {
+                                Text(cfg.isUseSystem ? "系统公众号" : "自定义测试公众号")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                StatusBadge(
+                                    text: cfg.isVerifiedFlag ? "已验证" : "未验证",
+                                    color: cfg.isVerifiedFlag ? .green : .orange
+                                )
+                                Text("已绑定 \(wechat.bindings?.count ?? 0) 人")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if let fb = wechatToggleFeedback {
+                                Text(fb)
+                                    .font(.caption)
+                                    .foregroundStyle(wechatToggleIsError ? .red : .green)
+                            }
+                        } else {
+                            HStack {
+                                Label("微信公众号推送", systemImage: "message.badge.waveform")
+                                Spacer()
+                                Text("未配置")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("请在网页端「微信推送」完成配置并验证后，即可在此随时开启或关闭公众号推送。")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Text("微信公众号推送")
+                    }
+                }
+
                 // Server & Account
                 Section("学校服务器与安全") {
                     Button {
@@ -239,6 +308,7 @@ struct ProfileView: View {
                 await pushManager.refreshAuthorizationStatus()
                 await pushManager.refreshUnreadCount()
                 await loadDevices()
+                await loadWechatConfig()
             }
             .onChange(of: pushManager.lastSyncedAt) { _, _ in
                 Task { await loadDevices() }
@@ -275,6 +345,44 @@ struct ProfileView: View {
     private func loadDevices() async {
         if let list = try? await NotificationRepository.fetchDevices() {
             devices = list
+        }
+    }
+
+    private func loadWechatConfig() async {
+        guard user.role == "teacher" else { return }
+        if let res = try? await NotificationRepository.fetchTeacherWechatConfig() {
+            wechatConfigRes = res
+            if let cfg = res.config {
+                wechatPushEnabled = cfg.isPushEnabled
+            }
+        }
+    }
+
+    private func updateWechatPushEnabled(_ nextEnabled: Bool) async {
+        guard !isTogglingWechatPush else { return }
+        let previous = wechatPushEnabled
+        wechatPushEnabled = nextEnabled
+        isTogglingWechatPush = true
+        wechatToggleFeedback = nil
+        wechatToggleIsError = false
+
+        do {
+            let res = try await NotificationRepository.toggleTeacherWechatPush(enabled: nextEnabled)
+            let finalState = res.pushEnabled?.value ?? nextEnabled
+            wechatPushEnabled = finalState
+            wechatToggleFeedback = res.message ?? (finalState ? "已开启公众号推送" : "已关闭公众号推送")
+            wechatToggleIsError = false
+            isTogglingWechatPush = false
+            let shown = wechatToggleFeedback
+            try? await Task.sleep(for: .seconds(2.5))
+            if wechatToggleFeedback == shown {
+                wechatToggleFeedback = nil
+            }
+        } catch {
+            wechatPushEnabled = previous
+            wechatToggleIsError = true
+            wechatToggleFeedback = "切换失败：\(error.localizedDescription)"
+            isTogglingWechatPush = false
         }
     }
 }

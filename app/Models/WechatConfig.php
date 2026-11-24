@@ -18,14 +18,21 @@ class WechatConfig extends Model
         'token',
         'template_id',
         'is_verified',
+        'push_enabled',
         'verified_at',
     ];
 
     protected $casts = [
         'use_system' => 'boolean',
         'is_verified' => 'boolean',
+        'push_enabled' => 'boolean',
         'verified_at' => 'datetime',
     ];
+
+    public function isPushEnabled(): bool
+    {
+        return $this->push_enabled ?? true;
+    }
 
     protected $hidden = [
         'appsecret',

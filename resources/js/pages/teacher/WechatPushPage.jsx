@@ -8,7 +8,9 @@ export default function WechatPushPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [verifying, setVerifying] = useState(false);
+    const [togglingPush, setTogglingPush] = useState(false);
     const [message, setMessage] = useState('');
+    const [toggleNotice, setToggleNotice] = useState('');
     const [qrcodeUrl, setQrcodeUrl] = useState('');
     const [qrcodeLoading, setQrcodeLoading] = useState(false);
 
@@ -18,6 +20,7 @@ export default function WechatPushPage() {
         appsecret: '',
         token: '',
         template_id: '',
+        push_enabled: true,
     });
 
     useEffect(() => {
@@ -35,12 +38,46 @@ export default function WechatPushPage() {
                     appsecret: res.data.config.has_secret ? '******' : '',
                     token: res.data.config.token || '',
                     template_id: res.data.config.template_id || '',
+                    push_enabled: res.data.config.push_enabled ?? true,
                 });
+            } else if (!res.data.use_system_enabled && res.data.custom_config_enabled) {
+                setFormData((prev) => ({ ...prev, use_system: false }));
             }
         } catch (error) {
             console.error('Failed to fetch config', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleTogglePush = async () => {
+        if (togglingPush) return;
+        const nextEnabled = !formData.push_enabled;
+
+        // 尚未保存过公众号配置时，仅先更新表单状态，保存配置时一并生效
+        if (!data?.config) {
+            setFormData((prev) => ({ ...prev, push_enabled: nextEnabled }));
+            return;
+        }
+
+        setTogglingPush(true);
+        setToggleNotice('');
+        setFormData((prev) => ({ ...prev, push_enabled: nextEnabled }));
+        try {
+            const res = await axios.post('/wechat/teacher-config/toggle', {
+                push_enabled: nextEnabled,
+            });
+            setData((prev) => (prev && prev.config ? {
+                ...prev,
+                config: { ...prev.config, push_enabled: res.data.push_enabled },
+            } : prev));
+            setToggleNotice(res.data.message || (nextEnabled ? '已开启公众号推送' : '已关闭公众号推送'));
+            setTimeout(() => setToggleNotice(''), 3000);
+        } catch (error) {
+            setFormData((prev) => ({ ...prev, push_enabled: !nextEnabled }));
+            setToggleNotice('切换失败: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setTogglingPush(false);
         }
     };
 
@@ -90,7 +127,7 @@ export default function WechatPushPage() {
     const handleUnbind = async (bindingId) => {
         if (!confirm('确定要解除该用户的绑定吗？')) return;
         try {
-            await axios.delete(`/api/wechat/teacher-unbind/${bindingId}`);
+            await axios.delete(`/wechat/teacher-unbind/${bindingId}`);
             fetchConfig();
         } catch (error) {
             alert('解除绑定失败: ' + (error.response?.data?.error || error.message));
@@ -109,11 +146,66 @@ export default function WechatPushPage() {
 
     const canUseSystem = data?.use_system_enabled;
     const canUseCustom = data?.custom_config_enabled;
+    const hasConfig = Boolean(data?.config);
+    const pushEnabled = Boolean(formData.push_enabled);
 
     return (
         <Layout>
             <div className="max-w-4xl mx-auto space-y-6">
                 <h1 className="text-2xl font-bold text-gray-900">微信推送管理</h1>
+
+                {/* 公众号推送总开关 */}
+                {(canUseSystem || canUseCustom || hasConfig) && (
+                    <div className="bg-white rounded-lg shadow p-6 space-y-3">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="space-y-1">
+                                <div className="flex items-center gap-2.5 flex-wrap">
+                                    <h2 className="text-lg font-medium text-gray-900">公众号推送开关</h2>
+                                    {hasConfig ? (
+                                        <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${pushEnabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                            {pushEnabled ? '已启用' : '已关闭'}
+                                        </span>
+                                    ) : (
+                                        <span className="px-2.5 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-500">
+                                            尚未保存配置
+                                        </span>
+                                    )}
+                                    {toggleNotice && (
+                                        <span className={`text-xs ${toggleNotice.includes('失败') ? 'text-red-600' : 'text-green-600'}`}>
+                                            {toggleNotice}
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="text-sm text-gray-500">
+                                    {hasConfig
+                                        ? (pushEnabled
+                                            ? '已开启：学生提交请假申请后，系统将向已绑定的微信发送公众号模板消息。'
+                                            : '已暂停：学生提交请假将不再发送公众号消息；原有公众号配置与微信绑定已保留，开启后即可恢复。')
+                                        : '完成下方公众号配置并验证后，可随时在此一键启用或关闭公众号推送。'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={pushEnabled}
+                                aria-label="切换公众号推送开关"
+                                disabled={togglingPush}
+                                onClick={handleTogglePush}
+                                className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-60 ${pushEnabled ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                            >
+                                <span
+                                    className={`inline-block h-6 w-6 translate-y-0.5 rounded-full bg-white shadow transition-transform ${pushEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}
+                                />
+                            </button>
+                        </div>
+
+                        {hasConfig && !pushEnabled && (
+                            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-xs text-amber-800">
+                                当前公众号推送已关闭（不影响 App 推送及站内消息通知）。需要恢复微信提醒时，直接打开上方开关即可。
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* 选择公众号类型 */}
                 {(canUseSystem || canUseCustom) && (

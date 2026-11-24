@@ -1378,3 +1378,37 @@ data class ClassOptionItem(
         )
     }
 }
+
+data class TeacherWechatConfigSummary(
+    val id: Int,
+    val useSystem: Boolean,
+    val isVerified: Boolean,
+    val pushEnabled: Boolean
+) {
+    companion object {
+        fun fromJson(o: JsonObject) = TeacherWechatConfigSummary(
+            id = o.intVal("id"),
+            useSystem = o.boolVal("use_system", true),
+            isVerified = o.boolVal("is_verified", false),
+            pushEnabled = o.boolVal("push_enabled", true)
+        )
+    }
+}
+
+data class TeacherWechatConfigState(
+    val useSystemEnabled: Boolean,
+    val customConfigEnabled: Boolean,
+    val config: TeacherWechatConfigSummary?,
+    val bindingCount: Int
+) {
+    val isAvailable: Boolean get() = useSystemEnabled || customConfigEnabled || config != null
+
+    companion object {
+        fun fromJson(o: JsonObject) = TeacherWechatConfigState(
+            useSystemEnabled = o.boolVal("use_system_enabled", false),
+            customConfigEnabled = o.boolVal("custom_config_enabled", false),
+            config = o.objOrNull("config")?.let(TeacherWechatConfigSummary::fromJson),
+            bindingCount = o.arrOrEmpty("bindings").size
+        )
+    }
+}

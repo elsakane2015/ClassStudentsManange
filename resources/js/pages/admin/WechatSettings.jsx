@@ -246,13 +246,14 @@ export default function WechatSettings() {
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">负责班级</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">使用公众号</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">验证状态</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">推送开关</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">绑定人数</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {teacherConfigs.length === 0 ? (
                                 <tr>
-                                    <td colSpan="5" className="px-6 py-4 text-center text-gray-500">暂无班主任配置</td>
+                                    <td colSpan="6" className="px-6 py-4 text-center text-gray-500">暂无班主任配置</td>
                                 </tr>
                             ) : (
                                 teacherConfigs.map((config) => (
@@ -265,6 +266,17 @@ export default function WechatSettings() {
                                                 <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">已验证</span>
                                             ) : (
                                                 <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">未验证</span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {config.has_config ? (
+                                                config.push_enabled ? (
+                                                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-indigo-100 text-indigo-800">已启用</span>
+                                                ) : (
+                                                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-amber-100 text-amber-800">已关闭</span>
+                                                )
+                                            ) : (
+                                                <span className="text-xs text-gray-400">-</span>
                                             )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{config.binding_count}人</td>
