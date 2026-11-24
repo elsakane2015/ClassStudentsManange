@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum SCTheme {
     static let primary = Color("AccentColor")
@@ -156,6 +157,78 @@ struct RemoteMediaImage: View {
             }
         } else {
             Color(.tertiarySystemFill)
+        }
+    }
+}
+
+/// 带清晰按压缩放、深色压态与触感反馈的通用操作按钮样式（解决 SwiftUI List / Form 内按钮无按压效果的问题）
+struct SCActionButtonStyle: ButtonStyle {
+    enum Variant {
+        case filled(Color)
+        case soft(Color)
+    }
+
+    let variant: Variant
+    var cornerRadius: CGFloat = 10
+    var verticalPadding: CGFloat = 9
+    var horizontalPadding: CGFloat = 12
+    var haptic: UIImpactFeedbackGenerator.FeedbackStyle? = .light
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && isEnabled
+
+        configuration.label
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .foregroundStyle(foregroundColor)
+            .background(backgroundView(pressed: pressed))
+            .overlay(borderView(pressed: pressed))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .scaleEffect(pressed ? 0.95 : 1.0)
+            .opacity(isEnabled ? (pressed ? 0.88 : 1.0) : 0.48)
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .animation(.spring(response: 0.2, dampingFraction: 0.72), value: pressed)
+            .onChange(of: configuration.isPressed) { _, nowPressed in
+                if nowPressed, isEnabled, let style = haptic {
+                    UIImpactFeedbackGenerator(style: style).impactOccurred()
+                }
+            }
+    }
+
+    private var foregroundColor: Color {
+        switch variant {
+        case .filled:
+            return .white
+        case .soft(let tint):
+            return tint
+        }
+    }
+
+    @ViewBuilder
+    private func backgroundView(pressed: Bool) -> some View {
+        switch variant {
+        case .filled(let tint):
+            ZStack {
+                tint
+                if pressed {
+                    Color.black.opacity(0.18)
+                }
+            }
+        case .soft(let tint):
+            tint.opacity(pressed ? 0.22 : 0.11)
+        }
+    }
+
+    @ViewBuilder
+    private func borderView(pressed: Bool) -> some View {
+        switch variant {
+        case .filled:
+            EmptyView()
+        case .soft(let tint):
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .stroke(tint.opacity(pressed ? 0.48 : 0.25), lineWidth: 1)
         }
     }
 }

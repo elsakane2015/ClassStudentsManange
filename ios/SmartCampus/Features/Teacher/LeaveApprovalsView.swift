@@ -29,6 +29,11 @@ private struct ApprovalMonthOption: Hashable, Identifiable {
     var displayTitle: String { "\(year)年\(month)月" }
 }
 
+private enum ApprovalProcessingAction {
+    case approving
+    case rejecting
+}
+
 /// 教师 / 管理员 / 班级考勤员 请假审批流（服务端分页滚动加载 + 教学周/近30天/月份筛选 + 审批改假类 + 分项审批/驳回）
 struct LeaveApprovalsView: View {
     let user: User
@@ -67,6 +72,8 @@ struct LeaveApprovalsView: View {
     @State private var rejectionReason: String = ""
     @State private var scopeApprovalRequest: LeaveRequestGroup?
     @State private var previewImagePath: String?
+    @State private var processingActions: [Int: ApprovalProcessingAction] = [:]
+    @State private var toastMessage: String? = nil
     @State private var hapticSuccess = 0
 
     private var activeLeaveTypes: [LeaveType] {
@@ -336,6 +343,7 @@ struct LeaveApprovalsView: View {
                                     request: req,
                                     activeLeaveTypes: activeLeaveTypes,
                                     selectedLeaveTypeId: chosenTypeId,
+                                    processingAction: processingActions[req.id],
                                     onSelectLeaveType: { newId in
                                         selectedLeaveTypeOverrides[req.id] = newId
                                     },
@@ -462,6 +470,24 @@ struct LeaveApprovalsView: View {
                 set: { previewImagePath = $0?.path }
             )) { payload in
                 FullScreenImageSheet(pathOrURL: payload.path)
+            }
+            .overlay(alignment: .top) {
+                if let msg = toastMessage {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text(msg)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
             .task {
                 if semesters.isEmpty || leaveTypes.isEmpty {
@@ -725,10 +751,16 @@ struct LeaveApprovalsView: View {
     }
 
     private func approve(_ req: LeaveRequestGroup, recordIds: [Int]?, leaveTypeId: Int?) async {
+        guard processingActions[req.id] == nil else { return }
+        processingActions[req.id] = .approving
+        errorMessage = nil
+        defer { processingActions.removeValue(forKey: req.id) }
+
         do {
             try await LeaveRepository.approveLeaveRequest(id: req.id, recordIds: recordIds, leaveTypeId: leaveTypeId)
             selectedLeaveTypeOverrides.removeValue(forKey: req.id)
             hapticSuccess += 1
+            showToast("已批准 \(req.student?.name ?? "学生") 的请假")
             await loadFirstPage()
         } catch {
             errorMessage = error.localizedDescription
@@ -736,13 +768,35 @@ struct LeaveApprovalsView: View {
     }
 
     private func reject(_ req: LeaveRequestGroup, recordIds: [Int]?, reason: String) async {
+        guard processingActions[req.id] == nil else { return }
+        processingActions[req.id] = .rejecting
+        errorMessage = nil
+        defer { processingActions.removeValue(forKey: req.id) }
+
         do {
             try await LeaveRepository.rejectLeaveRequest(id: req.id, recordIds: recordIds, reason: reason)
             selectedLeaveTypeOverrides.removeValue(forKey: req.id)
             hapticSuccess += 1
+            showToast("已驳回 \(req.student?.name ?? "学生") 的请假")
             await loadFirstPage()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func showToast(_ text: String) {
+        withAnimation(.snappy(duration: 0.22)) {
+            toastMessage = text
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2.0))
+            await MainActor.run {
+                if toastMessage == text {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        toastMessage = nil
+                    }
+                }
+            }
         }
     }
 }
@@ -751,11 +805,14 @@ private struct ApprovalItemRow: View {
     let request: LeaveRequestGroup
     let activeLeaveTypes: [LeaveType]
     let selectedLeaveTypeId: Int?
+    let processingAction: ApprovalProcessingAction?
     let onSelectLeaveType: (Int) -> Void
     let onApproveAll: () -> Void
     let onOpenScopePanel: () -> Void
     let onReject: () -> Void
     let onImageTap: (String) -> Void
+
+    private var isProcessing: Bool { processingAction != nil }
 
     private var pendingSubRecordsCount: Int {
         (request.records ?? []).filter { $0.approvalStatus == "pending" }.count
@@ -897,8 +954,8 @@ private struct ApprovalItemRow: View {
                                         Label("选范围(\(pendingSubRecordsCount))", systemImage: "checklist")
                                             .font(.caption.weight(.semibold))
                                     }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
+                                    .buttonStyle(SCActionButtonStyle(variant: .soft(SCTheme.primary), cornerRadius: 9, verticalPadding: 6, horizontalPadding: 10))
+                                    .disabled(isProcessing)
                                 }
                             }
                         } else if pendingSubRecordsCount > 1 {
@@ -908,30 +965,53 @@ private struct ApprovalItemRow: View {
                                     Label("选择审批范围（\(pendingSubRecordsCount) 项）", systemImage: "checklist")
                                         .font(.caption.weight(.semibold))
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
+                                .buttonStyle(SCActionButtonStyle(variant: .soft(SCTheme.primary), cornerRadius: 9, verticalPadding: 6, horizontalPadding: 10))
+                                .disabled(isProcessing)
                             }
                         }
 
-                        // 参考 Web 端底部双主按钮：驳回 / 批准
+                        // 参考 Web 端底部双主按钮：驳回 / 批准（自定义按压反馈 + 触感 + 按钮级处理中态）
                         HStack(spacing: 10) {
                             Button(role: .destructive, action: onReject) {
-                                Label("驳回", systemImage: "xmark")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
+                                HStack(spacing: 5) {
+                                    if processingAction == .rejecting {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                            .tint(.red)
+                                        Text("驳回中...")
+                                    } else {
+                                        Image(systemName: "xmark")
+                                        Text("驳回")
+                                    }
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(SCActionButtonStyle(variant: .soft(.red), cornerRadius: 11, verticalPadding: 10))
+                            .disabled(isProcessing)
 
                             Button(action: onApproveAll) {
                                 let labelText = isTypeChanged
                                     ? "按\(selectedLeaveType?.name ?? "新类型")批准"
                                     : "批准通过"
-                                Label(labelText, systemImage: "checkmark")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
+                                HStack(spacing: 5) {
+                                    if processingAction == .approving {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                            .tint(.white)
+                                        Text("批准中...")
+                                    } else {
+                                        Image(systemName: "checkmark")
+                                        Text(labelText)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.85)
+                                    }
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.green)
+                            .buttonStyle(SCActionButtonStyle(variant: .filled(.green), cornerRadius: 11, verticalPadding: 10, haptic: .medium))
+                            .disabled(isProcessing)
                         }
                     }
                 } else if let approver = request.approverName {
@@ -1060,7 +1140,7 @@ private struct ApprovalScopeSheet: View {
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SCActionButtonStyle(variant: .soft(.red), cornerRadius: 11, verticalPadding: 10))
                         .disabled(selectedIds.isEmpty)
 
                         Button {
@@ -1073,10 +1153,11 @@ private struct ApprovalScopeSheet: View {
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.green)
+                        .buttonStyle(SCActionButtonStyle(variant: .filled(.green), cornerRadius: 11, verticalPadding: 10, haptic: .medium))
                         .disabled(selectedIds.isEmpty)
                     }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                    .listRowBackground(Color.clear)
                 }
             }
             .navigationTitle("审批范围 · \(request.student?.name ?? "")")

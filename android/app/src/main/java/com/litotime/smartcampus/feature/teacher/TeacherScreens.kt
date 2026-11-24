@@ -3128,6 +3128,9 @@ fun LeaveApprovalsScreen(
     var rejectReason by remember { mutableStateOf("") }
     var scopeTarget by remember { mutableStateOf<LeaveRequestGroup?>(null) }
     var previewImage by remember { mutableStateOf<String?>(null) }
+    var processingActions by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val haptic = LocalHapticFeedback.current
 
     val activeLeaveTypes = remember(leaveTypes) {
         val active = leaveTypes.filter { it.isActive }
@@ -3355,6 +3358,7 @@ fun LeaveApprovalsScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("请假审批") },
@@ -3618,9 +3622,16 @@ fun LeaveApprovalsScreen(
 
                                     Spacer(Modifier.weight(1f))
 
+                                    val processingAction = processingActions[req.id]
+                                    val isProcessing = processingAction != null
+
                                     if (pendingSubs.size > 1) {
                                         OutlinedButton(
-                                            onClick = { scopeTarget = req },
+                                            enabled = !isProcessing,
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                scopeTarget = req
+                                            },
                                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                         ) {
                                             Icon(Icons.Rounded.Checklist, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -3630,40 +3641,67 @@ fun LeaveApprovalsScreen(
                                     }
                                 }
 
+                                val rowProcessingAction = processingActions[req.id]
+                                val rowIsProcessing = rowProcessingAction != null
+
                                 Spacer(Modifier.height(8.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedButton(
-                                        onClick = { rejectReason = ""; rejectingTarget = req },
+                                        enabled = !rowIsProcessing,
+                                        onClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            rejectReason = ""
+                                            rejectingTarget = req
+                                        },
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
                                         border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.55f)),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("驳回")
+                                        if (rowProcessingAction == "reject") {
+                                            CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = Color(0xFFDC2626))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("驳回中...")
+                                        } else {
+                                            Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("驳回")
+                                        }
                                     }
 
                                     Button(
+                                        enabled = !rowIsProcessing,
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
                                         modifier = Modifier.weight(1f),
                                         onClick = {
+                                            if (req.id in processingActions) return@Button
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                             scope.launch {
+                                                processingActions = processingActions + (req.id to "approve")
+                                                error = null
                                                 runCatching {
                                                     repo.approveLeaveRequest(req.id, recordIds = null, leaveTypeId = chosenTypeId)
                                                 }.onSuccess {
                                                     selectedLeaveTypeOverrides = selectedLeaveTypeOverrides - req.id
                                                     loadFirstPage()
+                                                    snackbarHostState.showSnackbar("已批准 ${req.studentName} 的请假")
                                                 }.onFailure { error = it.localizedMessage }
+                                                processingActions = processingActions - req.id
                                             }
                                         }
                                     ) {
-                                        Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            if (isTypeChanged) "按${chosenType?.name ?: "新类型"}批准" else "批准通过",
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        if (rowProcessingAction == "approve") {
+                                            CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = Color.White)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("批准中...")
+                                        } else {
+                                            Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(
+                                                if (isTypeChanged) "按${chosenType?.name ?: "新类型"}批准" else "批准通过",
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
                             } else {
@@ -3723,10 +3761,17 @@ fun LeaveApprovalsScreen(
                 TextButton(onClick = {
                     val reasonText = rejectReason
                     rejectingTarget = null
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     scope.launch {
+                        processingActions = processingActions + (target.id to "reject")
+                        error = null
                         runCatching { repo.rejectLeaveRequest(target.id, reasonText) }
-                            .onSuccess { loadFirstPage() }
+                            .onSuccess {
+                                loadFirstPage()
+                                snackbarHostState.showSnackbar("已驳回 ${target.studentName} 的请假")
+                            }
                             .onFailure { error = it.localizedMessage }
+                        processingActions = processingActions - target.id
                     }
                 }) { Text("确认驳回", color = Color(0xFFDC2626)) }
             },

@@ -349,7 +349,7 @@ private struct LeaveRecordCard: View {
                     if canCancel {
                         Button("撤销申请", role: .destructive, action: onCancel)
                             .font(.caption.weight(.semibold))
-                            .buttonStyle(.bordered)
+                            .buttonStyle(SCActionButtonStyle(variant: .soft(.red), cornerRadius: 9, verticalPadding: 6, horizontalPadding: 11))
                     }
                 }
             }
