@@ -2769,6 +2769,7 @@ private struct TeacherStatDetailSheet: View {
     private enum PresentDetailFilter: String, CaseIterable, Identifiable {
         case all = "全部"
         case present = "出勤"
+        case absent = "缺勤"
         case hasRecords = "有记录"
 
         var id: String { rawValue }
@@ -2799,6 +2800,10 @@ private struct TeacherStatDetailSheet: View {
         presentList.filter { isStudentPresent($0) }.count
     }
 
+    private var absentCount: Int {
+        presentList.filter { !isStudentPresent($0) }.count
+    }
+
     private var hasRecordsCount: Int {
         presentList.filter { doesStudentHaveRecords($0) }.count
     }
@@ -2809,6 +2814,8 @@ private struct TeacherStatDetailSheet: View {
             return presentList
         case .present:
             return presentList.filter { isStudentPresent($0) }
+        case .absent:
+            return presentList.filter { !isStudentPresent($0) }
         case .hasRecords:
             return presentList.filter { doesStudentHaveRecords($0) }
         }
@@ -2981,7 +2988,7 @@ private struct TeacherStatDetailSheet: View {
         }
     }
 
-    /// 出勤明细顶部控制栏：全部 / 出勤 / 有记录 筛选 + 1列/2列切换
+    /// 出勤明细顶部控制栏：全部 / 出勤 / 缺勤 / 有记录 筛选 + 1列/2列切换
     private var presentHeaderBar: some View {
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -2991,6 +2998,7 @@ private struct TeacherStatDetailSheet: View {
                             switch f {
                             case .all: return presentList.count
                             case .present: return presentCount
+                            case .absent: return absentCount
                             case .hasRecords: return hasRecordsCount
                             }
                         }()
@@ -3053,13 +3061,23 @@ private struct TeacherStatDetailSheet: View {
     }
 
     private func presentFullCard(_ s: PresentDetailStudent) -> some View {
-        HStack(spacing: 8) {
+        let isAbsent = !isStudentPresent(s)
+        let hasRec = doesStudentHaveRecords(s)
+        return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(s.name)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
-                    if doesStudentHaveRecords(s) {
+                    if isAbsent {
+                        Text("缺勤")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.14))
+                            .foregroundStyle(.red)
+                            .clipShape(Capsule())
+                    } else if hasRec {
                         Text("有记录")
                             .font(.caption2.weight(.medium))
                             .padding(.horizontal, 6)
@@ -3075,7 +3093,10 @@ private struct TeacherStatDetailSheet: View {
             }
             Spacer()
             if let rate = s.attendanceRate?.value {
-                StatusBadge(text: String(format: "%.1f%%", rate), color: rate >= 95 ? .green : .orange)
+                StatusBadge(
+                    text: String(format: "%.1f%%", rate),
+                    color: rate >= 95 ? .green : (isAbsent ? .red : .orange)
+                )
             }
             Image(systemName: "chevron.right")
                 .font(.caption2)
@@ -3088,7 +3109,9 @@ private struct TeacherStatDetailSheet: View {
     }
 
     private func presentCompactCard(_ s: PresentDetailStudent) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let isAbsent = !isStudentPresent(s)
+        let hasRec = doesStudentHaveRecords(s)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(s.name)
                     .font(.subheadline.weight(.semibold))
@@ -3098,7 +3121,7 @@ private struct TeacherStatDetailSheet: View {
                 if let rate = s.attendanceRate?.value {
                     StatusBadge(
                         text: String(format: "%.0f%%", rate),
-                        color: rate >= 95 ? .green : .orange
+                        color: rate >= 95 ? .green : (isAbsent ? .red : .orange)
                     )
                 }
             }
@@ -3108,7 +3131,11 @@ private struct TeacherStatDetailSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 2)
-                if doesStudentHaveRecords(s) {
+                if isAbsent {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 6, height: 6)
+                } else if hasRec {
                     Circle()
                         .fill(Color.orange)
                         .frame(width: 6, height: 6)
@@ -3623,14 +3650,22 @@ private struct StudentStatRecordsDetailView: View {
         var title: String { "\(year)年\(month)月" }
     }
 
+    @AppStorage("smartcampus.student_records_columns") private var recordColumns: Int = 1
     @State private var scopeMode: RecordScopeMode
     @State private var selectedDay: Date = Date()
     @State private var selectedMonthDate: Date = Date()
     @State private var selectedSemesterId: Int?
     @State private var showDayPickerSheet = false
+    @State private var showCustomColumnsAlert = false
+    @State private var customColumnsInput = ""
+    @State private var inspectedRecordGroup: DayRecordGroup?
     @State private var records: [AttendanceRecord] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
+
+    private var effectiveColumns: Int {
+        min(max(recordColumns, 1), 8)
+    }
 
     init(
         student: StudentRecordDrillTarget,
@@ -3851,9 +3886,29 @@ private struct StudentStatRecordsDetailView: View {
                     .background(SCTheme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
-                    LazyVStack(spacing: 10) {
-                        ForEach(groupedRecords) { group in
-                            recordGroupCard(group)
+                    recordColumnsControlBar
+                    if effectiveColumns == 1 {
+                        LazyVStack(spacing: 10) {
+                            ForEach(groupedRecords) { group in
+                                recordGroupCard(group)
+                            }
+                        }
+                    } else {
+                        let gridSpacing: CGFloat = effectiveColumns >= 4 ? 6 : 8
+                        let columns = Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: effectiveColumns)
+                        LazyVGrid(columns: columns, spacing: gridSpacing) {
+                            ForEach(groupedRecords) { group in
+                                Button {
+                                    inspectedRecordGroup = group
+                                } label: {
+                                    if effectiveColumns == 2 {
+                                        recordGroupCompactCard(group)
+                                    } else {
+                                        recordGroupDenseCard(group, columns: effectiveColumns)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
@@ -3867,6 +3922,38 @@ private struct StudentStatRecordsDetailView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("关闭") { onCloseSheet() }
             }
+        }
+        .alert("自定义列数", isPresented: $showCustomColumnsAlert) {
+            TextField("输入列数 (1 - 8)", text: $customColumnsInput)
+                .keyboardType(.numberPad)
+            Button("取消", role: .cancel) {}
+            Button("确定") {
+                if let parsed = Int(customColumnsInput.trimmingCharacters(in: .whitespacesAndNewlines)),
+                   (1...8).contains(parsed) {
+                    withAnimation(.snappy(duration: 0.18)) {
+                        recordColumns = parsed
+                    }
+                }
+            }
+        } message: {
+            Text("请输入每行显示的列数（1 到 8 列），设置后将自动记忆。")
+        }
+        .sheet(item: $inspectedRecordGroup) { group in
+            NavigationStack {
+                ScrollView {
+                    recordGroupCard(group)
+                        .padding()
+                }
+                .background(SCTheme.background.ignoresSafeArea())
+                .navigationTitle("记录详情")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { inspectedRecordGroup = nil }
+                    }
+                }
+            }
+            .presentationDetents([.fraction(0.4), .medium])
         }
         .sheet(isPresented: $showDayPickerSheet) {
             NavigationStack {
@@ -4142,6 +4229,74 @@ private struct StudentStatRecordsDetailView: View {
         }
     }
 
+    private var recordColumnsControlBar: some View {
+        let isCustomActive = effectiveColumns >= 3
+        return HStack(spacing: 8) {
+            Text(effectiveColumns >= 2 ? "共 \(groupedRecords.count) 条 · 点卡片看详情" : "共 \(groupedRecords.count) 条记录")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            HStack(spacing: 2) {
+                ForEach([1, 2], id: \.self) { cols in
+                    let active = effectiveColumns == cols
+                    Button {
+                        withAnimation(.snappy(duration: 0.18)) {
+                            recordColumns = cols
+                        }
+                    } label: {
+                        Text("\(cols)列")
+                            .font(.caption2.weight(active ? .semibold : .regular))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(active ? SCTheme.primary : Color.clear)
+                            .foregroundStyle(active ? .white : .secondary)
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Menu {
+                    ForEach([3, 4, 5, 6], id: \.self) { cols in
+                        Button {
+                            withAnimation(.snappy(duration: 0.18)) {
+                                recordColumns = cols
+                            }
+                        } label: {
+                            if effectiveColumns == cols {
+                                Label("\(cols)列", systemImage: "checkmark")
+                            } else {
+                                Text("\(cols)列")
+                            }
+                        }
+                    }
+                    Divider()
+                    Button {
+                        customColumnsInput = "\(effectiveColumns >= 3 ? effectiveColumns : 3)"
+                        showCustomColumnsAlert = true
+                    } label: {
+                        Label("输入列数 (1-8)...", systemImage: "slider.horizontal.3")
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(isCustomActive ? "\(effectiveColumns)列" : "自定义")
+                            .font(.caption2.weight(isCustomActive ? .semibold : .regular))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(isCustomActive ? SCTheme.primary : Color.clear)
+                    .foregroundStyle(isCustomActive ? .white : .secondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+            }
+            .padding(2)
+            .background(Color(.tertiarySystemFill))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+    }
+
     private func recordGroupCard(_ group: DayRecordGroup) -> some View {
         let rec = group.primary
         return VStack(alignment: .leading, spacing: 7) {
@@ -4202,6 +4357,128 @@ private struct StudentStatRecordsDetailView: View {
         .padding(12)
         .background(SCTheme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func recordGroupCompactCard(_ group: DayRecordGroup) -> some View {
+        let rec = group.primary
+        let accent = SCTheme.color(for: rec.badgeColorKey)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
+                Text(shortRecordDate(group.dateKey, includeWeekday: true))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 2)
+                StatusBadge(text: rec.titleText, color: accent)
+            }
+
+            Text(group.periodDetailText.isEmpty ? "全天" : group.periodDetailText)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 4) {
+                if let src = rec.sourceBadgeText {
+                    Text(src)
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color(.tertiarySystemFill))
+                        .foregroundStyle(.secondary)
+                        .clipShape(Capsule())
+                }
+                if let ap = rec.approvalStatus, !ap.isEmpty {
+                    let apText = ap == "pending" ? "待审" : (ap == "approved" ? "已批" : "驳回")
+                    Text(apText)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(SCTheme.color(for: ap))
+                }
+                Spacer(minLength: 2)
+                if group.periodIds.count > 1 {
+                    Text("\(group.periodIds.count)节")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let remark = group.remark, !remark.isEmpty {
+                Text(remark)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
+        .padding(9)
+        .background(SCTheme.cardBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(accent.opacity(0.22), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private func recordGroupDenseCard(_ group: DayRecordGroup, columns: Int) -> some View {
+        let rec = group.primary
+        let accent = SCTheme.color(for: rec.badgeColorKey)
+        let isUltraDense = columns >= 4
+        let shortPeriod: String = {
+            if group.periodIds.count > 1 {
+                return isUltraDense ? "\(group.periodIds.count)节" : (group.periodDetailText.isEmpty ? "\(group.periodIds.count)节" : group.periodDetailText)
+            }
+            return group.periodDetailText.isEmpty ? "全天" : group.periodDetailText
+        }()
+
+        return VStack(alignment: .leading, spacing: isUltraDense ? 2 : 3) {
+            HStack(spacing: 2) {
+                Text(shortRecordDate(group.dateKey, includeWeekday: !isUltraDense))
+                    .font(.system(size: isUltraDense ? 10 : 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 1)
+                if let ap = rec.approvalStatus, ap == "pending" || ap == "rejected" {
+                    Circle()
+                        .fill(SCTheme.color(for: ap))
+                        .frame(width: 5, height: 5)
+                }
+            }
+
+            Text(rec.titleText)
+                .font(.system(size: isUltraDense ? 10 : 11, weight: .bold))
+                .foregroundStyle(accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+
+            Text(shortPeriod)
+                .font(.system(size: isUltraDense ? 9.5 : 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(isUltraDense ? 1 : 2)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, minHeight: isUltraDense ? 54 : 64, alignment: .topLeading)
+        .padding(isUltraDense ? 6 : 7)
+        .background(accent.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(accent.opacity(0.28), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func shortRecordDate(_ dateKey: String, includeWeekday: Bool) -> String {
+        let md = dateKey.count == 10 ? String(dateKey.dropFirst(5)) : dateKey
+        guard includeWeekday, let d = SCDateFormatter.parseDate(dateKey) else { return md }
+        let weekdayNames = ["", "日", "一", "二", "三", "四", "五", "六"]
+        let wd = gregorian.component(.weekday, from: d)
+        let suffix = (wd >= 1 && wd <= 7) ? " 周\(weekdayNames[wd])" : ""
+        return "\(md)\(suffix)"
     }
 
     private func formattedRecordDate(_ dateKey: String) -> String {

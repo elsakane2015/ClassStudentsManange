@@ -38,6 +38,7 @@ class AppPreferences(private val context: Context) {
         val ROSTER_COLUMNS = intPreferencesKey("roster_columns")
         val SUMMARY_COLUMNS = intPreferencesKey("summary_columns")
         val STAT_DETAIL_COLUMNS = intPreferencesKey("stat_detail_columns")
+        val STUDENT_RECORDS_COLUMNS = intPreferencesKey("student_records_columns")
     }
 
     val activeBaseUrlFlow: Flow<String?> = context.dataStore.data.map { it[Keys.ACTIVE_BASE_URL] }
@@ -50,6 +51,7 @@ class AppPreferences(private val context: Context) {
     val rosterColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.ROSTER_COLUMNS] ?: 1).coerceIn(1, 2) }
     val summaryColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.SUMMARY_COLUMNS] ?: 1).coerceIn(1, 2) }
     val statDetailColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.STAT_DETAIL_COLUMNS] ?: 1).coerceIn(1, 2) }
+    val studentRecordsColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.STUDENT_RECORDS_COLUMNS] ?: 1).coerceIn(1, 8) }
 
     suspend fun getActiveBaseUrl(): String? = context.dataStore.data.first()[Keys.ACTIVE_BASE_URL]
 
@@ -95,6 +97,10 @@ class AppPreferences(private val context: Context) {
 
     suspend fun setStatDetailColumns(columns: Int) {
         context.dataStore.edit { it[Keys.STAT_DETAIL_COLUMNS] = columns.coerceIn(1, 2) }
+    }
+
+    suspend fun setStudentRecordsColumns(columns: Int) {
+        context.dataStore.edit { it[Keys.STUDENT_RECORDS_COLUMNS] = columns.coerceIn(1, 8) }
     }
 
     suspend fun applyServer(baseUrl: String, schoolName: String) {
