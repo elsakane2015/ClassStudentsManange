@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Imports\StudentsImport;
 use App\Models\SchoolClass; // Ensure alias
 use App\Models\Student;
+use App\Models\User;
+use App\Services\ParentAccountSyncService;
 use App\Support\ParentEmailList;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +17,7 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class StudentController extends Controller
 {
+    public function __construct(private ParentAccountSyncService $parentSync) {}
     public function index(Request $request)
     {
         $user = $request->user();
@@ -176,10 +179,13 @@ class StudentController extends Controller
             'is_boarding' => 'sometimes|boolean',
             'parent_contact' => 'nullable|string',
             'parent_email' => ParentEmailList::rules(),
+            'parent_password' => 'nullable|string|min:6',
             'class_id' => 'required|exists:classes,id',
             'email' => 'required|email|unique:users,email', // New user account
             'password' => 'required|min:6',
         ]);
+
+        $this->parentSync->assertNoStudentEmailCollision($request->parent_email, $request->email);
 
         // Permission: Teacher must own class
         $class = SchoolClass::findOrFail($request->class_id);
@@ -209,6 +215,8 @@ class StudentController extends Controller
             'parent_email' => ParentEmailList::normalize($request->parent_email),
         ]);
 
+        $this->parentSync->syncForStudent($student, $request->input('parent_password'));
+
         return response()->json($student, 201);
     }
 
@@ -232,6 +240,12 @@ class StudentController extends Controller
                 'email' => 'sometimes|email|unique:users,email,'.$student->user->id,
                 'password' => 'nullable|string|min:6',
             ]);
+            if ($request->has('parent_email')) {
+                $this->parentSync->assertNoStudentEmailCollision(
+                    $request->parent_email,
+                    $request->has('email') ? $request->email : $student->user->email
+                );
+            }
         } catch (\Illuminate\Validation\ValidationException $e) {
             \Log::error('[StudentController.update] Validation failed:', ['errors' => $e->errors()]);
             throw $e;
@@ -261,6 +275,10 @@ class StudentController extends Controller
         }
         \Log::info('[StudentController.update] Student updates:', $studentUpdates);
         $student->update($studentUpdates);
+
+        if ($request->has('parent_email')) {
+            $this->parentSync->syncForStudent($student->fresh(['user']));
+        }
 
         \Log::info('[StudentController.update] Update successful');
 
@@ -298,6 +316,12 @@ class StudentController extends Controller
                     "students.$index.email" => $emailValidator->errors()->first('email'),
                 ]);
             }
+
+            $this->parentSync->assertNoStudentEmailCollision(
+                $data['parent_email'] ?? null,
+                $data['email'],
+                "students.$index.parent_email"
+            );
         }
 
         DB::transaction(function () use ($validated, $students) {
@@ -310,6 +334,7 @@ class StudentController extends Controller
                     'parent_contact' => filled($data['parent_contact'] ?? null) ? trim($data['parent_contact']) : null,
                     'parent_email' => ParentEmailList::normalize($data['parent_email'] ?? null),
                 ]);
+                $this->parentSync->syncForStudent($student->fresh(['user']));
             }
         });
 
@@ -350,6 +375,9 @@ class StudentController extends Controller
             return response()->json(['error' => 'Not in your class'], 403);
         }
 
+        // Detach parent links and deactivate orphaned parent-only accounts before deleting student
+        $this->parentSync->detachStudentAndCleanup($student);
+
         // Delete User account too? Or just student profile?
         // Usually, deleting a student implies removing access.
         $student->user->delete(); // Cascade delete student profile if set up, or delete explicitly
@@ -385,6 +413,8 @@ class StudentController extends Controller
                     continue;
                 }
 
+                $this->parentSync->detachStudentAndCleanup($student);
+
                 // Delete user and student
                 if ($student->user) {
                     $student->user->delete();
@@ -400,6 +430,53 @@ class StudentController extends Controller
             'message' => "成功删除 {$deletedCount} 名学生",
             'deleted_count' => $deletedCount,
             'errors' => $errors,
+        ]);
+    }
+
+    /**
+     * List linked parent accounts for a specific student (for teacher/admin management).
+     */
+    public function parents(Request $request, $id)
+    {
+        $student = Student::with(['user', 'schoolClass.department'])->findOrFail($id);
+        $this->authorizeStudentUpdate($request, $student);
+
+        // Ensure accounts are in sync with current parent_email before listing
+        $this->parentSync->syncForStudent($student);
+
+        return response()->json([
+            'data' => $this->parentSync->summarizeParentsForStudent($student),
+            'default_password_configured' => true,
+        ]);
+    }
+
+    /**
+     * Reset a linked parent-only account's password (either to a provided password or system default).
+     */
+    public function resetParentPassword(Request $request, $id, $parentUserId)
+    {
+        $student = Student::with(['user', 'schoolClass.department'])->findOrFail($id);
+        $this->authorizeStudentUpdate($request, $student);
+
+        $validated = $request->validate([
+            'password' => 'nullable|string|min:6|max:64',
+        ], [
+            'password.min' => '新密码至少需要 6 位',
+        ]);
+
+        $parentUser = $student->parents()->where('users.id', (int) $parentUserId)->first();
+        if (! $parentUser) {
+            return response()->json(['error' => '该家长账号未关联到此学生'], 404);
+        }
+
+        $usedDefault = empty($validated['password']);
+        $this->parentSync->resetParentPassword($parentUser, $validated['password'] ?? null);
+
+        return response()->json([
+            'message' => $usedDefault
+                ? "已将家长账号 {$parentUser->email} 的密码重置为系统默认初始密码"
+                : "已重置家长账号 {$parentUser->email} 的密码",
+            'used_default_password' => $usedDefault,
         ]);
     }
 

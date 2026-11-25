@@ -13,20 +13,30 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Check if the foreign key exists before trying to drop it
-        $foreignKeyExists = DB::select("
-            SELECT COUNT(*) as count 
-            FROM information_schema.TABLE_CONSTRAINTS 
-            WHERE CONSTRAINT_SCHEMA = DATABASE() 
-            AND TABLE_NAME = 'attendance_records' 
-            AND CONSTRAINT_NAME = 'attendance_records_period_id_foreign'
-            AND CONSTRAINT_TYPE = 'FOREIGN KEY'
-        ");
-        
-        if ($foreignKeyExists[0]->count > 0) {
-            Schema::table('attendance_records', function (Blueprint $table) {
-                $table->dropForeign(['period_id']);
-            });
+        if (DB::getDriverName() === 'mysql') {
+            // Check if the foreign key exists before trying to drop it
+            $foreignKeyExists = DB::select("
+                SELECT COUNT(*) as count 
+                FROM information_schema.TABLE_CONSTRAINTS 
+                WHERE CONSTRAINT_SCHEMA = DATABASE() 
+                AND TABLE_NAME = 'attendance_records' 
+                AND CONSTRAINT_NAME = 'attendance_records_period_id_foreign'
+                AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+            ");
+            
+            if ($foreignKeyExists[0]->count > 0) {
+                Schema::table('attendance_records', function (Blueprint $table) {
+                    $table->dropForeign(['period_id']);
+                });
+            }
+        } else {
+            try {
+                Schema::table('attendance_records', function (Blueprint $table) {
+                    $table->dropForeign(['period_id']);
+                });
+            } catch (\Throwable) {
+                // Ignore on non-MySQL drivers
+            }
         }
         
         Schema::dropIfExists('class_periods');

@@ -55,6 +55,49 @@ struct ProfileView: View {
                     .padding(.vertical, 6)
                 }
 
+                // Linked Children Section (for pure parents AND staff members who are also parents)
+                if user.hasLinkedChildren, let children = user.parentChildren, !children.isEmpty {
+                    Section(user.isParent ? "已关联的孩子" : "我的孩子（家长视图）") {
+                        ForEach(children) { child in
+                            if user.isParent {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(child.name).font(.subheadline.weight(.semibold))
+                                        Text("\(child.className ?? "-") · 学号 \(child.studentNo ?? "-") · 班主任 \(child.teacherName ?? "-")")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if child.isBoardingFlag {
+                                        StatusBadge(text: "住宿", color: .purple)
+                                    }
+                                }
+                            } else {
+                                NavigationLink {
+                                    ParentChildAttendanceView(
+                                        user: user,
+                                        initialStudentId: child.id,
+                                        embedInNavigationStack: false
+                                    )
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(child.name).font(.subheadline.weight(.semibold))
+                                            Text("\(child.className ?? "-") · 查看孩子考勤与请假动态")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        if child.isBoardingFlag {
+                                            StatusBadge(text: "住宿", color: .purple)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Notifications & Push
                 Section("消息与推送") {
                     NavigationLink {

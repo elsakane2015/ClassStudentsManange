@@ -85,7 +85,8 @@ import kotlinx.coroutines.launch
 fun ProfileScreen(
     user: User,
     onOpenNotifications: () -> Unit,
-    onOpenServerSetup: () -> Unit
+    onOpenServerSetup: () -> Unit,
+    onOpenParentPortal: ((Int?) -> Unit)? = null
 ) {
     val container = SmartCampusApp.container
     val schoolName by container.serverConfig.activeSchoolName.collectAsStateWithLifecycle()
@@ -170,6 +171,48 @@ fun ProfileScreen(
                         if (sub.isNotBlank()) {
                             Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                    }
+                }
+            }
+
+            // Linked Children Card (for pure parents AND staff members who are also parents)
+            if (user.hasLinkedChildren && user.parentChildren.isNotEmpty()) {
+                SCCard {
+                    Text(
+                        if (user.isParent) "已关联的孩子" else "我的孩子（家长视图）",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    user.parentChildren.forEachIndexed { idx, child ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .let { mod ->
+                                    if (!user.isParent && onOpenParentPortal != null) {
+                                        mod.clickable { onOpenParentPortal(child.id) }
+                                    } else mod
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(child.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "${child.className ?: "-"} · 学号 ${child.studentNo ?: "-"} · 班主任 ${child.teacherName ?: "-"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (child.isBoarding) {
+                                StatusBadge("住宿", Color(0xFF9333EA))
+                            }
+                            if (!user.isParent && onOpenParentPortal != null) {
+                                Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        if (idx != user.parentChildren.lastIndex) HorizontalDivider()
                     }
                 }
             }
@@ -727,7 +770,7 @@ fun NotificationsScreen(onBack: () -> Unit) {
                                     runCatching { container.repository.markNotificationRead(item.id) }
                                     container.pushManager.refreshUnreadCount()
                                 }
-                                container.pushManager.handleDeepLink(item.route, item.type)
+                                container.pushManager.handleDeepLink(item.route, item.type, item.studentId)
                                 onBack()
                             }
                         }) {

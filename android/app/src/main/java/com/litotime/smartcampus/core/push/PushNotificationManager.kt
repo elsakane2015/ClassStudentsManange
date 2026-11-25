@@ -32,7 +32,10 @@ enum class PushDestination {
     LEAVE_APPROVALS,
     LEAVE_HISTORY,
     STUDENT_DASHBOARD,
-    NOTIFICATIONS
+    NOTIFICATIONS,
+    PARENT_FEED,
+    PARENT_CHILD_ATTENDANCE,
+    PARENT_CHILD_LEAVES
 }
 
 /**
@@ -50,6 +53,7 @@ class PushNotificationManager(
         const val CHANNEL_ID = "smartcampus_general"
         const val EXTRA_ROUTE = "smartcampus_route"
         const val EXTRA_TYPE = "smartcampus_type"
+        const val EXTRA_STUDENT_ID = "smartcampus_student_id"
     }
 
     private val _unreadCount = MutableStateFlow(0)
@@ -60,6 +64,9 @@ class PushNotificationManager(
 
     private val _pendingDestination = MutableStateFlow<PushDestination?>(null)
     val pendingDestination: StateFlow<PushDestination?> = _pendingDestination.asStateFlow()
+
+    private val _pendingStudentId = MutableStateFlow<Int?>(null)
+    val pendingStudentId: StateFlow<Int?> = _pendingStudentId.asStateFlow()
 
     fun ensureNotificationChannel() {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -90,10 +97,16 @@ class PushNotificationManager(
 
     fun consumePendingDestination() {
         _pendingDestination.value = null
+        _pendingStudentId.value = null
     }
 
-    fun handleDeepLink(route: String?, type: String?) {
+    fun handleDeepLink(route: String?, type: String?, studentId: Int? = null) {
+        _pendingStudentId.value = studentId
         _pendingDestination.value = when (route ?: type) {
+            "parent_child_leaves", "parent_leave_submitted", "parent_leave_approved", "parent_leave_rejected" ->
+                PushDestination.PARENT_CHILD_LEAVES
+            "parent_child_attendance", "parent_attendance_marked", "parent_evening_study_alert" ->
+                PushDestination.PARENT_CHILD_ATTENDANCE
             "leave_approvals", "leave_submitted" -> PushDestination.LEAVE_APPROVALS
             "leave_history", "leave_approved", "leave_rejected" -> PushDestination.LEAVE_HISTORY
             "student_dashboard", "attendance_alert" -> PushDestination.STUDENT_DASHBOARD
@@ -105,8 +118,10 @@ class PushNotificationManager(
         if (intent == null) return
         val route = intent.getStringExtra(EXTRA_ROUTE)
         val type = intent.getStringExtra(EXTRA_TYPE)
+        val sidRaw = intent.getIntExtra(EXTRA_STUDENT_ID, -1)
+        val sid = if (sidRaw > 0) sidRaw else null
         if (!route.isNullOrBlank() || !type.isNullOrBlank()) {
-            handleDeepLink(route, type)
+            handleDeepLink(route, type, sid)
         }
     }
 

@@ -4,10 +4,12 @@ namespace App\Imports;
 
 use App\Models\Student;
 use App\Models\User;
+use App\Services\ParentAccountSyncService;
 use App\Support\ParentEmailList;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
 use Maatwebsite\Excel\Imports\HeadingRowFormatter;
@@ -26,6 +28,7 @@ class StudentsImport implements ToCollection, WithHeadingRow
         'birthdate' => ['birthdate', '出生日期'],
         'parent_contact' => ['parent_contact', '家长联系方式', '家长联系电话'],
         'parent_email' => ['parent_email', '家长邮箱'],
+        'parent_password' => ['parent_password', '家长初始密码', '父母初始密码'],
         'is_boarding' => ['is_boarding', '是否住宿生', '住宿生'],
     ];
 
@@ -56,6 +59,7 @@ class StudentsImport implements ToCollection, WithHeadingRow
             $studentNo = $this->value($row, 'student_no');
             $phone = $this->value($row, 'parent_contact');
             $parentEmail = ParentEmailList::normalize($this->value($row, 'parent_email'));
+            $parentPassword = trim((string) ($this->value($row, 'parent_password') ?? ''));
             $gender = $this->parseGender($this->value($row, 'gender'), $index);
             $isBoarding = $this->parseBoolean($this->value($row, 'is_boarding', false), $index);
             $birthdate = $this->value($row, 'birthdate');
@@ -69,6 +73,13 @@ class StudentsImport implements ToCollection, WithHeadingRow
             ]);
             if ($parentEmailValidator->fails()) {
                 throw new \Exception('导入失败：第 '.($index + 2).' 行'.$parentEmailValidator->errors()->first('parent_email'));
+            }
+
+            $parentSync = app(ParentAccountSyncService::class);
+            try {
+                $parentSync->assertNoStudentEmailCollision($parentEmail, (string) $email);
+            } catch (ValidationException $e) {
+                throw new \Exception('导入失败：第 '.($index + 2).' 行'.collect($e->errors())->flatten()->first());
             }
 
             // Determine Class ID
@@ -112,7 +123,7 @@ class StudentsImport implements ToCollection, WithHeadingRow
                 ]
             );
 
-            Student::updateOrCreate(
+            $student = Student::updateOrCreate(
                 ['user_id' => $user->id],
                 [
                     'school_id' => $this->schoolId,
@@ -125,6 +136,8 @@ class StudentsImport implements ToCollection, WithHeadingRow
                     'parent_email' => $parentEmail,
                 ]
             );
+
+            $parentSync->syncForStudent($student, $parentPassword !== '' ? $parentPassword : null);
         }
     }
 

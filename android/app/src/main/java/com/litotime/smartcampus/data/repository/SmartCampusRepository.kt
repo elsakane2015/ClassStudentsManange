@@ -643,4 +643,88 @@ class SmartCampusRepository(private val api: ApiClient) {
         }
         api.requestRaw("/user/change-password", method = "POST", jsonBody = body.toString())
     }
+
+    // MARK: - Parent Portal & Email Password Reset
+
+    suspend fun fetchParentChildren(): List<com.litotime.smartcampus.data.model.ParentChildSummary> {
+        val obj = api.requestElement("/parent/children").asObjectOrNull()
+        return obj?.arrOrEmpty("data")
+            ?.mapNotNull { it.asObjectOrNull()?.let(com.litotime.smartcampus.data.model.ParentChildSummary::fromJson) }
+            .orEmpty()
+    }
+
+    suspend fun fetchParentChildOverview(studentId: Int, scope: String = "month"): com.litotime.smartcampus.data.model.ParentChildOverview {
+        val obj = api.requestElement(
+            "/parent/children/$studentId/overview",
+            query = mapOf("scope" to scope)
+        ).asObjectOrNull() ?: JsonObject(emptyMap())
+        return com.litotime.smartcampus.data.model.ParentChildOverview.fromJson(obj)
+    }
+
+    suspend fun fetchParentChildLeaveRequests(studentId: Int, status: String = "all"): List<com.litotime.smartcampus.data.model.ParentLeaveRequestItem> {
+        val obj = api.requestElement(
+            "/parent/children/$studentId/leave-requests",
+            query = mapOf("status" to status, "per_page" to "40")
+        ).asObjectOrNull()
+        return obj?.arrOrEmpty("data")
+            ?.mapNotNull { it.asObjectOrNull()?.let(com.litotime.smartcampus.data.model.ParentLeaveRequestItem::fromJson) }
+            .orEmpty()
+    }
+
+    suspend fun fetchParentChildRecords(studentId: Int, scope: String = "month"): List<com.litotime.smartcampus.data.model.ParentRecordItem> {
+        val obj = api.requestElement(
+            "/parent/children/$studentId/records",
+            query = mapOf("scope" to scope)
+        ).asObjectOrNull()
+        return obj?.arrOrEmpty("data")
+            ?.mapNotNull { it.asObjectOrNull()?.let(com.litotime.smartcampus.data.model.ParentRecordItem::fromJson) }
+            .orEmpty()
+    }
+
+    suspend fun sendPasswordResetCode(email: String): String {
+        val body = buildJsonObject { put("email", email.trim()) }
+        val obj = api.requestElement(
+            path = "/auth/password-reset/send-code",
+            method = "POST",
+            jsonBody = body.toString(),
+            requiresAuth = false
+        ).asObjectOrNull()
+        return obj?.str("message") ?: "验证码已发送至邮箱"
+    }
+
+    suspend fun confirmPasswordReset(email: String, code: String, password: String, confirmPassword: String): String {
+        val body = buildJsonObject {
+            put("email", email.trim())
+            put("code", code.trim())
+            put("password", password)
+            put("password_confirmation", confirmPassword)
+        }
+        val obj = api.requestElement(
+            path = "/auth/password-reset/confirm",
+            method = "POST",
+            jsonBody = body.toString(),
+            requiresAuth = false
+        ).asObjectOrNull()
+        return obj?.str("message") ?: "密码已重置成功"
+    }
+
+    suspend fun fetchStudentParents(studentId: Int): List<com.litotime.smartcampus.data.model.StudentParentAccount> {
+        val obj = api.requestElement("/students/$studentId/parents").asObjectOrNull()
+        return obj?.arrOrEmpty("data")
+            ?.mapNotNull { it.asObjectOrNull()?.let(com.litotime.smartcampus.data.model.StudentParentAccount::fromJson) }
+            .orEmpty()
+    }
+
+    suspend fun resetStudentParentPassword(studentId: Int, parentUserId: Int, password: String?): String {
+        val trimmed = password?.trim()?.ifEmpty { null }
+        val body = buildJsonObject {
+            if (trimmed != null) put("password", trimmed)
+        }
+        val obj = api.requestElement(
+            path = "/students/$studentId/parents/$parentUserId/reset-password",
+            method = "POST",
+            jsonBody = body.toString()
+        ).asObjectOrNull()
+        return obj?.str("message") ?: "家长密码已重置"
+    }
 }

@@ -886,9 +886,21 @@ class AttendanceController extends Controller
 
         if ($user->role === 'student') {
             $query->where('student_id', $user->student->id);
+        } elseif ($user->role === 'parent') {
+            $childIds = $user->children()->pluck('students.id');
+            if ($childIds->isEmpty()) {
+                return response()->json([]);
+            }
+            $query->whereIn('student_id', $childIds);
         } elseif ($user->role === 'teacher') {
              $classIds = $user->teacherClasses->pluck('id');
              $query->whereIn('class_id', $classIds);
+        } elseif (in_array($user->role, ['department_manager', 'manager'], true)) {
+             $deptIds = $user->managedDepartments->pluck('id');
+             $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->pluck('id');
+             $query->whereIn('class_id', $classIds);
+        } elseif (! in_array($user->role, ['system_admin', 'school_admin', 'admin'], true)) {
+             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
         if ($request->has(['start', 'end'])) {
@@ -2831,9 +2843,11 @@ class AttendanceController extends Controller
             \Log::error('Auto-Fix Schema Failed for Attendance: ' . $e->getMessage());
         }
 
-        try {
-            \DB::reconnect();
-        } catch(\Exception $e) {}
+        if (\Illuminate\Support\Facades\DB::getDriverName() === 'mysql') {
+            try {
+                \DB::reconnect();
+            } catch(\Exception $e) {}
+        }
 
         $date = $request->date;
         $updatedCount = 0;
@@ -3593,6 +3607,34 @@ class AttendanceController extends Controller
 
         if (!$studentId) {
             return response()->json(['error' => 'student_id is required'], 400);
+        }
+
+        // Strict authorization check: prevent cross-student data leaks
+        $targetStudent = \App\Models\Student::with('schoolClass')->find($studentId);
+        if (!$targetStudent) {
+            return response()->json(['error' => 'Student not found'], 404);
+        }
+        $authorized = false;
+        if (in_array($user->role, ['system_admin', 'school_admin', 'admin'], true)) {
+            $authorized = true;
+        } elseif ($user->role === 'teacher') {
+            $authorized = $user->teacherClasses()->whereKey($targetStudent->class_id)->exists();
+        } elseif (in_array($user->role, ['department_manager', 'manager'], true)) {
+            $authorized = $targetStudent->schoolClass?->department_id
+                && $user->managedDepartments()->whereKey($targetStudent->schoolClass->department_id)->exists();
+        } elseif ($user->role === 'duty_teacher') {
+            $authorized = $targetStudent->schoolClass?->department_id
+                && $user->dutyDepartments()->whereKey($targetStudent->schoolClass->department_id)->exists();
+        } elseif ($user->role === 'student') {
+            $authorized = $user->student && (
+                (int) $user->student->id === (int) $targetStudent->id
+                || ($user->student->is_class_admin && (int) $user->student->class_id === (int) $targetStudent->class_id)
+            );
+        } elseif ($user->role === 'parent') {
+            $authorized = $user->children()->where('students.id', $targetStudent->id)->exists();
+        }
+        if (!$authorized) {
+            return response()->json(['error' => '无权查看该学生的考勤记录'], 403);
         }
 
         // Custom date range support

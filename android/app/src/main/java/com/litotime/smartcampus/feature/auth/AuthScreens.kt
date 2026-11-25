@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,10 +35,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -237,6 +240,7 @@ fun LoginScreen() {
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showServerModal by remember { mutableStateOf(false) }
+    var showForgotPasswordDialog by remember { mutableStateOf(false) }
 
     fun performLogin() {
         if (account.isBlank() || password.isBlank() || isLoading) return
@@ -337,7 +341,16 @@ fun LoginScreen() {
                     keyboardActions = KeyboardActions(onDone = { performLogin() })
                 )
 
-                Spacer(Modifier.height(18.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { showForgotPasswordDialog = true }) {
+                        Text("忘记密码？", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
 
                 Button(
                     onClick = { performLogin() },
@@ -355,7 +368,7 @@ fun LoginScreen() {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "支持学生、班主任、值班教师及管理人员统一登录",
+                "支持学生（学号/邮箱）、教职工及家长邮箱统一登录",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -369,6 +382,132 @@ fun LoginScreen() {
             }
         }
     }
+
+    if (showForgotPasswordDialog) {
+        ForgotPasswordDialog(
+            initialEmail = if (account.contains("@")) account else "",
+            onDismiss = { showForgotPasswordDialog = false },
+            onResetSuccess = { resetEmail ->
+                account = resetEmail
+                password = ""
+                showForgotPasswordDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun ForgotPasswordDialog(
+    initialEmail: String,
+    onDismiss: () -> Unit,
+    onResetSuccess: (String) -> Unit
+) {
+    val repo = SmartCampusApp.container.repository
+    val scope = rememberCoroutineScope()
+    var email by remember { mutableStateOf(initialEmail) }
+    var code by remember { mutableStateOf("") }
+    var newPwd by remember { mutableStateOf("") }
+    var confirmPwd by remember { mutableStateOf("") }
+    var codeSent by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var infoMsg by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("邮箱验证码重置密码") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                errorMsg?.let { Text(it, color = Color(0xFFDC2626), style = MaterialTheme.typography.bodySmall) }
+                infoMsg?.let { Text(it, color = Color(0xFF16A34A), style = MaterialTheme.typography.bodySmall) }
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("登录邮箱（家长/教师/学生）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedButton(
+                    enabled = !busy && email.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            errorMsg = null
+                            infoMsg = null
+                            runCatching { repo.sendPasswordResetCode(email) }
+                                .onSuccess { msg ->
+                                    codeSent = true
+                                    infoMsg = msg
+                                }
+                                .onFailure { err ->
+                                    errorMsg = err.localizedMessage ?: "发送验证码失败"
+                                }
+                            busy = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (busy && !codeSent) "发送中..." else if (codeSent) "重新获取验证码" else "获取 6 位邮箱验证码")
+                }
+
+                if (codeSent) {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { if (it.length <= 6) code = it },
+                        label = { Text("6 位验证码") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newPwd,
+                        onValueChange = { newPwd = it },
+                        label = { Text("新密码（至少 6 位）") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = confirmPwd,
+                        onValueChange = { confirmPwd = it },
+                        label = { Text("确认新密码") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (codeSent) {
+                TextButton(
+                    enabled = !busy && code.length == 6 && newPwd.length >= 6 && newPwd == confirmPwd,
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            errorMsg = null
+                            runCatching {
+                                repo.confirmPasswordReset(email, code, newPwd, confirmPwd)
+                            }.onSuccess {
+                                onResetSuccess(email.trim())
+                            }.onFailure { err ->
+                                errorMsg = err.localizedMessage ?: "重置失败"
+                            }
+                            busy = false
+                        }
+                    }
+                ) {
+                    Text(if (busy) "提交中..." else "确认重置")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("取消") }
+        }
+    )
 }
 
 @Composable

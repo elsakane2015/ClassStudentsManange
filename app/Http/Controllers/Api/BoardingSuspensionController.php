@@ -76,6 +76,20 @@ class BoardingSuspensionController extends Controller
             return $suspension;
         });
 
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('app_notifications')) {
+                app(\App\Services\MobilePushService::class)->notifyParentsBoardingSuspension(
+                    $student,
+                    $data['start_date'],
+                    $data['end_date'],
+                    $data['reason'],
+                    $data['destination'] ?? null
+                );
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('Parent boarding suspension push failed', ['error' => $e->getMessage()]);
+        }
+
         return response()->json($suspension->load('creator:id,name'), 201);
     }
 

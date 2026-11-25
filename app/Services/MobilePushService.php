@@ -194,6 +194,352 @@ class MobilePushService
     }
 
     /**
+     * Notify all linked parents when their child submits a leave request (regular or evening study).
+     */
+    public function notifyParentsLeaveSubmitted(AttendanceRecord $record): void
+    {
+        $record->loadMissing(['student.user', 'leaveType', 'requestedEveningStatus']);
+        $student = $record->student;
+        if (! $student) {
+            return;
+        }
+
+        $parentUserIds = $student->activeParentUserIds();
+        if (empty($parentUserIds)) {
+            return;
+        }
+
+        $studentName = $student->user?->name ?? '学生';
+        $leaveTypeName = $record->leaveType?->name
+            ?? $record->requestedEveningStatus?->name
+            ?? ($record->scene === 'evening_study' ? '夜自习请假' : '请假');
+        $dateRange = $this->resolveLeaveBatchDateRange($record);
+        $periodSummary = $this->resolveRecordPeriodSummary($record);
+        $reason = trim((string) ($record->reason ?: ($record->details['text'] ?? '') ?: ''));
+
+        $timePart = $periodSummary !== '' ? "{$dateRange}（{$periodSummary}）" : $dateRange;
+        $body = "{$studentName} 提交了 {$timePart} 的{$leaveTypeName}申请"
+            . ($reason !== '' ? "，原因：{$reason}" : '')
+            . '，当前待审批。';
+
+        $this->notifyUsers(
+            $parentUserIds,
+            'parent_leave_submitted',
+            "【{$studentName}】提交了{$leaveTypeName}申请",
+            $body,
+            [
+                'route' => 'parent_child_leaves',
+                'student_id' => $student->id,
+                'student_name' => $studentName,
+                'leave_request_id' => $record->id,
+                'leave_batch_id' => $record->leave_batch_id,
+                'date' => $record->date instanceof \Carbon\Carbon ? $record->date->format('Y-m-d') : (string) $record->date,
+            ]
+        );
+    }
+
+    /**
+     * Notify all linked parents when their child's leave request is approved or rejected.
+     */
+    public function notifyParentsLeaveReviewed(
+        AttendanceRecord $record,
+        string $decision,
+        ?string $approverName = null,
+        ?string $rejectionReason = null
+    ): void {
+        $record->loadMissing(['student.user', 'leaveType', 'requestedEveningStatus']);
+        $student = $record->student;
+        if (! $student) {
+            return;
+        }
+
+        $parentUserIds = $student->activeParentUserIds();
+        if (empty($parentUserIds)) {
+            return;
+        }
+
+        $studentName = $student->user?->name ?? '学生';
+        $leaveTypeName = $record->leaveType?->name
+            ?? $record->requestedEveningStatus?->name
+            ?? '请假';
+        $dateRange = $this->resolveLeaveBatchDateRange($record);
+        $isApproved = $decision === 'approved';
+        $reviewer = $approverName ? "（审批人：{$approverName}）" : '';
+
+        $title = $isApproved
+            ? "【{$studentName}】{$leaveTypeName}申请已通过"
+            : "【{$studentName}】{$leaveTypeName}申请已驳回";
+
+        $body = $isApproved
+            ? "{$studentName} {$dateRange} 的{$leaveTypeName}申请已获批准{$reviewer}。"
+            : "{$studentName} {$dateRange} 的{$leaveTypeName}申请已被驳回{$reviewer}" . ($rejectionReason ? "，原因：{$rejectionReason}" : '。');
+
+        $this->notifyUsers(
+            $parentUserIds,
+            $isApproved ? 'parent_leave_approved' : 'parent_leave_rejected',
+            $title,
+            $body,
+            [
+                'route' => 'parent_child_leaves',
+                'student_id' => $student->id,
+                'student_name' => $studentName,
+                'leave_request_id' => $record->id,
+                'leave_batch_id' => $record->leave_batch_id,
+                'decision' => $decision,
+            ]
+        );
+    }
+
+    /**
+     * Notify linked parents when a child is marked with a non-present regular attendance record
+     * (manual mark, bulk mark, roll-call absence). Includes short-window deduplication so
+     * multi-period operations do not spam parents.
+     */
+    public function notifyParentsAttendanceMarked(
+        AttendanceRecord $record,
+        ?string $overridePeriodLabel = null,
+        ?string $dedupeIdentity = null
+    ): void {
+        if ($record->status === 'present') {
+            return;
+        }
+
+        $record->loadMissing(['student.user', 'leaveType']);
+        $student = $record->student;
+        if (! $student) {
+            return;
+        }
+
+        $parentUserIds = $student->activeParentUserIds();
+        if (empty($parentUserIds)) {
+            return;
+        }
+
+        $dateText = $record->date instanceof \Carbon\Carbon
+            ? $record->date->format('Y-m-d')
+            : (string) $record->date;
+
+        $details = is_array($record->details) ? $record->details : (json_decode((string) $record->details, true) ?: []);
+        $originalStatus = $details['original_status'] ?? null;
+        $statusLabel = $record->leaveType?->name ?? match ($originalStatus ?: $record->status) {
+            'absent' => '旷课',
+            'late' => '迟到',
+            'early_leave' => '早退',
+            'leave', 'excused' => '请假',
+            default => (string) $record->status,
+        };
+
+        $dedupeKey = 'mobile_push:parent_att:' . md5(implode('|', [
+            $student->id,
+            $dateText,
+            $record->source_type ?? 'manual',
+            $dedupeIdentity ?? ($record->source_id ?: ($record->period_id ?: $record->id)),
+            $statusLabel,
+        ]));
+
+        if (! Cache::add($dedupeKey, 1, now()->addSeconds(45))) {
+            return;
+        }
+
+        $studentName = $student->user?->name ?? '学生';
+        $periodSummary = $overridePeriodLabel !== null
+            ? $overridePeriodLabel
+            : $this->resolveRecordPeriodSummary($record);
+        $note = trim((string) ($record->note ?: ($details['text'] ?? '') ?: ($record->reason ?? '')));
+
+        $timePart = $periodSummary !== '' ? "{$dateText}（{$periodSummary}）" : $dateText;
+        $body = "{$studentName} 在 {$timePart} 被标记为「{$statusLabel}」"
+            . ($note !== '' ? "，备注：{$note}" : '。');
+
+        $this->notifyUsers(
+            $parentUserIds,
+            'parent_attendance_marked',
+            "【{$studentName}】考勤提醒：{$statusLabel}",
+            $body,
+            [
+                'route' => 'parent_child_attendance',
+                'student_id' => $student->id,
+                'student_name' => $studentName,
+                'attendance_record_id' => $record->id,
+                'date' => $dateText,
+                'status' => $record->status,
+            ]
+        );
+    }
+
+    /**
+     * Notify linked parents when a child is marked abnormal or given teacher leave during evening study.
+     */
+    public function notifyParentsEveningStudyMarked(
+        AttendanceRecord $record,
+        ?string $statusNameOverride = null,
+        ?string $periodNameOverride = null
+    ): void {
+        $record->loadMissing(['student.user', 'eveningStudyStatus', 'leaveType']);
+        $student = $record->student;
+        if (! $student) {
+            return;
+        }
+
+        $parentUserIds = $student->activeParentUserIds();
+        if (empty($parentUserIds)) {
+            return;
+        }
+
+        $studentName = $student->user?->name ?? '学生';
+        $dateText = $record->date instanceof \Carbon\Carbon
+            ? $record->date->format('Y-m-d')
+            : (string) $record->date;
+        $periodName = $periodNameOverride ?: ($record->period_name_snapshot ?: '夜自习');
+        $statusName = $statusNameOverride
+            ?: $record->eveningStudyStatus?->name
+            ?: $record->status_name_snapshot
+            ?: $record->leaveType?->name
+            ?: '异常';
+
+        $dedupeKey = 'mobile_push:parent_evening:' . md5(implode('|', [
+            $student->id,
+            $dateText,
+            $record->period_id ?? '0',
+            $statusName,
+        ]));
+        if (! Cache::add($dedupeKey, 1, now()->addSeconds(45))) {
+            return;
+        }
+
+        $extraParts = [];
+        if (! empty($record->destination)) {
+            $extraParts[] = "去向：{$record->destination}";
+        }
+        $remark = trim((string) ($record->note ?: $record->reason ?: ''));
+        if ($remark !== '') {
+            $extraParts[] = "说明：{$remark}";
+        }
+        $suffix = empty($extraParts) ? '。' : '（' . implode('，', $extraParts) . '）。';
+
+        $this->notifyUsers(
+            $parentUserIds,
+            'parent_evening_study_alert',
+            "【{$studentName}】夜自习提醒：{$statusName}",
+            "{$studentName} 在 {$dateText} {$periodName} 被标记为「{$statusName}」{$suffix}",
+            [
+                'route' => 'parent_child_attendance',
+                'student_id' => $student->id,
+                'student_name' => $studentName,
+                'attendance_record_id' => $record->id,
+                'date' => $dateText,
+                'scene' => 'evening_study',
+            ]
+        );
+    }
+
+    /**
+     * Notify linked parents when a boarding suspension is recorded for their child.
+     */
+    public function notifyParentsBoardingSuspension(
+        Student $student,
+        string $startDate,
+        string $endDate,
+        string $reason,
+        ?string $destination = null
+    ): void {
+        $student->loadMissing('user:id,name');
+        $parentUserIds = $student->activeParentUserIds();
+        if (empty($parentUserIds)) {
+            return;
+        }
+
+        $studentName = $student->user?->name ?? '学生';
+        $range = $startDate === $endDate ? $startDate : "{$startDate} 至 {$endDate}";
+        $body = "{$studentName} 已办理 {$range} 临时暂停住宿许可，原因：{$reason}"
+            . ($destination ? "，去向：{$destination}" : '')
+            . '。';
+
+        $this->notifyUsers(
+            $parentUserIds,
+            'parent_evening_study_alert',
+            "【{$studentName}】住宿状态提醒：暂停住宿许可",
+            $body,
+            [
+                'route' => 'parent_child_attendance',
+                'student_id' => $student->id,
+                'student_name' => $studentName,
+                'date' => $startDate,
+                'scene' => 'evening_study',
+            ]
+        );
+    }
+
+    protected function resolveLeaveBatchDateRange(AttendanceRecord $record): string
+    {
+        if ($record->leave_batch_id) {
+            $range = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('leave_batch_id', $record->leave_batch_id)
+                ->selectRaw('MIN(date) as start_date, MAX(date) as end_date')
+                ->first();
+
+            if ($range?->start_date && $range?->end_date && $range->start_date !== $range->end_date) {
+                return "{$range->start_date} 至 {$range->end_date}";
+            }
+            if ($range?->start_date) {
+                return (string) $range->start_date;
+            }
+        }
+
+        return $record->date instanceof \Carbon\Carbon
+            ? $record->date->format('Y-m-d')
+            : (string) $record->date;
+    }
+
+    protected function resolveRecordPeriodSummary(AttendanceRecord $record): string
+    {
+        $details = is_array($record->details) ? $record->details : (json_decode((string) $record->details, true) ?: []);
+
+        if ($record->source_type === 'roll_call' && ! empty($details['roll_call_type'])) {
+            return (string) $details['roll_call_type'];
+        }
+
+        foreach (['display_label', 'time_slot_name', 'option_label'] as $key) {
+            if (! empty($details[$key])) {
+                return (string) $details[$key];
+            }
+        }
+
+        if (! empty($details['period_names']) && is_array($details['period_names'])) {
+            return implode('、', $details['period_names']);
+        }
+
+        $optionMap = [
+            'am' => '上午',
+            'pm' => '下午',
+            'morning_half' => '上午',
+            'afternoon_half' => '下午',
+            'full_day' => '全天',
+            'all_day' => '全天',
+        ];
+        if (! empty($details['option']) && isset($optionMap[$details['option']])) {
+            return $optionMap[$details['option']];
+        }
+
+        if ($record->period_name_snapshot) {
+            return (string) $record->period_name_snapshot;
+        }
+
+        if ($record->period_id !== null) {
+            $periods = json_decode((string) \App\Models\SystemSetting::get('attendance_periods', '[]'), true) ?: [];
+            foreach ($periods as $period) {
+                if ((int) ($period['id'] ?? 0) === (int) $record->period_id && ! empty($period['name'])) {
+                    return (string) $period['name'];
+                }
+            }
+
+            return "第{$record->period_id}节";
+        }
+
+        return '';
+    }
+
+    /**
      * Deliver OS-level push notifications for a persisted AppNotification.
      * Gracefully degrades when push certificates/credentials are not yet configured.
      */

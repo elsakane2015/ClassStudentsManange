@@ -41,6 +41,27 @@ class Student extends Model
         return $this->hasMany(BoardingSuspension::class);
     }
 
+    public function parents()
+    {
+        return $this->belongsToMany(User::class, 'parent_student', 'student_id', 'parent_user_id')
+            ->withTimestamps();
+    }
+
+    public function activeParentUserIds(): array
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('parent_student')) {
+            return [];
+        }
+
+        return $this->parents()
+            ->where('users.status', true)
+            ->pluck('users.id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
     public function activeBoardingSuspension($date = null)
     {
         return $this->boardingSuspensions()

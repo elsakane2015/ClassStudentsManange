@@ -34,17 +34,23 @@ class AttendanceRecordObserver
         $connection->afterCommit(function () use ($recordId, $isCreated) {
             SendParentNotification::dispatchAfterResponse($recordId, 'attendance');
 
-            if ($isCreated) {
-                try {
-                    if (\Illuminate\Support\Facades\Schema::hasTable('app_notifications')) {
-                        $freshRecord = AttendanceRecord::find($recordId);
-                        if ($freshRecord) {
-                            app(\App\Services\MobilePushService::class)->notifyAttendanceRecorded($freshRecord);
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('app_notifications')) {
+                    $freshRecord = AttendanceRecord::find($recordId);
+                    if ($freshRecord && $freshRecord->status !== 'present') {
+                        $pushService = app(\App\Services\MobilePushService::class);
+                        if ($isCreated) {
+                            $pushService->notifyAttendanceRecorded($freshRecord);
+                        }
+                        // Roll-call absences are aggregated and pushed once per student in RollCallController::complete
+                        // so multi-period roll calls do not spam parents; other marks & status updates push here.
+                        if ($freshRecord->source_type !== 'roll_call') {
+                            $pushService->notifyParentsAttendanceMarked($freshRecord);
                         }
                     }
-                } catch (\Throwable $e) {
-                    \Log::warning('Mobile attendance push failed', ['error' => $e->getMessage()]);
                 }
+            } catch (\Throwable $e) {
+                \Log::warning('Mobile attendance push failed', ['error' => $e->getMessage()]);
             }
         });
     }

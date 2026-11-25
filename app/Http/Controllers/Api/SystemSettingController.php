@@ -10,32 +10,53 @@ use App\Services\AttendancePeriodService;
 
 class SystemSettingController extends Controller
 {
-    public function index()
+    private const SECRET_KEYS = [
+        'resend_api_key',
+        'sms_aliyun_access_key_secret',
+        'sms_tencent_secret_key',
+        'microsoft_mail_client_secret',
+        'wechat_system_appsecret',
+        'wechat_system_token',
+    ];
+
+    public function index(Request $request)
     {
-        return response()->json(SystemSetting::all());
+        $user = $request->user();
+        $isAdmin = in_array($user?->role, ['system_admin', 'school_admin', 'admin'], true);
+
+        $excluded = self::SECRET_KEYS;
+        if (! $isAdmin) {
+            $excluded[] = \App\Services\ParentAccountSyncService::DEFAULT_PASSWORD_SETTING_KEY;
+        }
+
+        return response()->json(
+            SystemSetting::whereNotIn('key', $excluded)->get()
+        );
     }
 
     public function update(Request $request, AttendancePeriodService $periodService)
     {
         abort_unless(in_array($request->user()?->role, ['system_admin', 'school_admin'], true), 403, '无权修改系统设置');
-        // Mitigate "MySQL server has gone away" issues
-        try {
-            \Illuminate\Support\Facades\DB::reconnect();
-            
-            // Workaround: Ensure table exists using raw SQL if migration failed
-            \Illuminate\Support\Facades\DB::statement("
-                CREATE TABLE IF NOT EXISTS system_settings (
-                    id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-                    `key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-                    `value` text COLLATE utf8mb4_unicode_ci,
-                    description varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-                    created_at timestamp NULL DEFAULT NULL,
-                    updated_at timestamp NULL DEFAULT NULL,
-                    PRIMARY KEY (id),
-                    UNIQUE KEY system_settings_key_unique (`key`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-            ");
-        } catch (\Exception $e) {}
+        // Mitigate "MySQL server has gone away" issues (MySQL only; calling reconnect on sqlite :memory: wipes the DB)
+        if (\Illuminate\Support\Facades\DB::getDriverName() === 'mysql') {
+            try {
+                \Illuminate\Support\Facades\DB::reconnect();
+                
+                // Workaround: Ensure table exists using raw SQL if migration failed
+                \Illuminate\Support\Facades\DB::statement("
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+                        `key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+                        `value` text COLLATE utf8mb4_unicode_ci,
+                        description varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+                        created_at timestamp NULL DEFAULT NULL,
+                        updated_at timestamp NULL DEFAULT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE KEY system_settings_key_unique (`key`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+            } catch (\Exception $e) {}
+        }
 
         // Expects an array of settings: [{key: 'k', value: 'v'}, ...]
         $data = $request->validate([
@@ -45,6 +66,16 @@ class SystemSettingController extends Controller
         ]);
 
         foreach ($data['settings'] as $setting) {
+            if ($setting['key'] === \App\Services\ParentAccountSyncService::DEFAULT_PASSWORD_SETTING_KEY) {
+                $pwd = trim((string) $setting['value']);
+                if (mb_strlen($pwd) < 6) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'parent_default_password' => '家长端默认初始密码至少需要 6 位',
+                    ]);
+                }
+                $setting['value'] = $pwd;
+            }
+
             if ($setting['key'] === 'attendance_periods') {
                 $periods = is_array($setting['value'])
                     ? $setting['value']

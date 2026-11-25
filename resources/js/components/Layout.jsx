@@ -23,6 +23,33 @@ export default function Layout({ children }) {
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     // School name state
     const [schoolName, setSchoolName] = useState('智慧校园');
+    // Notification bell state
+    const [unreadCount, setUnreadCount] = useState(0);
+    const [recentNotifs, setRecentNotifs] = useState([]);
+    const [showNotifPanel, setShowNotifPanel] = useState(false);
+
+    const fetchBellNotifications = async () => {
+        if (!user) return;
+        try {
+            const res = await axios.get('/notifications', { params: { per_page: 8 } });
+            setRecentNotifs(res.data?.data || []);
+            setUnreadCount(res.data?.unread_count || 0);
+        } catch {
+            // Silent fail when table or endpoint unavailable
+        }
+    };
+
+    useEffect(() => {
+        if (!user) return undefined;
+        fetchBellNotifications();
+        const timer = setInterval(fetchBellNotifications, 60000);
+        const onUpdated = () => fetchBellNotifications();
+        window.addEventListener('notificationsUpdated', onUpdated);
+        return () => {
+            clearInterval(timer);
+            window.removeEventListener('notificationsUpdated', onUpdated);
+        };
+    }, [user?.id]);
 
     useEffect(() => {
         // Fetch school info
@@ -93,7 +120,14 @@ export default function Layout({ children }) {
         }]
         : [];
 
-    const navigation = user?.role === 'student'
+    const hasParentChildren = Boolean(user?.has_parent_children || (user?.parent_children?.length || 0) > 0);
+
+    const navigation = user?.role === 'parent'
+        ? [
+            { name: '孩子动态', href: '/parent/dashboard' },
+            { name: '孩子考勤', href: '/parent/attendance' },
+        ]
+        : user?.role === 'student'
         ? [
             { name: '仪表盘', href: '/student/dashboard' },
             { name: '请假申请', href: '/student/request' },
@@ -102,7 +136,10 @@ export default function Layout({ children }) {
             ...(isRollCallAdmin ? [{ name: '点名', href: '/roll-call' }] : []),
         ]
         : user?.role === 'duty_teacher'
-        ? [{ name: '夜自习点名', href: '/evening-study/take' }]
+        ? [
+            { name: '夜自习点名', href: '/evening-study/take' },
+            ...(hasParentChildren ? [{ name: '我的孩子', href: '/parent/dashboard' }] : []),
+        ]
         : [
             { name: '概览', href: '/teacher/dashboard' },
             ...(canApproveLeave ? [{ name: '审批记录', href: '/teacher/approvals' }] : []),
@@ -111,6 +148,7 @@ export default function Layout({ children }) {
             ...eveningStudyMenu,
             ...(showWechatMenu ? [{ name: '微信推送', href: '/teacher/wechat' }] : []),
             ...(user?.role === 'teacher' ? [{ name: '家长通知', href: '/teacher/email-notifications' }] : []),
+            ...(hasParentChildren ? [{ name: '我的孩子', href: '/parent/dashboard' }] : []),
             ...(['system_admin', 'school_admin', 'department_manager', 'admin', 'manager'].includes(user?.role) ? [{ name: '人员管理', href: '/admin/staff' }] : []),
             ...(['system_admin', 'school_admin', 'admin'].includes(user?.role) ? [{ name: '系统设置', href: '/admin/settings' }] : []),
             ...(['system_admin'].includes(user?.role) ? [{ name: '权限管理', href: '/admin/permissions' }] : [])
@@ -171,7 +209,88 @@ export default function Layout({ children }) {
                                     </div>
                                 </div>
                                 <div className="hidden md:block">
-                                    <div className="ml-4 flex items-center md:ml-6">
+                                    <div className="ml-4 flex items-center gap-4 md:ml-6">
+                                        {/* In-App Notification Bell */}
+                                        <div className="relative">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const next = !showNotifPanel;
+                                                    setShowNotifPanel(next);
+                                                    if (next) fetchBellNotifications();
+                                                }}
+                                                className="relative rounded-full p-1.5 text-indigo-200 hover:bg-indigo-500 hover:text-white transition"
+                                                title="消息通知"
+                                            >
+                                                <BellIcon className="h-5 w-5" />
+                                                {unreadCount > 0 && (
+                                                    <span className="absolute -top-0.5 -right-0.5 inline-flex min-w-[18px] h-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                                                        {unreadCount > 99 ? '99+' : unreadCount}
+                                                    </span>
+                                                )}
+                                            </button>
+                                            {showNotifPanel && (
+                                                <div className="absolute right-0 z-30 mt-2 w-80 rounded-xl bg-white shadow-xl ring-1 ring-black/10 overflow-hidden">
+                                                    <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+                                                        <span className="text-sm font-semibold text-gray-800">消息通知</span>
+                                                        <div className="flex items-center gap-2">
+                                                            {unreadCount > 0 && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={async () => {
+                                                                        await axios.post('/notifications/read-all');
+                                                                        setUnreadCount(0);
+                                                                        setRecentNotifs(prev => prev.map(n => ({ ...n, read_at: n.read_at || new Date().toISOString() })));
+                                                                        window.dispatchEvent(new CustomEvent('notificationsUpdated'));
+                                                                    }}
+                                                                    className="text-xs text-indigo-600 hover:text-indigo-800"
+                                                                >
+                                                                    全部已读
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setShowNotifPanel(false)}
+                                                                className="text-xs text-gray-400 hover:text-gray-600"
+                                                            >
+                                                                关闭
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                                                        {recentNotifs.length === 0 ? (
+                                                            <div className="p-6 text-center text-xs text-gray-400">暂无消息通知</div>
+                                                        ) : recentNotifs.map(n => (
+                                                            <div
+                                                                key={n.id}
+                                                                onClick={async () => {
+                                                                    if (!n.read_at) {
+                                                                        await axios.post(`/notifications/${n.id}/read`).catch(() => {});
+                                                                        setUnreadCount(c => Math.max(0, c - 1));
+                                                                        setRecentNotifs(prev => prev.map(x => x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x));
+                                                                        window.dispatchEvent(new CustomEvent('notificationsUpdated'));
+                                                                    }
+                                                                    setShowNotifPanel(false);
+                                                                    const route = n.data?.route;
+                                                                    if (route === 'parent_child_leaves' || route === 'parent_child_attendance') {
+                                                                        navigate('/parent/dashboard');
+                                                                    } else if (route === 'leave_approvals') {
+                                                                        navigate('/teacher/approvals');
+                                                                    } else if (route === 'leave_history') {
+                                                                        navigate('/student/history');
+                                                                    }
+                                                                }}
+                                                                className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${!n.read_at ? 'bg-indigo-50/40' : ''}`}
+                                                            >
+                                                                <p className={`text-xs ${!n.read_at ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>{n.title}</p>
+                                                                <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.body}</p>
+                                                                <p className="text-[11px] text-gray-400 mt-1">{n.created_at}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
                                         {/* User Dropdown Menu */}
                                         <Menu as="div" className="relative">
                                             <Menu.Button className="flex items-center gap-1 text-indigo-200 hover:text-white text-sm transition-colors">

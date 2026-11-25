@@ -26,6 +26,8 @@ use App\Http\Controllers\Api\EveningStudyController;
 use App\Http\Controllers\Api\EveningStudyStatusController;
 use App\Http\Controllers\Api\MobileDeviceController;
 use App\Http\Controllers\Api\AppNotificationController;
+use App\Http\Controllers\Api\ParentPortalController;
+use App\Http\Controllers\Api\PasswordResetController;
 use App\Http\Controllers\InstallController;
 
 // Installation routes (no auth required)
@@ -42,6 +44,8 @@ Route::get('/school/info', [\App\Http\Controllers\Api\SchoolController::class, '
 // Public routes
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login', [AuthController::class, 'login']);
+Route::post('/auth/password-reset/send-code', [PasswordResetController::class, 'sendCode'])->middleware('throttle:5,1');
+Route::post('/auth/password-reset/confirm', [PasswordResetController::class, 'confirm'])->middleware('throttle:10,1');
 Route::get('/attendance/auto-mark', [AttendanceController::class, 'triggerAutoMark']); // Trigger auto-mark manually (debug)
 
 
@@ -65,6 +69,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/notifications/read-all', [AppNotificationController::class, 'markAllRead']);
     Route::post('/notifications/{appNotification}/read', [AppNotificationController::class, 'markRead']);
     Route::delete('/notifications/{appNotification}', [AppNotificationController::class, 'destroy']);
+
+    // Parent Portal (accessible by pure parent accounts AND staff accounts who also have linked children)
+    Route::prefix('parent')->group(function () {
+        Route::get('/children', [ParentPortalController::class, 'children']);
+        Route::get('/children/{student}/overview', [ParentPortalController::class, 'overview']);
+        Route::get('/children/{student}/calendar', [ParentPortalController::class, 'calendar']);
+        Route::get('/children/{student}/leave-requests', [ParentPortalController::class, 'leaveRequests']);
+        Route::get('/children/{student}/records', [ParentPortalController::class, 'records']);
+    });
+
+    // All non-parent campus routes are explicitly isolated from pure parent-role users
+    Route::middleware(['not.parent'])->group(function () {
 
     // School Settings (Admin only)
     Route::put('/school/update', [\App\Http\Controllers\Api\SchoolController::class, 'update']);
@@ -181,6 +197,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/students/import-template', [StudentController::class, 'template']);
     Route::post('/students/import', [StudentController::class, 'import']);
     Route::post('/students/bulk-update', [StudentController::class, 'bulkUpdate']);
+    Route::get('/students/{id}/parents', [StudentController::class, 'parents']);
+    Route::post('/students/{id}/parents/{parentUserId}/reset-password', [StudentController::class, 'resetParentPassword']);
     Route::apiResource('students', StudentController::class); // Added full CRUD for students
     Route::get('/student/is-class-admin', [StudentController::class, 'isClassAdmin']);
     Route::post('/students/{id}/toggle-class-admin', [StudentController::class, 'toggleClassAdmin']);
@@ -243,6 +261,8 @@ Route::get('/debug-migrate', function () {
         return response()->json(['error' => $e->getMessage()], 500);
     }
 }); // End debug-migrate
+
+    }); // End not.parent middleware group
 
 }); // End middleware group
 

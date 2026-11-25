@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Nightlight
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -48,6 +49,8 @@ import com.litotime.smartcampus.data.model.User
 import com.litotime.smartcampus.feature.auth.ServerSetupScreen
 import com.litotime.smartcampus.feature.eveningstudy.EveningStudyHubContent
 import com.litotime.smartcampus.feature.eveningstudy.EveningStudyTakeScreen
+import com.litotime.smartcampus.feature.parent.ParentChildAttendanceScreen
+import com.litotime.smartcampus.feature.parent.ParentFeedScreen
 import com.litotime.smartcampus.feature.profile.NotificationsScreen
 import com.litotime.smartcampus.feature.profile.ProfileScreen
 import com.litotime.smartcampus.feature.rollcall.RollCallAdminsScreen
@@ -63,6 +66,8 @@ import com.litotime.smartcampus.feature.teacher.StudentListScreen
 import com.litotime.smartcampus.feature.teacher.TeacherDashboardScreen
 
 private enum class TabId(val label: String, val icon: ImageVector) {
+    PARENT_FEED("动态", Icons.Rounded.Notifications),
+    PARENT_ATTENDANCE("孩子考勤", Icons.Rounded.CalendarMonth),
     STUDENT_HOME("考勤", Icons.Rounded.CalendarMonth),
     LEAVE_REQUEST("请假", Icons.Rounded.EditNote),
     LEAVE_HISTORY("记录", Icons.Rounded.History),
@@ -77,6 +82,7 @@ private enum class TabId(val label: String, val icon: ImageVector) {
 private sealed interface SubRoute {
     data object Notifications : SubRoute
     data object ServerSetup : SubRoute
+    data class ParentChildPortal(val studentId: Int?) : SubRoute
     data object ClassAttendanceAdmin : SubRoute
     data object ClassLeaveApprovals : SubRoute
     data class RollCallOperate(val rollCallId: Int) : SubRoute
@@ -95,9 +101,11 @@ fun RoleBasedHomeScreen(user: User) {
     val container = SmartCampusApp.container
     val unreadCount by container.pushManager.unreadCount.collectAsStateWithLifecycle()
     val pendingDest by container.pushManager.pendingDestination.collectAsStateWithLifecycle()
+    val pendingStudentId by container.pushManager.pendingStudentId.collectAsStateWithLifecycle()
 
     val tabs = remember(user) {
         when {
+            user.isParent -> listOf(TabId.PARENT_FEED, TabId.PARENT_ATTENDANCE, TabId.PROFILE)
             user.isStudent -> buildList {
                 add(TabId.STUDENT_HOME)
                 add(TabId.LEAVE_REQUEST)
@@ -125,6 +133,7 @@ fun RoleBasedHomeScreen(user: User) {
     var selectedTab by remember(user.id) { mutableStateOf(tabs.first()) }
     var subRoute by remember { mutableStateOf<SubRoute?>(null) }
     var approvalsWeekTrigger by remember { mutableIntStateOf(0) }
+    var parentFocusedStudentId by remember { mutableStateOf<Int?>(null) }
 
     BackHandler(enabled = subRoute != null) {
         subRoute = null
@@ -132,14 +141,37 @@ fun RoleBasedHomeScreen(user: User) {
 
     LaunchedEffect(pendingDest) {
         val dest = pendingDest ?: return@LaunchedEffect
+        val sid = pendingStudentId
         subRoute = null
-        selectedTab = when (dest) {
-            PushDestination.LEAVE_APPROVALS -> if (TabId.APPROVALS in tabs) TabId.APPROVALS else tabs.first()
-            PushDestination.LEAVE_HISTORY -> if (TabId.LEAVE_HISTORY in tabs) TabId.LEAVE_HISTORY else if (TabId.APPROVALS in tabs) TabId.APPROVALS else tabs.first()
-            PushDestination.STUDENT_DASHBOARD -> tabs.first()
+        when (dest) {
+            PushDestination.PARENT_FEED -> {
+                parentFocusedStudentId = sid
+                if (user.isParent) selectedTab = TabId.PARENT_FEED
+                else subRoute = SubRoute.ParentChildPortal(sid)
+            }
+            PushDestination.PARENT_CHILD_ATTENDANCE, PushDestination.PARENT_CHILD_LEAVES -> {
+                parentFocusedStudentId = sid
+                if (user.isParent) selectedTab = TabId.PARENT_ATTENDANCE
+                else subRoute = SubRoute.ParentChildPortal(sid)
+            }
+            PushDestination.LEAVE_APPROVALS -> {
+                selectedTab = if (TabId.APPROVALS in tabs) TabId.APPROVALS else tabs.first()
+            }
+            PushDestination.LEAVE_HISTORY -> {
+                selectedTab = if (TabId.LEAVE_HISTORY in tabs) TabId.LEAVE_HISTORY
+                else if (TabId.APPROVALS in tabs) TabId.APPROVALS
+                else tabs.first()
+            }
+            PushDestination.STUDENT_DASHBOARD -> {
+                selectedTab = tabs.first()
+            }
             PushDestination.NOTIFICATIONS -> {
-                subRoute = SubRoute.Notifications
-                TabId.PROFILE
+                if (user.isParent) {
+                    selectedTab = TabId.PARENT_FEED
+                } else {
+                    subRoute = SubRoute.Notifications
+                    selectedTab = TabId.PROFILE
+                }
             }
         }
         container.pushManager.consumePendingDestination()
@@ -153,6 +185,13 @@ fun RoleBasedHomeScreen(user: User) {
         }
         is SubRoute.ServerSetup -> {
             ServerSetupScreen(isInitialSetup = false, onDone = { subRoute = null })
+            return
+        }
+        is SubRoute.ParentChildPortal -> {
+            ParentChildAttendanceScreen(
+                initialStudentId = currentSub.studentId,
+                onBack = { subRoute = null }
+            )
             return
         }
         is SubRoute.ClassAttendanceAdmin -> {
@@ -199,7 +238,8 @@ fun RoleBasedHomeScreen(user: User) {
                         onClick = { selectedTab = tab },
                         label = { Text(tab.label) },
                         icon = {
-                            if (tab == TabId.PROFILE && unreadCount > 0) {
+                            val showBadge = (tab == TabId.PARENT_FEED || (tab == TabId.PROFILE && !user.isParent)) && unreadCount > 0
+                            if (showBadge) {
                                 BadgedBox(badge = { Badge { Text(unreadCount.toString()) } }) {
                                     Icon(tab.icon, contentDescription = tab.label)
                                 }
@@ -214,6 +254,16 @@ fun RoleBasedHomeScreen(user: User) {
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
             when (selectedTab) {
+                TabId.PARENT_FEED -> ParentFeedScreen(
+                    user = user,
+                    onOpenChildDetail = { studentId ->
+                        parentFocusedStudentId = studentId
+                        selectedTab = TabId.PARENT_ATTENDANCE
+                    }
+                )
+                TabId.PARENT_ATTENDANCE -> ParentChildAttendanceScreen(
+                    initialStudentId = parentFocusedStudentId
+                )
                 TabId.STUDENT_HOME -> StudentDashboardScreen(
                     user = user,
                     onOpenNotifications = { subRoute = SubRoute.Notifications },
@@ -293,7 +343,8 @@ fun RoleBasedHomeScreen(user: User) {
                 TabId.PROFILE -> ProfileScreen(
                     user = user,
                     onOpenNotifications = { subRoute = SubRoute.Notifications },
-                    onOpenServerSetup = { subRoute = SubRoute.ServerSetup }
+                    onOpenServerSetup = { subRoute = SubRoute.ServerSetup },
+                    onOpenParentPortal = { studentId -> subRoute = SubRoute.ParentChildPortal(studentId) }
                 )
             }
         }

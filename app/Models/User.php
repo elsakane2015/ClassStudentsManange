@@ -35,6 +35,17 @@ class User extends Authenticatable
     {
         return $this->hasOne(Student::class);
     }
+
+    public function children()
+    {
+        return $this->belongsToMany(Student::class, 'parent_student', 'parent_user_id', 'student_id')
+            ->withTimestamps();
+    }
+
+    public function isParentOnly(): bool
+    {
+        return $this->role === 'parent';
+    }
     
     public function teacherClasses()
     {

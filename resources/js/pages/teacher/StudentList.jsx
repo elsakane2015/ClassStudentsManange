@@ -24,6 +24,14 @@ const createDraft = (student) => ({
     parent_email: student.parent_email || '',
 });
 
+const parseParentEmails = (raw) => {
+    if (!raw || typeof raw !== 'string') return [];
+    return raw
+        .split(/[,，;；\s]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+};
+
 export default function StudentList() {
     const { user } = useAuthStore();
     const [students, setStudents] = useState([]);
@@ -50,6 +58,10 @@ export default function StudentList() {
     // Form State
     const [showForm, setShowForm] = useState(false);
     const [editingStudent, setEditingStudent] = useState(null);
+    const [parentAccounts, setParentAccounts] = useState([]);
+    const [loadingParentAccounts, setLoadingParentAccounts] = useState(false);
+    const [parentAccountsError, setParentAccountsError] = useState('');
+    const [resettingParentId, setResettingParentId] = useState(null);
     const [suspensionStudent, setSuspensionStudent] = useState(null);
     const [suspensionForm, setSuspensionForm] = useState({ start_date: '', end_date: '', reason: '', destination: '' });
     const [eveningLeaveStudent, setEveningLeaveStudent] = useState(null);
@@ -172,8 +184,54 @@ export default function StudentList() {
         }
     };
 
+    const fetchStudentParents = async (studentId) => {
+        setLoadingParentAccounts(true);
+        setParentAccountsError('');
+        try {
+            const res = await axios.get(`/students/${studentId}/parents`);
+            const list = Array.isArray(res.data?.data) ? res.data.data : null;
+            if (!list) {
+                setParentAccounts([]);
+                setParentAccountsError('服务端返回格式异常，请确认后端已更新至最新版本。');
+            } else {
+                setParentAccounts(list);
+            }
+        } catch (err) {
+            setParentAccounts([]);
+            setParentAccountsError(err.response?.data?.message || '无法加载父母端账号，请确认后端已部署并完成数据库迁移。');
+        } finally {
+            setLoadingParentAccounts(false);
+        }
+    };
+
+    const handleResetParentPassword = async (parentAccount) => {
+        if (!editingStudent) return;
+        const customPwd = window.prompt(
+            `重置家长账号「${parentAccount.email}」的密码：\n留空点击确定将重置为系统默认初始密码；或直接输入 6 位以上新密码。`,
+            ''
+        );
+        if (customPwd === null) return;
+        if (customPwd.trim() !== '' && customPwd.trim().length < 6) {
+            alert('新密码至少需要 6 位');
+            return;
+        }
+        setResettingParentId(parentAccount.id);
+        try {
+            const res = await axios.post(
+                `/students/${editingStudent.id}/parents/${parentAccount.id}/reset-password`,
+                customPwd.trim() ? { password: customPwd.trim() } : {}
+            );
+            alert(res.data?.message || '家长密码已重置');
+        } catch (err) {
+            alert(err.response?.data?.message || err.response?.data?.error || '重置失败');
+        } finally {
+            setResettingParentId(null);
+        }
+    };
+
     const handleEdit = (student) => {
         setEditingStudent(student);
+        setParentAccounts([]);
         setFormData({
             name: student.name || '',
             student_no: student.student_no || '',
@@ -186,10 +244,12 @@ export default function StudentList() {
             password: ''
         });
         setShowForm(true);
+        fetchStudentParents(student.id);
     };
 
     const openCreate = () => {
         setEditingStudent(null);
+        setParentAccounts([]);
         setFormData({ name: '', student_no: '', gender: 'male', is_boarding: false, parent_contact: '', parent_email: '', class_id: classes.length === 1 ? classes[0].id : '', email: '', password: 'password123' });
         setShowForm(true);
     };
@@ -498,119 +558,182 @@ export default function StudentList() {
             {/* Table - only show when shouldShowStudents */}
             {shouldShowStudents && (
                 <div className="mt-4 flex flex-col">
-                    <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-                        <div className="inline-block min-w-full py-2 align-middle md:px-6 lg:px-8">
-                            <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-                                <table className="min-w-full divide-y divide-gray-300">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            <th scope="col" className="py-3.5 pl-4 pr-2 w-10">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedIds.length === students.length && students.length > 0}
-                                                    onChange={toggleSelectAll}
-                                                    disabled={batchEditing}
-                                                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                                                />
-                                            </th>
-                                            <th scope="col" className="whitespace-nowrap py-3.5 pl-2 pr-3 text-left text-sm font-semibold text-gray-900">姓名</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">学号</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">性别</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">住宿</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">系部</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">入学年份</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">班级</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">账号(Email)</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长联系方式</th>
-                                            <th scope="col" className="whitespace-nowrap px-3 py-3.5 text-left text-sm font-semibold text-gray-900">家长邮箱</th>
-                                            <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6"><span className="sr-only">操作</span></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-200 bg-white">
-                                        {students.map((student) => {
-                                            const draft = drafts[student.id] || createDraft(student);
-                                            return (
-                                            <tr key={student.id} className={selectedIds.includes(student.id) ? 'bg-indigo-50' : ''}>
-                                                <td className="py-4 pl-4 pr-2">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedIds.includes(student.id)}
-                                                        onChange={() => toggleSelect(student.id)}
-                                                        disabled={batchEditing}
-                                                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                                                    />
-                                                </td>
-                                                <td className="whitespace-nowrap py-4 pl-2 pr-3 text-sm font-medium text-gray-900">
-                                                    <div className="flex items-center gap-1.5">
-                                                        {batchEditing ? (
-                                                            <span>{student.name}</span>
-                                                        ) : (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleEdit(student)}
-                                                                title="点击修改基础信息"
-                                                                className="text-left font-medium text-gray-900 hover:text-indigo-600 hover:underline focus:outline-none"
-                                                            >
-                                                                {student.name}
-                                                            </button>
-                                                        )}
-                                                        {student.is_class_admin && (
-                                                            <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-                                                                考勤员
+                    <div className="overflow-x-auto rounded-lg shadow ring-1 ring-black ring-opacity-5">
+                        <table className="w-full min-w-[820px] table-fixed divide-y divide-gray-300">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th scope="col" className="w-10 py-3 pl-3 pr-2 text-left">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.length === students.length && students.length > 0}
+                                            onChange={toggleSelectAll}
+                                            disabled={batchEditing}
+                                            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                        />
+                                    </th>
+                                    <th scope="col" className="w-[18%] py-3 pl-2 pr-3 text-left text-xs font-semibold text-gray-900">学生信息</th>
+                                    <th scope="col" className="w-[12%] px-2.5 py-3 text-left text-xs font-semibold text-gray-900">班级 / 系部</th>
+                                    <th scope="col" className="w-[17%] px-2.5 py-3 text-left text-xs font-semibold text-gray-900">学生账号</th>
+                                    <th scope="col" className="w-[29%] px-2.5 py-3 text-left text-xs font-semibold text-gray-900">家长联系 / 父母端邮箱</th>
+                                    <th scope="col" className="w-[20%] py-3 pl-2.5 pr-4 text-right text-xs font-semibold text-gray-900">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 bg-white">
+                                {students.map((student) => {
+                                    const draft = drafts[student.id] || createDraft(student);
+                                    const parentEmails = parseParentEmails(student.parent_email);
+                                    const genderLabel = student.gender === 'male' ? '男' : student.gender === 'female' ? '女' : '其他';
+                                    return (
+                                    <tr key={student.id} className={selectedIds.includes(student.id) ? 'bg-indigo-50/70' : 'hover:bg-gray-50/60'}>
+                                        <td className="py-3 pl-3 pr-2 align-top">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.includes(student.id)}
+                                                onChange={() => toggleSelect(student.id)}
+                                                disabled={batchEditing}
+                                                className="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+                                        </td>
+                                        <td className="py-3 pl-2 pr-3 align-top text-sm">
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                {batchEditing ? (
+                                                    <span className="font-medium text-gray-900">{student.name}</span>
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleEdit(student)}
+                                                        title="点击编辑学生与查看父母端账号"
+                                                        className="text-left font-medium text-gray-900 hover:text-indigo-600 hover:underline focus:outline-none"
+                                                    >
+                                                        {student.name}
+                                                    </button>
+                                                )}
+                                                {!batchEditing && (
+                                                    <span className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
+                                                        {genderLabel}
+                                                    </span>
+                                                )}
+                                                {student.is_class_admin && (
+                                                    <span className="inline-flex items-center rounded-full bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700">
+                                                        考勤员
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+                                                <span>{student.student_no}</span>
+                                                {!batchEditing && (
+                                                    student.is_boarding ? (
+                                                        student.active_boarding_suspension ? (
+                                                            <span className="inline-flex items-center rounded bg-orange-50 px-1.5 py-0.5 text-[11px] font-medium text-orange-700">
+                                                                住宿·已暂停
                                                             </span>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.student_no}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                                                    {batchEditing ? (
-                                                        <select aria-label={`${student.name}的性别`} value={draft.gender} onChange={event => updateDraft(student.id, 'gender', event.target.value)} className="w-20 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
-                                                            <option value="male">男</option>
-                                                            <option value="female">女</option>
-                                                            <option value="other">其他</option>
-                                                        </select>
-                                                    ) : (student.gender === 'male' ? '男' : student.gender === 'female' ? '女' : '其他')}
-                                                </td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                                                    {batchEditing ? (
-                                                        <select aria-label={`${student.name}的住宿状态`} value={draft.is_boarding ? '1' : '0'} onChange={event => updateDraft(student.id, 'is_boarding', event.target.value === '1')} className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm">
-                                                            <option value="0">走读</option>
-                                                            <option value="1">住宿</option>
-                                                        </select>
-                                                    ) : (student.is_boarding ? <span>{student.active_boarding_suspension ? <span className="font-medium text-orange-700">是 · 已暂停</span> : '是'}</span> : '否')}
-                                                </td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.department_name}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.enrollment_year || '-'}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{student.class_name}</td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                                                    {batchEditing ? <input aria-label={`${student.name}的账号`} type="email" value={draft.email} onChange={event => updateDraft(student.id, 'email', event.target.value)} className="w-52 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.email || '-')}
-                                                </td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                                                    {batchEditing ? <input aria-label={`${student.name}的家长联系方式`} type="tel" value={draft.parent_contact} onChange={event => updateDraft(student.id, 'parent_contact', event.target.value)} className="w-36 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.parent_contact || '-')}
-                                                </td>
-                                                <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                                                    {batchEditing ? <input aria-label={`${student.name}的家长邮箱`} type="text" value={draft.parent_email} onChange={event => updateDraft(student.id, 'parent_email', event.target.value)} placeholder="多个邮箱用逗号分隔" className="w-64 rounded-md border border-gray-300 px-2 py-1.5 text-sm" /> : (student.parent_email || '-')}
-                                                </td>
-                                                <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6 space-x-2">
-                                                    {!batchEditing && (
-                                                        <>
-                                                            <button onClick={() => handleEdit(student)} className="text-indigo-600 hover:text-indigo-900">编辑</button>
-                                                            {student.is_boarding && <button onClick={() => openSuspension(student)} className="text-orange-600 hover:text-orange-900">{student.active_boarding_suspension ? '查看暂停' : '暂停住宿'}</button>}
-                                                            {student.is_boarding && !student.active_boarding_suspension && <button onClick={() => openEveningLeave(student)} className="text-cyan-700 hover:text-cyan-900">夜自习请假</button>}
-                                                            <button onClick={() => toggleClassAdmin(student)} className={student.is_class_admin ? "text-orange-600 hover:text-orange-900" : "text-blue-600 hover:text-blue-900"}>
-                                                                {student.is_class_admin ? '取消班级考勤员' : '指定班级考勤员'}
-                                                            </button>
-                                                            <button onClick={() => handleDelete(student.id)} className="text-red-600 hover:text-red-900">删除</button>
-                                                        </>
+                                                        ) : (
+                                                            <span className="inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700">
+                                                                住宿
+                                                            </span>
+                                                        )
+                                                    ) : (
+                                                        <span className="text-gray-400">走读</span>
+                                                    )
+                                                )}
+                                            </div>
+                                            {batchEditing && (
+                                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                                    <select aria-label={`${student.name}的性别`} value={draft.gender} onChange={event => updateDraft(student.id, 'gender', event.target.value)} className="rounded-md border border-gray-300 bg-white px-1.5 py-1 text-xs">
+                                                        <option value="male">男</option>
+                                                        <option value="female">女</option>
+                                                        <option value="other">其他</option>
+                                                    </select>
+                                                    <select aria-label={`${student.name}的住宿状态`} value={draft.is_boarding ? '1' : '0'} onChange={event => updateDraft(student.id, 'is_boarding', event.target.value === '1')} className="rounded-md border border-gray-300 bg-white px-1.5 py-1 text-xs">
+                                                        <option value="0">走读</option>
+                                                        <option value="1">住宿</option>
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="px-2.5 py-3 align-top text-sm">
+                                            <div className="font-medium text-gray-800 break-words">{student.class_name || '-'}</div>
+                                            <div className="mt-1 text-xs text-gray-500 break-words">
+                                                {student.department_name || '-'}
+                                                {student.enrollment_year ? ` · ${student.enrollment_year}级` : ''}
+                                            </div>
+                                        </td>
+                                        <td className="px-2.5 py-3 align-top text-xs text-gray-600">
+                                            {batchEditing ? (
+                                                <input
+                                                    aria-label={`${student.name}的账号`}
+                                                    type="email"
+                                                    value={draft.email}
+                                                    onChange={event => updateDraft(student.id, 'email', event.target.value)}
+                                                    className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs"
+                                                />
+                                            ) : (
+                                                <span className="break-all">{student.email || '-'}</span>
+                                            )}
+                                        </td>
+                                        <td className="px-2.5 py-3 align-top text-xs text-gray-600">
+                                            {batchEditing ? (
+                                                <div className="space-y-1.5">
+                                                    <input
+                                                        aria-label={`${student.name}的家长联系方式`}
+                                                        type="tel"
+                                                        value={draft.parent_contact}
+                                                        onChange={event => updateDraft(student.id, 'parent_contact', event.target.value)}
+                                                        placeholder="家长电话"
+                                                        className="w-full rounded-md border border-gray-300 px-2 py-1 text-xs"
+                                                    />
+                                                    <input
+                                                        aria-label={`${student.name}的家长邮箱`}
+                                                        type="text"
+                                                        value={draft.parent_email}
+                                                        onChange={event => updateDraft(student.id, 'parent_email', event.target.value)}
+                                                        placeholder="家长邮箱（逗号分隔）"
+                                                        className="w-full rounded-md border border-gray-300 px-2 py-1 text-xs"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-1">
+                                                    {student.parent_contact && (
+                                                        <div className="text-gray-700">{student.parent_contact}</div>
                                                     )}
-                                                </td>
-                                            </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                                                    {parentEmails.length > 0 ? (
+                                                        <div className="space-y-0.5">
+                                                            {parentEmails.map((email, idx) => (
+                                                                <div key={`${student.id}-pe-${idx}`} className="break-all text-gray-500">
+                                                                    {email}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        !student.parent_contact && <span className="text-gray-400">-</span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="py-3 pl-2.5 pr-4 align-top text-right text-xs font-medium">
+                                            {!batchEditing && (
+                                                <div className="flex flex-wrap justify-end gap-x-2.5 gap-y-1.5">
+                                                    <button onClick={() => handleEdit(student)} className="text-indigo-600 hover:text-indigo-900">编辑 / 父母端</button>
+                                                    {student.is_boarding && (
+                                                        <button onClick={() => openSuspension(student)} className="text-orange-600 hover:text-orange-900">
+                                                            {student.active_boarding_suspension ? '查看暂停' : '暂停住宿'}
+                                                        </button>
+                                                    )}
+                                                    {student.is_boarding && !student.active_boarding_suspension && (
+                                                        <button onClick={() => openEveningLeave(student)} className="text-cyan-700 hover:text-cyan-900">夜自习请假</button>
+                                                    )}
+                                                    <button onClick={() => toggleClassAdmin(student)} className={student.is_class_admin ? 'text-orange-600 hover:text-orange-900' : 'text-blue-600 hover:text-blue-900'}>
+                                                        {student.is_class_admin ? '取消考勤员' : '设为考勤员'}
+                                                    </button>
+                                                    <button onClick={() => handleDelete(student.id)} className="text-red-600 hover:text-red-900">删除</button>
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}
@@ -680,10 +803,65 @@ export default function StudentList() {
                                     <input type="text" value={formData.parent_contact} onChange={e => setFormData({ ...formData, parent_contact: e.target.value })} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700">家长邮箱</label>
-                                    <input type="email" multiple value={formData.parent_email} onChange={e => setFormData({ ...formData, parent_email: e.target.value })} placeholder="parent@example.com, guardian@example.com" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
-                                    <p className="mt-1 text-xs text-gray-500">最多 10 个邮箱，多个地址请使用英文逗号分隔</p>
+                                    <label className="block text-sm font-medium text-gray-700">家长邮箱（兼父母端登录用户名）</label>
+                                    <input type="text" value={formData.parent_email} onChange={e => setFormData({ ...formData, parent_email: e.target.value })} placeholder="parent@example.com, guardian@example.com" className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />
+                                    <p className="mt-1 text-xs text-gray-500">最多 10 个邮箱，用逗号分隔；保存后自动开通对应父母端账号</p>
                                 </div>
+                                {editingStudent && (
+                                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-xs font-semibold text-gray-700">已关联父母端账号</span>
+                                            {loadingParentAccounts && <span className="text-xs text-gray-400">加载中...</span>}
+                                        </div>
+                                        {!loadingParentAccounts && parentAccountsError ? (
+                                            <div className="flex items-center justify-between gap-2 text-xs text-red-600">
+                                                <span>{parentAccountsError}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => fetchStudentParents(editingStudent.id)}
+                                                    className="flex-shrink-0 text-indigo-600 hover:underline"
+                                                >
+                                                    重试
+                                                </button>
+                                            </div>
+                                        ) : !loadingParentAccounts && parentAccounts.length === 0 ? (
+                                            <p className="text-xs text-gray-400">
+                                                {parseParentEmails(formData.parent_email).length > 0
+                                                    ? '当前邮箱尚未生成关联记录，请点击下方「保存」立即同步开通父母端账号。'
+                                                    : '暂未关联家长账号，填写上方家长邮箱并保存后自动生成。'}
+                                            </p>
+                                        ) : (
+                                            <ul className="space-y-2">
+                                                {parentAccounts.map(pa => (
+                                                    <li key={pa.id} className="flex items-center justify-between gap-2 text-xs bg-white px-2.5 py-2 rounded border border-gray-200">
+                                                        <div className="min-w-0">
+                                                            <div className="font-medium text-gray-800 truncate">{pa.email}</div>
+                                                            <div className="text-[11px] text-gray-500 mt-0.5 flex flex-wrap gap-1.5">
+                                                                <span>{pa.is_staff_account ? '教职工复用账号' : '独立家长账号'}</span>
+                                                                <span>·</span>
+                                                                <span className={pa.push_ready ? 'text-green-600' : 'text-gray-400'}>
+                                                                    {pa.push_ready ? `推送已就绪 (${pa.device_count}台设备)` : '暂未绑定推送设备'}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        {pa.can_reset_password ? (
+                                                            <button
+                                                                type="button"
+                                                                disabled={resettingParentId === pa.id}
+                                                                onClick={() => handleResetParentPassword(pa)}
+                                                                className="flex-shrink-0 rounded bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+                                                            >
+                                                                {resettingParentId === pa.id ? '重置中...' : '重置密码'}
+                                                            </button>
+                                                        ) : (
+                                                            <span className="flex-shrink-0 text-[11px] text-gray-400">用原教职工密码</span>
+                                                        )}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                )}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">账号(Email)</label>
                                     <input type="email" required value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm p-2 border" />

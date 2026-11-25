@@ -8,6 +8,7 @@ struct LoginView: View {
     @State private var isLoading: Bool = false
     @State private var errorMessage: String?
     @State private var showServerSheet: Bool = false
+    @State private var showForgotPasswordSheet: Bool = false
 
     @FocusState private var focusedField: Field?
     private enum Field { case account, password }
@@ -78,9 +79,17 @@ struct LoginView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("密码")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.secondary)
+                            HStack {
+                                Text("密码")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("忘记密码？") {
+                                    showForgotPasswordSheet = true
+                                }
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(SCTheme.primary)
+                            }
                             HStack(spacing: 10) {
                                 Image(systemName: "lock")
                                     .foregroundStyle(.secondary)
@@ -134,7 +143,7 @@ struct LoginView: View {
                 }
                 .padding(.horizontal)
 
-                Text("支持学生、班主任、值班教师及管理人员统一登录")
+                Text("支持学生（学号/邮箱）、教职工及家长邮箱统一登录")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -143,6 +152,12 @@ struct LoginView: View {
         .sheet(isPresented: $showServerSheet) {
             NavigationStack {
                 ServerSetupView(isInitialSetup: false)
+            }
+        }
+        .sheet(isPresented: $showForgotPasswordSheet) {
+            ForgotPasswordSheet(initialEmail: account.contains("@") ? account : "") { resetEmail in
+                account = resetEmail
+                password = ""
             }
         }
     }
@@ -155,6 +170,135 @@ struct LoginView: View {
 
         do {
             try await SessionManager.shared.login(account: account, password: password)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ForgotPasswordSheet: View {
+    let initialEmail: String
+    let onCompleted: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var email: String
+    @State private var code: String = ""
+    @State private var newPassword: String = ""
+    @State private var confirmPassword: String = ""
+    @State private var codeSent = false
+    @State private var isSending = false
+    @State private var isSubmitting = false
+    @State private var infoMessage: String?
+    @State private var errorMessage: String?
+
+    init(initialEmail: String, onCompleted: @escaping (String) -> Void) {
+        self.initialEmail = initialEmail
+        self.onCompleted = onCompleted
+        _email = State(initialValue: initialEmail)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let errorMessage {
+                    Section { ErrorBannerView(message: errorMessage) }
+                }
+                if let infoMessage {
+                    Section {
+                        Text(infoMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                Section("1. 验证登录邮箱") {
+                    TextField("输入家长/教师/学生登录邮箱", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    Button {
+                        Task { await sendCode() }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if isSending { ProgressView().padding(.trailing, 4) }
+                            Text(isSending ? "正在发送..." : (codeSent ? "重新获取验证码" : "发送 6 位邮箱验证码"))
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                        }
+                    }
+                    .disabled(isSending || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if codeSent {
+                    Section("2. 输入验证码与新密码") {
+                        TextField("6 位邮箱验证码", text: $code)
+                            .keyboardType(.numberPad)
+                        SecureField("新密码（至少 6 位）", text: $newPassword)
+                        SecureField("确认新密码", text: $confirmPassword)
+                    }
+
+                    Section {
+                        Button {
+                            Task { await submitReset() }
+                        } label: {
+                            HStack {
+                                Spacer()
+                                if isSubmitting { ProgressView().tint(.white) }
+                                Text(isSubmitting ? "提交中..." : "确认重置密码")
+                                    .font(.headline)
+                                Spacer()
+                            }
+                        }
+                        .listRowBackground(SCTheme.primary)
+                        .foregroundStyle(.white)
+                        .disabled(isSubmitting || code.count != 6 || newPassword.count < 6 || newPassword != confirmPassword)
+                    }
+                }
+            }
+            .navigationTitle("找回密码")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func sendCode() async {
+        isSending = true
+        errorMessage = nil
+        infoMessage = nil
+        defer { isSending = false }
+
+        do {
+            let msg = try await ParentRepository.sendPasswordResetCode(email: email)
+            codeSent = true
+            infoMessage = msg
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func submitReset() async {
+        isSubmitting = true
+        errorMessage = nil
+        infoMessage = nil
+        defer { isSubmitting = false }
+
+        do {
+            let msg = try await ParentRepository.confirmPasswordReset(
+                email: email,
+                code: code,
+                password: newPassword,
+                confirmPassword: confirmPassword
+            )
+            infoMessage = msg
+            try? await Task.sleep(for: .seconds(0.8))
+            onCompleted(email.trimmingCharacters(in: .whitespacesAndNewlines))
+            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }

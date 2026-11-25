@@ -542,6 +542,10 @@ const LeaveTypeForm = ({ initialData, onSubmit, onCancel, timeSlots = [], attend
 const SchoolSettings = () => {
     const [schoolName, setSchoolName] = useState('');
     const [originalName, setOriginalName] = useState('');
+    const [parentDefaultPwd, setParentDefaultPwd] = useState('123456');
+    const [originalParentDefaultPwd, setOriginalParentDefaultPwd] = useState('123456');
+    const [savingParentPwd, setSavingParentPwd] = useState(false);
+    const [parentPwdMsg, setParentPwdMsg] = useState({ type: '', text: '' });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
@@ -552,13 +556,45 @@ const SchoolSettings = () => {
 
     const fetchSchoolInfo = async () => {
         try {
-            const res = await axios.get('/school/info');
-            setSchoolName(res.data.name || '');
-            setOriginalName(res.data.name || '');
+            const [schoolRes, settingsRes] = await Promise.all([
+                axios.get('/school/info'),
+                axios.get('/settings').catch(() => ({ data: [] })),
+            ]);
+            setSchoolName(schoolRes.data.name || '');
+            setOriginalName(schoolRes.data.name || '');
+            const pwdSetting = (settingsRes.data || []).find(s => s.key === 'parent_default_password');
+            if (pwdSetting?.value) {
+                setParentDefaultPwd(pwdSetting.value);
+                setOriginalParentDefaultPwd(pwdSetting.value);
+            }
         } catch (err) {
             console.error('Failed to fetch school info:', err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleSaveParentPassword = async () => {
+        const trimmed = parentDefaultPwd.trim();
+        if (trimmed.length < 6) {
+            setParentPwdMsg({ type: 'error', text: '家长默认初始密码至少需要 6 位' });
+            return;
+        }
+        setSavingParentPwd(true);
+        setParentPwdMsg({ type: '', text: '' });
+        try {
+            await axios.post('/settings', {
+                settings: [{ key: 'parent_default_password', value: trimmed }],
+            });
+            setParentDefaultPwd(trimmed);
+            setOriginalParentDefaultPwd(trimmed);
+            setParentPwdMsg({ type: 'success', text: '父母端默认初始密码已更新' });
+        } catch (err) {
+            const validation = err.response?.data?.errors;
+            const firstErr = validation ? Object.values(validation).flat()[0] : null;
+            setParentPwdMsg({ type: 'error', text: firstErr || err.response?.data?.message || '保存失败' });
+        } finally {
+            setSavingParentPwd(false);
         }
     };
 
@@ -621,6 +657,40 @@ const SchoolSettings = () => {
                         {saving ? '保存中...' : '保存设置'}
                     </button>
                 </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-2">父母端账号默认初始密码</h3>
+                <p className="text-sm text-gray-500 mb-4">
+                    在学生信息中录入「家长邮箱」后，系统将自动为新邮箱开通父母端账号并使用该初始密码；家长可自行修改密码或通过邮箱验证码找回。修改此项不会覆盖已有家长的密码。
+                </p>
+
+                {parentPwdMsg.text && (
+                    <div className={`p-3 rounded-lg mb-4 ${parentPwdMsg.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                        {parentPwdMsg.text}
+                    </div>
+                )}
+
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">默认初始密码（至少 6 位）</label>
+                    <input
+                        type="text"
+                        value={parentDefaultPwd}
+                        onChange={(e) => setParentDefaultPwd(e.target.value)}
+                        placeholder="例如：123456"
+                        className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        maxLength={64}
+                    />
+                </div>
+
+                <button
+                    type="button"
+                    onClick={handleSaveParentPassword}
+                    disabled={parentDefaultPwd.trim() === originalParentDefaultPwd || savingParentPwd}
+                    className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors ${(parentDefaultPwd.trim() === originalParentDefaultPwd || savingParentPwd) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                    {savingParentPwd ? '保存中...' : '保存家长初始密码'}
+                </button>
             </div>
         </div>
     );

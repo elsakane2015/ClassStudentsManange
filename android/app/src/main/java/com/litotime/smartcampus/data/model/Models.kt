@@ -57,6 +57,170 @@ data class StudentProfile(
     }
 }
 
+data class ParentChildSummary(
+    val id: Int,
+    val name: String,
+    val studentNo: String?,
+    val gender: String?,
+    val isBoarding: Boolean,
+    val classId: Int?,
+    val className: String?,
+    val departmentName: String?,
+    val teacherName: String?,
+    val isGraduated: Boolean,
+    val todayAnomalyCount: Int = 0,
+    val pendingLeaveCount: Int = 0
+) {
+    companion object {
+        fun fromJson(o: JsonObject) = ParentChildSummary(
+            id = o.intVal("id"),
+            name = o.str("name").orEmpty(),
+            studentNo = o.str("student_no"),
+            gender = o.str("gender"),
+            isBoarding = o.boolVal("is_boarding"),
+            classId = o.intOrNull("class_id"),
+            className = o.str("class_name"),
+            departmentName = o.str("department_name"),
+            teacherName = o.str("teacher_name"),
+            isGraduated = o.boolVal("is_graduated"),
+            todayAnomalyCount = o.intVal("today_anomaly_count"),
+            pendingLeaveCount = o.intVal("pending_leave_count")
+        )
+    }
+}
+
+data class StudentParentAccount(
+    val id: Int,
+    val name: String,
+    val email: String,
+    val role: String,
+    val isStaffAccount: Boolean,
+    val status: Boolean,
+    val childrenCount: Int,
+    val deviceCount: Int,
+    val pushReady: Boolean,
+    val canResetPassword: Boolean
+) {
+    companion object {
+        fun fromJson(o: JsonObject): StudentParentAccount {
+            val isStaff = o.boolVal("is_staff_account")
+            return StudentParentAccount(
+                id = o.intVal("id"),
+                name = o.str("name").orEmpty(),
+                email = o.str("email").orEmpty(),
+                role = o.str("role").orEmpty(),
+                isStaffAccount = isStaff,
+                status = o.boolVal("status", true),
+                childrenCount = o.intVal("children_count", 1),
+                deviceCount = o.intVal("device_count"),
+                pushReady = o.boolVal("push_ready"),
+                canResetPassword = o.boolVal("can_reset_password", !isStaff)
+            )
+        }
+    }
+}
+
+data class ParentChildOverview(
+    val child: ParentChildSummary,
+    val scope: String,
+    val stats: StudentStats,
+    val pendingRequests: Int,
+    val leaveTypes: List<LeaveType>
+) {
+    companion object {
+        fun fromJson(o: JsonObject): ParentChildOverview {
+            val statsObj = o.objOrNull("stats") ?: JsonObject(emptyMap())
+            return ParentChildOverview(
+                child = ParentChildSummary.fromJson(o.objOrNull("child") ?: JsonObject(emptyMap())),
+                scope = o.str("scope") ?: "month",
+                stats = StudentStats.fromJson(statsObj),
+                pendingRequests = statsObj.intVal("pending_requests"),
+                leaveTypes = o.arrOrEmpty("leave_types").mapNotNull { it.asObjectOrNull()?.let(LeaveType::fromJson) }
+            )
+        }
+    }
+}
+
+data class ParentLeaveRequestItem(
+    val id: Int,
+    val studentId: Int?,
+    val typeName: String,
+    val color: String?,
+    val dateRangeText: String,
+    val periodLabel: String?,
+    val eveningStudyLabel: String?,
+    val destination: String?,
+    val reason: String?,
+    val status: String,
+    val approverName: String?,
+    val rejectionReason: String?
+) {
+    val statusDisplayText: String
+        get() = when (status) {
+            "pending" -> "待审批"
+            "approved" -> "已通过"
+            "rejected" -> "已驳回"
+            else -> status
+        }
+
+    companion object {
+        fun fromJson(o: JsonObject) = ParentLeaveRequestItem(
+            id = o.intVal("id"),
+            studentId = o.intOrNull("student_id"),
+            typeName = o.str("type_name") ?: "请假",
+            color = o.str("color"),
+            dateRangeText = o.str("date_range_text") ?: o.str("start_date").orEmpty(),
+            periodLabel = o.str("period_label"),
+            eveningStudyLabel = o.str("evening_study_label"),
+            destination = o.str("destination"),
+            reason = o.str("reason"),
+            status = o.str("approval_status") ?: o.str("status") ?: "approved",
+            approverName = o.str("approver_name"),
+            rejectionReason = o.str("rejection_reason")
+        )
+    }
+}
+
+data class ParentRecordItem(
+    val id: Int,
+    val date: String,
+    val scene: String,
+    val status: String,
+    val typeName: String,
+    val color: String?,
+    val isSelfApplied: Boolean,
+    val sourceType: String?,
+    val detailLabel: String?,
+    val recordTime: String?,
+    val reason: String?,
+    val note: String?
+) {
+    val sourceDisplayText: String
+        get() = when {
+            isSelfApplied -> "自主申请"
+            sourceType == "roll_call" -> "点名标记"
+            scene == "evening_study" -> "夜自习"
+            else -> "老师标记"
+        }
+
+    companion object {
+        fun fromJson(o: JsonObject) = ParentRecordItem(
+            id = o.intVal("id"),
+            date = o.str("date").orEmpty(),
+            scene = o.str("scene") ?: "regular",
+            status = o.str("status").orEmpty(),
+            typeName = o.str("type_name") ?: o.str("status").orEmpty(),
+            color = o.str("color"),
+            isSelfApplied = o.boolVal("is_self_applied"),
+            sourceType = o.str("source_type"),
+            detailLabel = o.str("detail_label"),
+            recordTime = o.str("record_time"),
+            reason = o.str("reason"),
+            note = o.str("note")
+        )
+    }
+}
+
 data class User(
     val id: Int,
     val name: String,
@@ -65,8 +229,12 @@ data class User(
     val student: StudentProfile?,
     val dutyDepartments: List<DepartmentRef>,
     val permissions: List<String>,
-    val unreadNotificationsCount: Int
+    val unreadNotificationsCount: Int,
+    val parentChildren: List<ParentChildSummary> = emptyList(),
+    val hasParentChildren: Boolean = false
 ) {
+    val isParent: Boolean get() = role == "parent"
+    val hasLinkedChildren: Boolean get() = hasParentChildren || parentChildren.isNotEmpty()
     val isStudent: Boolean get() = role == "student"
     val isDutyTeacher: Boolean get() = role == "duty_teacher"
     val isAdminTier: Boolean get() = role in setOf("system_admin", "school_admin", "department_manager", "admin", "manager")
@@ -79,6 +247,7 @@ data class User(
 
     val roleDisplayName: String
         get() = when (role) {
+            "parent" -> "家长"
             "system_admin" -> "系统管理员"
             "school_admin", "admin" -> "校级管理员"
             "department_manager", "manager" -> "院系管理员"
@@ -97,16 +266,21 @@ data class User(
         role == "system_admin" || permissions.contains(permission)
 
     companion object {
-        fun fromJson(o: JsonObject) = User(
-            id = o.intVal("id"),
-            name = o.str("name").orEmpty(),
-            email = o.str("email"),
-            role = o.str("role").orEmpty(),
-            student = o.objOrNull("student")?.let { StudentProfile.fromJson(it) },
-            dutyDepartments = o.arrOrEmpty("duty_departments").mapNotNull { it.asObjectOrNull()?.let(DepartmentRef::fromJson) },
-            permissions = o.strList("permissions"),
-            unreadNotificationsCount = o.intVal("unread_notifications_count")
-        )
+        fun fromJson(o: JsonObject): User {
+            val children = o.arrOrEmpty("parent_children").mapNotNull { it.asObjectOrNull()?.let(ParentChildSummary::fromJson) }
+            return User(
+                id = o.intVal("id"),
+                name = o.str("name").orEmpty(),
+                email = o.str("email"),
+                role = o.str("role").orEmpty(),
+                student = o.objOrNull("student")?.let { StudentProfile.fromJson(it) },
+                dutyDepartments = o.arrOrEmpty("duty_departments").mapNotNull { it.asObjectOrNull()?.let(DepartmentRef::fromJson) },
+                permissions = o.strList("permissions"),
+                unreadNotificationsCount = o.intVal("unread_notifications_count"),
+                parentChildren = children,
+                hasParentChildren = o.boolVal("has_parent_children", children.isNotEmpty())
+            )
+        }
     }
 }
 
@@ -116,21 +290,26 @@ data class AppNotificationItem(
     val title: String,
     val body: String,
     val route: String?,
+    val studentId: Int?,
     val readAt: String?,
     val createdAt: String?
 ) {
     val isUnread: Boolean get() = readAt.isNullOrBlank()
 
     companion object {
-        fun fromJson(o: JsonObject) = AppNotificationItem(
-            id = o.intVal("id"),
-            type = o.str("type").orEmpty(),
-            title = o.str("title").orEmpty(),
-            body = o.str("body").orEmpty(),
-            route = o.objOrNull("data")?.str("route"),
-            readAt = o.str("read_at"),
-            createdAt = o.str("created_at")
-        )
+        fun fromJson(o: JsonObject): AppNotificationItem {
+            val dataObj = o.objOrNull("data")
+            return AppNotificationItem(
+                id = o.intVal("id"),
+                type = o.str("type").orEmpty(),
+                title = o.str("title").orEmpty(),
+                body = o.str("body").orEmpty(),
+                route = dataObj?.str("route"),
+                studentId = dataObj?.intOrNull("student_id"),
+                readAt = o.str("read_at"),
+                createdAt = o.str("created_at")
+            )
+        }
     }
 }
 

@@ -9,6 +9,9 @@ enum PushDestination: Equatable, Hashable {
     case leaveHistory
     case studentDashboard
     case notifications
+    case parentFeed(studentId: Int?)
+    case parentChildAttendance(studentId: Int?)
+    case parentChildLeaves(studentId: Int?)
 }
 
 /// 原生 APNs 推送与应用内通知状态管理器（终态架构：无推送证书时仍支持完整设备注册与 App 内消息中心，配置证书后自动升级为系统锁屏推送）
@@ -249,8 +252,12 @@ final class PushNotificationManager: NSObject {
         }
     }
 
-    func handleDeepLink(route: String?, type: String?) {
+    func handleDeepLink(route: String?, type: String?, studentId: Int? = nil) {
         switch route ?? type {
+        case "parent_child_leaves", "parent_leave_submitted", "parent_leave_approved", "parent_leave_rejected":
+            pendingDestination = .parentChildLeaves(studentId: studentId)
+        case "parent_child_attendance", "parent_attendance_marked", "parent_evening_study_alert":
+            pendingDestination = .parentChildAttendance(studentId: studentId)
         case "leave_approvals", "leave_submitted":
             pendingDestination = .leaveApprovals
         case "leave_history", "leave_approved", "leave_rejected":
@@ -282,9 +289,11 @@ extension PushNotificationManager: UNUserNotificationCenterDelegate {
         let dataDict = userInfo["data"] as? [String: Any]
         let route = dataDict?["route"] as? String
         let type = (userInfo["type"] as? String) ?? (dataDict?["type"] as? String)
+        let rawStudentId = dataDict?["student_id"]
+        let studentId: Int? = (rawStudentId as? Int) ?? (rawStudentId as? String).flatMap(Int.init)
 
         await MainActor.run {
-            self.handleDeepLink(route: route, type: type)
+            self.handleDeepLink(route: route, type: type, studentId: studentId)
             Task { await self.refreshUnreadCount() }
         }
     }

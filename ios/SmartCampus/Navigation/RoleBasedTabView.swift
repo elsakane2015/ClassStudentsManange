@@ -7,9 +7,11 @@ struct RoleBasedTabView: View {
     @State private var pushManager = PushNotificationManager.shared
     @State private var selectedTab: AppTab = .home
     @State private var approvalsWeekTrigger: Int = 0
+    @State private var parentFocusedStudentId: Int? = nil
 
     enum AppTab: Hashable {
         case home
+        case parentAttendance
         case leaveRequest
         case leaveHistory
         case approvals
@@ -21,7 +23,9 @@ struct RoleBasedTabView: View {
 
     var body: some View {
         Group {
-            if user.isStudent {
+            if user.isParent {
+                parentTabs
+            } else if user.isStudent {
                 studentTabs
             } else if user.isDutyTeacher {
                 dutyTeacherTabs
@@ -42,6 +46,38 @@ struct RoleBasedTabView: View {
     private var defaultTab: AppTab {
         if user.isDutyTeacher { return .eveningStudy }
         return .home
+    }
+
+    private var parentTabs: some View {
+        TabView(selection: $selectedTab) {
+            ParentFeedView(
+                user: user,
+                onOpenChildDetail: { studentId in
+                    parentFocusedStudentId = studentId
+                    selectedTab = .parentAttendance
+                }
+            )
+            .tabItem {
+                Label("动态", systemImage: "bell.badge")
+            }
+            .badge(pushManager.unreadCount)
+            .tag(AppTab.home)
+
+            ParentChildAttendanceView(
+                user: user,
+                initialStudentId: parentFocusedStudentId
+            )
+            .tabItem {
+                Label("孩子考勤", systemImage: "calendar.badge.checkmark")
+            }
+            .tag(AppTab.parentAttendance)
+
+            ProfileView(user: user)
+                .tabItem {
+                    Label("我的", systemImage: "person.crop.circle")
+                }
+                .tag(AppTab.profile)
+        }
     }
 
     private var studentTabs: some View {
@@ -149,18 +185,30 @@ struct RoleBasedTabView: View {
 
     private func route(to destination: PushDestination) {
         switch destination {
+        case .parentFeed(let studentId):
+            parentFocusedStudentId = studentId
+            selectedTab = user.isParent ? .home : .profile
+        case .parentChildAttendance(let studentId), .parentChildLeaves(let studentId):
+            parentFocusedStudentId = studentId
+            selectedTab = user.isParent ? .parentAttendance : .profile
         case .leaveApprovals:
             if user.isTeacherOrAdmin || user.isClassAdminStudent {
                 selectedTab = .approvals
+            } else if user.isParent {
+                selectedTab = .home
             } else {
                 selectedTab = .leaveHistory
             }
         case .leaveHistory:
-            selectedTab = user.isStudent ? .leaveHistory : .approvals
+            if user.isParent {
+                selectedTab = .parentAttendance
+            } else {
+                selectedTab = user.isStudent ? .leaveHistory : .approvals
+            }
         case .studentDashboard:
             selectedTab = .home
         case .notifications:
-            selectedTab = .profile
+            selectedTab = user.isParent ? .home : .profile
         }
     }
 }

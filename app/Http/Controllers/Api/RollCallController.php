@@ -717,6 +717,43 @@ class RollCallController extends Controller
 
             DB::commit();
 
+            // Send one aggregated parent notification per absent student for this roll call
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('app_notifications')) {
+                    $rollCallRecords = AttendanceRecord::withoutGlobalScope('day_attendance')
+                        ->where('source_type', 'roll_call')
+                        ->where('source_id', $rollCall->id)
+                        ->with(['student.user', 'leaveType'])
+                        ->get()
+                        ->groupBy('student_id');
+
+                    if ($rollCallRecords->isNotEmpty()) {
+                        $periodMap = collect(json_decode((string) \App\Models\SystemSetting::get('attendance_periods', '[]'), true) ?: [])
+                            ->keyBy(fn ($p) => (int) ($p['id'] ?? 0));
+                        $mobilePush = app(\App\Services\MobilePushService::class);
+
+                        foreach ($rollCallRecords as $studentRecords) {
+                            $primaryRecord = $studentRecords->first();
+                            $periodNames = $studentRecords
+                                ->pluck('period_id')
+                                ->filter(fn ($id) => $id !== null)
+                                ->map(fn ($id) => $periodMap->get((int) $id)['name'] ?? "第{$id}节")
+                                ->unique()
+                                ->values()
+                                ->all();
+                            $label = $type->name . (! empty($periodNames) ? ' · ' . implode('、', $periodNames) : '');
+                            $mobilePush->notifyParentsAttendanceMarked(
+                                $primaryRecord,
+                                $label,
+                                'roll_call_' . $rollCall->id
+                            );
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('Parent roll call push failed', ['error' => $e->getMessage()]);
+            }
+
             return response()->json($rollCall->fresh()->load('rollCallType', 'records'));
         } catch (\Exception $e) {
             DB::rollBack();

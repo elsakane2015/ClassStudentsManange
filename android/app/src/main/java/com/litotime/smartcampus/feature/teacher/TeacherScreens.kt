@@ -5156,6 +5156,11 @@ fun StudentDetailManageScreen(student: StudentListItem, onBack: () -> Unit) {
     var isClassAdmin by remember(student.id) { mutableStateOf(student.isClassAdmin) }
     var suspensions by remember { mutableStateOf<List<BoardingSuspension>>(emptyList()) }
     var records by remember { mutableStateOf<List<AttendanceRecord>>(emptyList()) }
+    var parentAccounts by remember { mutableStateOf<List<com.litotime.smartcampus.data.model.StudentParentAccount>>(emptyList()) }
+    var parentAccountsError by remember { mutableStateOf<String?>(null) }
+    var loadingParents by remember { mutableStateOf(false) }
+    var resetParentTarget by remember { mutableStateOf<com.litotime.smartcampus.data.model.StudentParentAccount?>(null) }
+    var resetParentPwd by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var successMessage by remember { mutableStateOf<String?>(null) }
 
@@ -5172,6 +5177,17 @@ fun StudentDetailManageScreen(student: StudentListItem, onBack: () -> Unit) {
                 emptyList()
             }
             records = runCatching { repo.fetchStudentRecords(currentStudent.id, "month") }.getOrDefault(emptyList())
+            loadingParents = true
+            runCatching { repo.fetchStudentParents(currentStudent.id) }
+                .onSuccess {
+                    parentAccounts = it
+                    parentAccountsError = null
+                }
+                .onFailure {
+                    parentAccounts = emptyList()
+                    parentAccountsError = it.message ?: "无法加载父母端账号"
+                }
+            loadingParents = false
         }
     }
 
@@ -5250,6 +5266,85 @@ fun StudentDetailManageScreen(student: StudentListItem, onBack: () -> Unit) {
             }
 
             SCCard {
+                Text("父母端账号", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                val pErr = parentAccountsError
+                if (pErr != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "无法读取父母端账号（请确认后端服务已更新并完成数据库迁移）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            pErr,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(
+                            onClick = { load(currentStudent.isBoarding) },
+                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                        ) {
+                            Text("重试加载")
+                        }
+                    }
+                } else if (loadingParents && parentAccounts.isEmpty()) {
+                    Text(
+                        "正在加载父母端账号...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else if (parentAccounts.isEmpty()) {
+                    val hasEmail = !currentStudent.parentEmail.isNullOrBlank()
+                    Text(
+                        if (hasEmail) {
+                            "已有家长邮箱但尚未同步到父母端账号，请点击上方「修改信息」保存一次即可自动生成。"
+                        } else {
+                            "暂未关联父母端账号，请在基础信息中录入家长邮箱后自动生成。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    parentAccounts.forEachIndexed { idx, pa ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(pa.email, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (pa.isStaffAccount) "教职工复用账号" else "独立家长账号",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    StatusBadge(
+                                        text = if (pa.pushReady) "推送就绪" else "站内通知",
+                                        color = if (pa.pushReady) Color(0xFF16A34A) else Color(0xFF64748B)
+                                    )
+                                }
+                            }
+                            if (pa.canResetPassword) {
+                                OutlinedButton(
+                                    onClick = {
+                                        resetParentPwd = ""
+                                        resetParentTarget = pa
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("重置密码", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                        if (idx != parentAccounts.lastIndex) HorizontalDivider()
+                    }
+                }
+            }
+
+            SCCard {
                 Text("班级职务权限", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -5323,15 +5418,55 @@ fun StudentDetailManageScreen(student: StudentListItem, onBack: () -> Unit) {
             student = currentStudent,
             onDismiss = { showEditBasicInfo = false },
             onSaved = { updated ->
-                val boardingChangedToTrue = !currentStudent.isBoarding && updated.isBoarding
                 currentStudent = updated
                 showEditBasicInfo = false
                 successMessage = "基础信息已保存"
-                if (boardingChangedToTrue) {
-                    load(boarding = true)
-                } else if (!updated.isBoarding) {
-                    suspensions = emptyList()
+                load(boarding = updated.isBoarding)
+            }
+        )
+    }
+
+    resetParentTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { resetParentTarget = null },
+            title = { Text("重置家长密码") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "家长账号：${target.email}\n留空将重置为系统默认初始密码；或输入至少 6 位新密码。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = resetParentPwd,
+                        onValueChange = { resetParentPwd = it },
+                        label = { Text("新密码（留空使用系统默认）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pwd = resetParentPwd.trim()
+                    if (pwd.isNotEmpty() && pwd.length < 6) {
+                        error = "新密码长度不能少于 6 位"
+                        return@TextButton
+                    }
+                    resetParentTarget = null
+                    scope.launch {
+                        runCatching {
+                            repo.resetStudentParentPassword(currentStudent.id, target.id, pwd.ifEmpty { null })
+                        }.onSuccess { msg ->
+                            error = null
+                            successMessage = msg
+                        }.onFailure { err ->
+                            error = err.localizedMessage ?: "重置失败"
+                        }
+                    }
+                }) { Text("确认重置") }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetParentTarget = null }) { Text("取消") }
             }
         )
     }

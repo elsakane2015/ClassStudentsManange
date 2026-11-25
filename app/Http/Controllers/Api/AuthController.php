@@ -46,12 +46,12 @@ class AuthController extends Controller
             'device_name' => 'nullable|string|max:120',
         ]);
 
-        $loginId = $request->email;
+        $loginId = trim((string) $request->email);
         $user = null;
 
-        // Try to find user by email first
+        // Try to find user by email first (case-insensitive across MySQL and SQLite)
         if (filter_var($loginId, FILTER_VALIDATE_EMAIL)) {
-            $user = User::where('email', $loginId)->first();
+            $user = User::whereRaw('LOWER(email) = ?', [mb_strtolower($loginId)])->first();
         }
 
         // If not found by email, try to find by student_no (学号)
@@ -69,12 +69,38 @@ class AuthController extends Controller
             ]);
         }
 
+        // Check if account is disabled (e.g. parent account detached from all students)
+        if (! $user->status) {
+            return response()->json([
+                'message' => '该账号已停用或已解除关联，如有疑问请联系班主任或管理员。'
+            ], 403);
+        }
+
         // Check if student's class is graduated (archived)
         if ($user->role === 'student') {
             $student = $user->student;
             if ($student && $student->schoolClass && $student->schoolClass->is_graduated) {
                 return response()->json([
                     'message' => '您的班级已毕业，账号已归档，无法登录。如有问题请联系管理员。'
+                ], 403);
+            }
+        }
+
+        // Check parent linked children status
+        if ($user->role === 'parent') {
+            $linkedChildren = $user->children()->with('schoolClass')->get();
+            if ($linkedChildren->isEmpty()) {
+                return response()->json([
+                    'message' => '该家长账号尚未关联在校学生，无法登录。请联系班主任确认家长邮箱。'
+                ], 403);
+            }
+
+            $allGraduated = $linkedChildren->every(
+                fn ($child) => (bool) ($child->schoolClass?->is_graduated ?? false)
+            );
+            if ($allGraduated) {
+                return response()->json([
+                    'message' => '您关联的学生班级已全部毕业归档，无法登录。如有问题请联系管理员。'
                 ], 403);
             }
         }
@@ -125,10 +151,27 @@ class AuthController extends Controller
             $unreadNotificationsCount = 0;
         }
 
+        $parentChildren = [];
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('parent_student')) {
+                $parentChildren = $user->children()
+                    ->with(['user:id,name,email', 'schoolClass.department:id,name', 'schoolClass.teacher:id,name'])
+                    ->orderBy('students.id')
+                    ->get()
+                    ->map(fn ($child) => \App\Http\Controllers\Api\ParentPortalController::formatChildSummary($child))
+                    ->values()
+                    ->all();
+            }
+        } catch (\Throwable $e) {
+            $parentChildren = [];
+        }
+
         return response()->json([
             ...$userData,
             'permissions' => $user->getPermissions(),
             'unread_notifications_count' => $unreadNotificationsCount,
+            'parent_children' => $parentChildren,
+            'has_parent_children' => count($parentChildren) > 0,
         ]);
     }
 

@@ -311,6 +311,18 @@ class EveningStudyController extends Controller
             return $record;
         });
 
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('app_notifications')) {
+                app(\App\Services\MobilePushService::class)->notifyParentsEveningStudyMarked(
+                    $record,
+                    $status->name,
+                    $period['name'] ?? null
+                );
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('Parent evening study leave push failed', ['error' => $e->getMessage()]);
+        }
+
         return response()->json($record->load(['student.user', 'eveningStudyStatus']));
     }
 
@@ -346,6 +358,28 @@ class EveningStudyController extends Controller
                 'completed_at' => now(),
             ]);
         });
+
+        // Notify parents for students marked non-present in this completed evening study session
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('app_notifications')) {
+                $abnormalRecords = AttendanceRecord::withoutGlobalScope('day_attendance')
+                    ->where('evening_study_session_id', $eveningStudySession->id)
+                    ->where('status', '!=', 'present')
+                    ->with(['student.user', 'eveningStudyStatus', 'leaveType'])
+                    ->get();
+
+                $mobilePush = app(\App\Services\MobilePushService::class);
+                foreach ($abnormalRecords as $rec) {
+                    $mobilePush->notifyParentsEveningStudyMarked(
+                        $rec,
+                        $rec->eveningStudyStatus?->name ?: $rec->status_name_snapshot,
+                        $eveningStudySession->period_name_snapshot
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('Parent evening study complete push failed', ['error' => $e->getMessage()]);
+        }
 
         return $this->sessionResponse($eveningStudySession->fresh());
     }

@@ -37,6 +37,63 @@ struct StudentProfile: Codable, Identifiable, Hashable {
     var isBoardingFlag: Bool { isBoarding?.value ?? false }
 }
 
+struct ParentChildSummary: Codable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let studentNo: String?
+    let gender: String?
+    let isBoarding: FlexibleBool?
+    let classId: Int?
+    let className: String?
+    let departmentName: String?
+    let teacherName: String?
+    let isGraduated: FlexibleBool?
+    let todayAnomalyCount: FlexibleInt?
+    let pendingLeaveCount: FlexibleInt?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, gender
+        case studentNo = "student_no"
+        case isBoarding = "is_boarding"
+        case classId = "class_id"
+        case className = "class_name"
+        case departmentName = "department_name"
+        case teacherName = "teacher_name"
+        case isGraduated = "is_graduated"
+        case todayAnomalyCount = "today_anomaly_count"
+        case pendingLeaveCount = "pending_leave_count"
+    }
+
+    var isBoardingFlag: Bool { isBoarding?.value ?? false }
+    var isGraduatedFlag: Bool { isGraduated?.value ?? false }
+}
+
+struct StudentParentAccount: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let email: String
+    let role: String
+    let isStaffAccount: FlexibleBool?
+    let status: FlexibleBool?
+    let childrenCount: FlexibleInt?
+    let deviceCount: FlexibleInt?
+    let pushReady: FlexibleBool?
+    let canResetPassword: FlexibleBool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, email, role, status
+        case isStaffAccount = "is_staff_account"
+        case childrenCount = "children_count"
+        case deviceCount = "device_count"
+        case pushReady = "push_ready"
+        case canResetPassword = "can_reset_password"
+    }
+
+    var isStaff: Bool { isStaffAccount?.value ?? false }
+    var isPushReady: Bool { pushReady?.value ?? false }
+    var canReset: Bool { canResetPassword?.value ?? (!isStaff) }
+}
+
 struct User: Codable, Identifiable, Hashable {
     let id: Int
     let uuid: String?
@@ -50,6 +107,8 @@ struct User: Codable, Identifiable, Hashable {
     let dutyDepartments: [DepartmentRef]?
     let permissions: [String]?
     let unreadNotificationsCount: Int?
+    let parentChildren: [ParentChildSummary]?
+    let hasParentChildren: FlexibleBool?
 
     enum CodingKeys: String, CodingKey {
         case id, uuid, name, email, phone, role, status
@@ -58,8 +117,14 @@ struct User: Codable, Identifiable, Hashable {
         case dutyDepartments = "duty_departments"
         case permissions
         case unreadNotificationsCount = "unread_notifications_count"
+        case parentChildren = "parent_children"
+        case hasParentChildren = "has_parent_children"
     }
 
+    var isParent: Bool { role == "parent" }
+    var hasLinkedChildren: Bool {
+        (hasParentChildren?.value ?? false) || !(parentChildren ?? []).isEmpty
+    }
     var isStudent: Bool { role == "student" }
     var isDutyTeacher: Bool { role == "duty_teacher" }
     var isAdminTier: Bool {
@@ -81,6 +146,7 @@ struct User: Codable, Identifiable, Hashable {
 
     var roleDisplayName: String {
         switch role {
+        case "parent": return "家长"
         case "system_admin": return "系统管理员"
         case "school_admin", "admin": return "校级管理员"
         case "department_manager", "manager": return "院系管理员"
@@ -140,6 +206,10 @@ struct AppNotificationItem: Decodable, Identifiable, Hashable {
 
     var isUnread: Bool { readAt == nil || readAt?.isEmpty == true }
     var route: String? { data?["route"]?.value }
+    var studentId: Int? {
+        guard let raw = data?["student_id"]?.value else { return nil }
+        return Int(raw)
+    }
 }
 
 struct NotificationsPageResponse: Decodable {

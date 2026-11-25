@@ -8,10 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		008F83B801B2940FD5125CC3 /* PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B6AE906585038319C755D1C /* PushNotificationManager.swift */; };
+		01975E847F5A7E118909A29E /* ParentRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6FD5FEEC813966C2811109C /* ParentRepository.swift */; };
 		0C9DA28EA04CC8312AA70A17 /* UserModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB3C759DB3ADC4D3002F5DBE /* UserModels.swift */; };
 		1AA25C08B572729C2F80AEF5 /* StudentListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DEA9CEA3B1670B29DD3599B /* StudentListView.swift */; };
 		1D860B56F2D594AB5B658ECD /* NotificationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D96E4C661CE0527EFFAE0A /* NotificationRepository.swift */; };
 		1EC18359FA5F11049F0109E3 /* SmartCampusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68DDC8C72C5B236CB216BB6A /* SmartCampusApp.swift */; };
+		20D8E07A591DA710D5A5816F /* ParentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 744C0C109D6F21B90744742B /* ParentViews.swift */; };
 		28166EA2FE833BE8650BCDD4 /* EveningStudyTakeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9475BB8B626AF4AB876778AE /* EveningStudyTakeView.swift */; };
 		39990CA1E1877264B35D014E /* EveningStudyRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A80872305F7DA57ABE6660 /* EveningStudyRepository.swift */; };
 		4778B7A77F38CEDA92732B92 /* AttendanceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E7D8B0D4B7A6528CB0C296D /* AttendanceRepository.swift */; };
@@ -62,6 +64,7 @@
 		68DDC8C72C5B236CB216BB6A /* SmartCampusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartCampusApp.swift; sourceTree = "<group>"; };
 		6D425FBE6F61024D7ACEE458 /* SmartCampus.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SmartCampus.entitlements; sourceTree = "<group>"; };
 		7032848A460CA22148B41FE1 /* LeaveApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveApprovalsView.swift; sourceTree = "<group>"; };
+		744C0C109D6F21B90744742B /* ParentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParentViews.swift; sourceTree = "<group>"; };
 		7B21A03D9CA5CCDF56D7E547 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		7E7D8B0D4B7A6528CB0C296D /* AttendanceRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttendanceRepository.swift; sourceTree = "<group>"; };
 		85A53FEE19DAC39276727C14 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
@@ -82,6 +85,7 @@
 		B680E6FD8F3716B03EF4F080 /* SmartCampus.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SmartCampus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3DADF74CE17900E2EB43C82 /* RollCallRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallRepository.swift; sourceTree = "<group>"; };
 		CBBA4D42D31440BCAFE551E9 /* AttendanceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttendanceModels.swift; sourceTree = "<group>"; };
+		D6FD5FEEC813966C2811109C /* ParentRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParentRepository.swift; sourceTree = "<group>"; };
 		E35F874C09EFF6A1F11721C0 /* RollCallOperationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollCallOperationView.swift; sourceTree = "<group>"; };
 		E8DC22806923E14170F189CD /* LeaveRequestFormView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveRequestFormView.swift; sourceTree = "<group>"; };
 		FD75C3DF1D6479B8239E2E5F /* LeaveRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaveRepository.swift; sourceTree = "<group>"; };
@@ -154,6 +158,7 @@
 			children = (
 				82A1DFD2FBC7600A3F3E490E /* Auth */,
 				ED5A6DCE835FE208EE4C6E2F /* EveningStudy */,
+				F01B984D1DC646C8D8A640FF /* Parent */,
 				A6614B49846BAB00FC6EADF4 /* Profile */,
 				A147579A2EBBBE2299ABB781 /* RollCall */,
 				AE402141D4CE2DF43486F312 /* Student */,
@@ -261,6 +266,7 @@
 				88A80872305F7DA57ABE6660 /* EveningStudyRepository.swift */,
 				FD75C3DF1D6479B8239E2E5F /* LeaveRepository.swift */,
 				37D96E4C661CE0527EFFAE0A /* NotificationRepository.swift */,
+				D6FD5FEEC813966C2811109C /* ParentRepository.swift */,
 				C3DADF74CE17900E2EB43C82 /* RollCallRepository.swift */,
 			);
 			path = Repositories;
@@ -289,6 +295,14 @@
 				9475BB8B626AF4AB876778AE /* EveningStudyTakeView.swift */,
 			);
 			path = EveningStudy;
+			sourceTree = "<group>";
+		};
+		F01B984D1DC646C8D8A640FF /* Parent */ = {
+			isa = PBXGroup;
+			children = (
+				744C0C109D6F21B90744742B /* ParentViews.swift */,
+			);
+			path = Parent;
 			sourceTree = "<group>";
 		};
 		FCF251EDAD12E0098A9B75CD /* Models */ = {
@@ -394,6 +408,8 @@
 				1D860B56F2D594AB5B658ECD /* NotificationRepository.swift in Sources */,
 				7071C5678F3C5D6EE272BA2D /* NotificationsView.swift in Sources */,
 				F791C87A110F1CB94FFF9C89 /* OfflineRollCallStore.swift in Sources */,
+				01975E847F5A7E118909A29E /* ParentRepository.swift in Sources */,
+				20D8E07A591DA710D5A5816F /* ParentViews.swift in Sources */,
 				5F1D208C57F1959BF1A36944 /* PeriodFormatter.swift in Sources */,
 				5E1167BB110BA471F2CEA1B4 /* ProfileView.swift in Sources */,
 				008F83B801B2940FD5125CC3 /* PushNotificationManager.swift in Sources */,
@@ -451,7 +467,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 27;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_LANGUAGE = "zh-Hans";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -537,7 +553,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 27;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_LANGUAGE = "zh-Hans";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

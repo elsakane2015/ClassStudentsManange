@@ -9,6 +9,7 @@ import StudentDashboard from './pages/student/Dashboard';
 import LeaveRequestForm from './pages/student/LeaveRequestForm';
 import LeaveHistory from './pages/student/LeaveHistory';
 import ClassAttendancePage from './pages/student/ClassAttendancePage';
+import ParentDashboard from './pages/parent/ParentDashboard';
 
 // Placeholder Pages
 import TeacherDashboard from './pages/teacher/Dashboard';
@@ -76,6 +77,11 @@ function App() {
 
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage />} />
+
+            {/* Parent Portal Routes */}
+            <Route path="/parent" element={<Navigate to="/parent/dashboard" replace />} />
+            <Route path="/parent/dashboard" element={<RequireAuth><ParentDashboard initialTab="feed" /></RequireAuth>} />
+            <Route path="/parent/attendance" element={<RequireAuth><ParentDashboard initialTab="attendance" /></RequireAuth>} />
 
             {/* Protected Routes */}
             <Route path="/student" element={<Navigate to="/student/dashboard" replace />} />

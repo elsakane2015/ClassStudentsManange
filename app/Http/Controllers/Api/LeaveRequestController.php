@@ -66,12 +66,23 @@ class LeaveRequestController extends Controller
                 // Regular student only sees their own
                 $query->where('student_id', $user->student->id);
             }
+        } elseif ($user->role === 'parent') {
+            $childIds = $user->children()->pluck('students.id');
+            if ($childIds->isEmpty()) {
+                return response()->json(['data' => [], 'total' => 0]);
+            }
+            $query->whereIn('student_id', $childIds);
         } elseif ($user->role === 'teacher') {
             // Show requests for classes the teacher manages
             $classIds = $user->teacherClasses->pluck('id');
             $query->whereIn('class_id', $classIds);
+        } elseif (in_array($user->role, ['department_manager', 'manager'], true)) {
+            $deptIds = $user->managedDepartments->pluck('id');
+            $classIds = \App\Models\SchoolClass::whereIn('department_id', $deptIds)->pluck('id');
+            $query->whereIn('class_id', $classIds);
+        } elseif (! in_array($user->role, ['system_admin', 'school_admin', 'admin'], true)) {
+            return response()->json(['error' => 'Unauthorized'], 403);
         }
-        // Admin sees all
 
         if ($request->filled('status') && $request->status !== 'all') {
             $query->where('approval_status', $request->status);
@@ -733,10 +744,12 @@ class LeaveRequestController extends Controller
             SendParentNotification::dispatchAfterResponse($firstRecord->id, 'leave_request');
         }
 
-        // Trigger native mobile in-app & push notification for approvers
+        // Trigger native mobile in-app & push notification for approvers and linked parents
         if ($firstRecord) {
             try {
-                app(\App\Services\MobilePushService::class)->notifyLeaveRequestSubmitted($firstRecord);
+                $mobilePush = app(\App\Services\MobilePushService::class);
+                $mobilePush->notifyLeaveRequestSubmitted($firstRecord);
+                $mobilePush->notifyParentsLeaveSubmitted($firstRecord);
             } catch (\Throwable $e) {
                 \Log::warning('Mobile leave submitted push failed', ['error' => $e->getMessage()]);
             }
@@ -940,7 +953,13 @@ class LeaveRequestController extends Controller
         });
 
         try {
-            app(\App\Services\MobilePushService::class)->notifyLeaveRequestReviewed(
+            $mobilePush = app(\App\Services\MobilePushService::class);
+            $mobilePush->notifyLeaveRequestReviewed(
+                $record,
+                'approved',
+                $user->name
+            );
+            $mobilePush->notifyParentsLeaveReviewed(
                 $record,
                 'approved',
                 $user->name
@@ -1063,7 +1082,14 @@ class LeaveRequestController extends Controller
         });
 
         try {
-            app(\App\Services\MobilePushService::class)->notifyLeaveRequestReviewed(
+            $mobilePush = app(\App\Services\MobilePushService::class);
+            $mobilePush->notifyLeaveRequestReviewed(
+                $record,
+                'rejected',
+                $user->name,
+                $request->input('reason')
+            );
+            $mobilePush->notifyParentsLeaveReviewed(
                 $record,
                 'rejected',
                 $user->name,

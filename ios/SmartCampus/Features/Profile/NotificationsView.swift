@@ -106,7 +106,7 @@ struct NotificationsView: View {
             await PushNotificationManager.shared.refreshUnreadCount()
         }
         if item.route != nil || !item.type.isEmpty {
-            PushNotificationManager.shared.handleDeepLink(route: item.route, type: item.type)
+            PushNotificationManager.shared.handleDeepLink(route: item.route, type: item.type, studentId: item.studentId)
             dismiss()
         } else {
             await loadNotifications()

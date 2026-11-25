@@ -130,6 +130,10 @@ struct StudentDetailManageView: View {
     @State private var isClassAdmin: Bool
     @State private var suspensions: [BoardingSuspension] = []
     @State private var records: [AttendanceRecord] = []
+    @State private var parentAccounts: [StudentParentAccount] = []
+    @State private var parentAccountsError: String?
+    @State private var resetParentTarget: StudentParentAccount?
+    @State private var resetParentCustomPwd: String = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var successBanner: String?
@@ -185,6 +189,64 @@ struct StudentDetailManageView: View {
                 }
             } header: {
                 Text("基础信息")
+            }
+
+            Section("父母端账号") {
+                if let parentAccountsError {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("无法读取父母端账号（请确认后端服务已更新并完成数据库迁移）")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.red)
+                        Text(parentAccountsError)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Button("重试加载") {
+                            Task { await loadDetail() }
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    .padding(.vertical, 2)
+                } else if isLoading && parentAccounts.isEmpty {
+                    ProgressView("正在加载父母端账号...")
+                } else if parentAccounts.isEmpty {
+                    if let email = currentStudent.parentEmail, !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("已有家长邮箱但尚未同步到父母端账号，请点击上方“修改基础信息”保存一次即可自动生成。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("尚未关联父母端账号，请先在上方填写家长邮箱")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    ForEach(parentAccounts) { pa in
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(pa.email)
+                                    .font(.subheadline.weight(.medium))
+                                HStack(spacing: 6) {
+                                    Text(pa.isStaff ? "教职工复用账号" : "独立家长账号")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    StatusBadge(
+                                        text: pa.isPushReady ? "推送就绪" : "站内通知",
+                                        color: pa.isPushReady ? .green : .gray
+                                    )
+                                }
+                            }
+                            Spacer()
+                            if pa.canReset {
+                                Button("重置密码") {
+                                    resetParentCustomPwd = ""
+                                    resetParentTarget = pa
+                                }
+                                .font(.caption.weight(.semibold))
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
             }
 
             Section("班级职务权限") {
@@ -272,15 +334,28 @@ struct StudentDetailManageView: View {
         }
         .sheet(isPresented: $showEditBasicInfo) {
             EditStudentBasicInfoSheet(student: currentStudent) { updated in
-                let boardingChangedToTrue = !currentStudent.isBoardingFlag && updated.isBoardingFlag
                 currentStudent = updated
                 successBanner = "基础信息已保存"
                 onUpdated()
-                if boardingChangedToTrue {
-                    Task { await loadDetail() }
-                } else if !updated.isBoardingFlag {
-                    suspensions = []
+                Task { await loadDetail() }
+            }
+        }
+        .alert("重置家长密码", isPresented: Binding(
+            get: { resetParentTarget != nil },
+            set: { if !$0 { resetParentTarget = nil } }
+        )) {
+            TextField("留空将重置为系统默认密码（至少6位）", text: $resetParentCustomPwd)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("取消", role: .cancel) {}
+            Button("确认重置") {
+                if let target = resetParentTarget {
+                    Task { await performResetParentPassword(target) }
                 }
+            }
+        } message: {
+            if let target = resetParentTarget {
+                Text("将重置家长账号 \(target.email) 的登录密码。")
             }
         }
         .sheet(isPresented: $showCreateSuspension) {
@@ -318,6 +393,32 @@ struct StudentDetailManageView: View {
             suspensions = []
         }
         records = (try? await AttendanceRepository.fetchStudentRecords(studentId: currentStudent.id, scope: "month")) ?? []
+        do {
+            parentAccounts = try await ParentRepository.fetchStudentParents(studentId: currentStudent.id)
+            parentAccountsError = nil
+        } catch {
+            parentAccounts = []
+            parentAccountsError = error.localizedDescription
+        }
+    }
+
+    private func performResetParentPassword(_ target: StudentParentAccount) async {
+        let trimmed = resetParentCustomPwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty && trimmed.count < 6 {
+            errorMessage = "新密码长度不能少于 6 位"
+            return
+        }
+        errorMessage = nil
+        do {
+            let msg = try await ParentRepository.resetStudentParentPassword(
+                studentId: currentStudent.id,
+                parentUserId: target.id,
+                password: trimmed.isEmpty ? nil : trimmed
+            )
+            successBanner = msg
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func toggleClassAdmin() async {
