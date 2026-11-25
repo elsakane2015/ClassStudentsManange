@@ -14,7 +14,7 @@ android {
         applicationId = "com.litotime.smartcampus"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
+        versionCode = 27
         versionName = "1.0.1"
 
         vectorDrawables {

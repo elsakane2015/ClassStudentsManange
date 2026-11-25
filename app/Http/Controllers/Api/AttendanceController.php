@@ -1033,15 +1033,31 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Get calendar summary for teacher dashboard
+     * 判断用户是否有权访问班级考勤日历汇总（教师/管理员/班级考勤员）
+     */
+    public static function canAccessCalendarSummary($user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+        if (in_array($user->role, ['teacher', 'system_admin', 'school_admin', 'admin', 'department_manager', 'manager'], true)) {
+            return true;
+        }
+        return $user->role === 'student'
+            && $user->student
+            && (bool) $user->student->is_class_admin
+            && !empty($user->student->class_id);
+    }
+
+    /**
+     * Get calendar summary for teacher dashboard & class admin workbench
      * Returns attendance records grouped by date for calendar display
      */
     public function calendarSummary(Request $request)
     {
         $user = $request->user();
-        
-        // Only teachers and admins can access
-        if (!in_array($user->role, ['teacher', 'system_admin', 'school_admin', 'admin', 'department_manager', 'manager'])) {
+
+        if (!self::canAccessCalendarSummary($user)) {
             return response()->json(['error' => '无权限'], 403);
         }
         
@@ -1056,7 +1072,9 @@ class AttendanceController extends Controller
         }
         
         // Get class IDs based on role
-        if ($user->role === 'teacher') {
+        if ($user->role === 'student' && $user->student && $user->student->is_class_admin) {
+            $classIds = collect([(int) $user->student->class_id])->filter();
+        } elseif ($user->role === 'teacher') {
             $classIds = $user->teacherClasses->where('is_graduated', false)->pluck('id');
         } elseif (in_array($user->role, ['department_manager', 'manager'])) {
             $deptIds = $user->managedDepartments->pluck('id');

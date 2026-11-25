@@ -1599,15 +1599,13 @@ private fun SummaryCompactGridCard(
                 }
 
                 val opt = rec.compactDisplay.first
-                if (opt.isNotEmpty()) {
-                    Text(
-                        opt,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                Text(
+                    opt.ifEmpty { "全天" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
 
                 Text(
                     rec.studentShortLabel,
@@ -4202,7 +4200,8 @@ private data class ApprovalDateRange(
 @Composable
 fun LeaveApprovalsScreen(
     openCurrentWeekTrigger: Int = 0,
-    onBack: (() -> Unit)? = null
+    onBack: (() -> Unit)? = null,
+    showTopBar: Boolean = true
 ) {
     val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
@@ -4469,17 +4468,19 @@ fun LeaveApprovalsScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text("请假审批") },
-                navigationIcon = {
-                    if (onBack != null) {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+            if (showTopBar) {
+                TopAppBar(
+                    title = { Text("请假审批") },
+                    navigationIcon = {
+                        if (onBack != null) {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                            }
                         }
-                    }
-                },
-                actions = { IconButton(onClick = { loadFirstPage() }) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新") } }
-            )
+                    },
+                    actions = { IconButton(onClick = { loadFirstPage() }) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新") } }
+                )
+            }
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {

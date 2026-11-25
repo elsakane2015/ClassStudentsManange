@@ -7,6 +7,7 @@ struct RoleBasedTabView: View {
     @State private var pushManager = PushNotificationManager.shared
     @State private var selectedTab: AppTab = .home
     @State private var approvalsWeekTrigger: Int = 0
+    @State private var classAdminLeaveSegment: ClassAdminLeaveHubView.Segment = .approvals
     @State private var parentFocusedStudentId: Int? = nil
 
     enum AppTab: Hashable {
@@ -81,7 +82,8 @@ struct RoleBasedTabView: View {
     }
 
     private var studentTabs: some View {
-        TabView(selection: $selectedTab) {
+        let isDualAdmin = user.isClassAdminStudent && user.isRollCallAdminStudent
+        return TabView(selection: $selectedTab) {
             StudentDashboardView(user: user)
                 .tabItem {
                     Label("考勤", systemImage: "calendar.badge.checkmark")
@@ -94,11 +96,23 @@ struct RoleBasedTabView: View {
                 }
                 .tag(AppTab.leaveRequest)
 
-            LeaveHistoryView(user: user)
+            if isDualAdmin {
+                ClassAdminLeaveHubView(
+                    user: user,
+                    segment: $classAdminLeaveSegment,
+                    approvalsWeekTrigger: approvalsWeekTrigger
+                )
                 .tabItem {
-                    Label("记录", systemImage: "list.bullet.clipboard")
+                    Label("审批", systemImage: "checkmark.seal")
                 }
-                .tag(AppTab.leaveHistory)
+                .tag(AppTab.approvals)
+            } else {
+                LeaveHistoryView(user: user)
+                    .tabItem {
+                        Label("记录", systemImage: "list.bullet.clipboard")
+                    }
+                    .tag(AppTab.leaveHistory)
+            }
 
             if user.isRollCallAdminStudent {
                 RollCallHubView(user: user)
@@ -107,7 +121,7 @@ struct RoleBasedTabView: View {
                     }
                     .tag(AppTab.rollCall)
             } else if user.isClassAdminStudent {
-                LeaveApprovalsView(user: user)
+                LeaveApprovalsView(user: user, openCurrentWeekTrigger: approvalsWeekTrigger)
                     .tabItem {
                         Label("审批", systemImage: "checkmark.seal")
                     }
@@ -193,6 +207,8 @@ struct RoleBasedTabView: View {
             selectedTab = user.isParent ? .parentAttendance : .profile
         case .leaveApprovals:
             if user.isTeacherOrAdmin || user.isClassAdminStudent {
+                classAdminLeaveSegment = .approvals
+                approvalsWeekTrigger += 1
                 selectedTab = .approvals
             } else if user.isParent {
                 selectedTab = .home
@@ -202,6 +218,9 @@ struct RoleBasedTabView: View {
         case .leaveHistory:
             if user.isParent {
                 selectedTab = .parentAttendance
+            } else if user.isClassAdminStudent && user.isRollCallAdminStudent {
+                classAdminLeaveSegment = .myHistory
+                selectedTab = .approvals
             } else {
                 selectedTab = user.isStudent ? .leaveHistory : .approvals
             }
@@ -209,6 +228,50 @@ struct RoleBasedTabView: View {
             selectedTab = .home
         case .notifications:
             selectedTab = user.isParent ? .home : .profile
+        }
+    }
+}
+
+/// 同时担任「班级考勤员 + 点名员」时的请假审批与个人请假记录双分段 Tab，避免底部 Tab 互斥隐藏审批入口
+struct ClassAdminLeaveHubView: View {
+    let user: User
+    @Binding var segment: Segment
+    let approvalsWeekTrigger: Int
+
+    enum Segment: String, CaseIterable {
+        case approvals = "班级审批"
+        case myHistory = "我的记录"
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("请假管理", selection: $segment) {
+                    ForEach(Segment.allCases, id: \.self) { seg in
+                        Text(seg.rawValue).tag(seg)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(SCTheme.background)
+
+                if segment == .approvals {
+                    LeaveApprovalsView(
+                        user: user,
+                        openCurrentWeekTrigger: approvalsWeekTrigger,
+                        embedInNavigationStack: false
+                    )
+                } else {
+                    LeaveHistoryView(
+                        user: user,
+                        embedInNavigationStack: false,
+                        defaultOwnerScope: .mine
+                    )
+                }
+            }
+            .navigationTitle(segment == .approvals ? "请假审批" : "我的请假记录")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

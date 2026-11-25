@@ -1626,13 +1626,11 @@ private struct SummaryCompactGridCard: View {
                 }
 
                 let opt = record.compactDisplay.option
-                if !opt.isEmpty {
-                    Text(opt)
-                        .font(.caption2)
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text(opt.isEmpty ? "全天" : opt)
+                    .font(.caption2)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 0)
 

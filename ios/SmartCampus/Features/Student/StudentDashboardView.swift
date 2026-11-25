@@ -16,6 +16,8 @@ struct StudentDashboardView: View {
 
     @State private var detailSheetTarget: DetailTarget?
     @State private var showNotifications = false
+    @State private var todayClassAnomalyStudents: Int?
+    @State private var todayClassPendingCount: Int = 0
 
     struct DetailTarget: Identifiable {
         let id = UUID()
@@ -54,9 +56,9 @@ struct StudentDashboardView: View {
                                         Text("班级考勤员工作台")
                                             .font(.headline)
                                             .foregroundStyle(.white)
-                                        Text("点击快速记录与维护本班日常考勤")
+                                        Text(classWorkbenchSubtitle)
                                             .font(.caption)
-                                            .foregroundStyle(.white.opacity(0.85))
+                                            .foregroundStyle(.white.opacity(0.88))
                                     }
                                     Spacer()
                                     Image(systemName: "chevron.right")
@@ -322,6 +324,19 @@ struct StudentDashboardView: View {
         }
     }
 
+    private var classWorkbenchSubtitle: String {
+        guard let count = todayClassAnomalyStudents else {
+            return "查看今日全班请假/标记情况与考勤维护"
+        }
+        if count == 0 {
+            return "今日全班出勤正常 · 点击查看完整考勤情况"
+        }
+        if todayClassPendingCount > 0 {
+            return "今日 \(count) 人有请假/标记（\(todayClassPendingCount) 条待审批）· 点看完整明细"
+        }
+        return "今日 \(count) 人有请假/标记 · 点击查看完整明细"
+    }
+
     private func loadAll() async {
         isLoading = true
         errorMessage = nil
@@ -337,9 +352,33 @@ struct StudentDashboardView: View {
             timeSlots = (try? await slotsReq) ?? []
             await loadStats()
             await loadMonthCalendar()
+            await loadTodayClassOverviewSummary()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func loadTodayClassOverviewSummary() async {
+        guard user.isClassAdminStudent else { return }
+        let todayKey = SCDateFormatter.todayString()
+        guard let overview = try? await AttendanceRepository.fetchAttendanceOverview(date: todayKey, includeEvening: true) else {
+            return
+        }
+        let roster = overview.flatMap { $0.classes ?? [] }.flatMap { $0.students ?? [] }
+        var anomalyStudents = 0
+        var pendingBatches = Set<String>()
+        for st in roster {
+            let valid = (st.attendance ?? []).filter { !$0.isNormalPresentRecord && $0.approvalStatus != "rejected" }
+            if !valid.isEmpty {
+                anomalyStudents += 1
+                for rec in valid where rec.approvalStatus == "pending" {
+                    let key = rec.leaveBatchId?.isEmpty == false ? "\(st.id)-\(rec.leaveBatchId!)" : "\(st.id)-\(rec.id)"
+                    pendingBatches.insert(key)
+                }
+            }
+        }
+        todayClassAnomalyStudents = anomalyStudents
+        todayClassPendingCount = pendingBatches.count
     }
 
     private func loadStats() async {

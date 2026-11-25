@@ -66,8 +66,8 @@ class SmartCampusRepository(private val api: ApiClient) {
         return TeacherStats.fromJson(obj)
     }
 
-    suspend fun fetchAttendanceOverview(date: String): List<OverviewDepartment> =
-        api.requestElement("/attendance/overview", query = mapOf("date" to date, "include_evening" to "0"))
+    suspend fun fetchAttendanceOverview(date: String, includeEvening: Boolean = false): List<OverviewDepartment> =
+        api.requestElement("/attendance/overview", query = mapOf("date" to date, "include_evening" to if (includeEvening) "1" else "0"))
             .asArrayOrEmpty()
             .mapNotNull { it.asObjectOrNull()?.let(OverviewDepartment::fromJson) }
 

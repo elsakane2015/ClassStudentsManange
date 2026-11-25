@@ -822,7 +822,7 @@ class LeaveRequestController extends Controller
             if (!$ownsClass) return response()->json(['error' => 'Not your class'], 403);
         }
         
-        if ($isClassAdmin && $record->class_id !== $user->student->class_id) {
+        if ($isClassAdmin && (int) $record->class_id !== (int) $user->student->class_id) {
             return response()->json(['error' => 'Not your class'], 403);
         }
 
@@ -995,7 +995,7 @@ class LeaveRequestController extends Controller
             if (!$ownsClass) return response()->json(['error' => 'Not your class'], 403);
         }
 
-        if ($isClassAdmin && $record->class_id !== $user->student->class_id) {
+        if ($isClassAdmin && (int) $record->class_id !== (int) $user->student->class_id) {
             return response()->json(['error' => 'Not your class'], 403);
         }
         

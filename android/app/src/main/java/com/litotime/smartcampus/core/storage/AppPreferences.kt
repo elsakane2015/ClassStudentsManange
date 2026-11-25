@@ -39,6 +39,8 @@ class AppPreferences(private val context: Context) {
         val SUMMARY_COLUMNS = intPreferencesKey("summary_columns")
         val STAT_DETAIL_COLUMNS = intPreferencesKey("stat_detail_columns")
         val STUDENT_RECORDS_COLUMNS = intPreferencesKey("student_records_columns")
+        val CLASS_ADMIN_SUMMARY_COLUMNS = intPreferencesKey("class_admin_summary_columns")
+        val CLASS_ADMIN_ROSTER_COLUMNS = intPreferencesKey("class_admin_roster_columns")
     }
 
     val activeBaseUrlFlow: Flow<String?> = context.dataStore.data.map { it[Keys.ACTIVE_BASE_URL] }
@@ -52,6 +54,8 @@ class AppPreferences(private val context: Context) {
     val summaryColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.SUMMARY_COLUMNS] ?: 1).coerceIn(1, 2) }
     val statDetailColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.STAT_DETAIL_COLUMNS] ?: 1).coerceIn(1, 2) }
     val studentRecordsColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.STUDENT_RECORDS_COLUMNS] ?: 1).coerceIn(1, 8) }
+    val classAdminSummaryColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.CLASS_ADMIN_SUMMARY_COLUMNS] ?: 2).coerceIn(1, 2) }
+    val classAdminRosterColumnsFlow: Flow<Int> = context.dataStore.data.map { (it[Keys.CLASS_ADMIN_ROSTER_COLUMNS] ?: 2).coerceIn(1, 2) }
 
     suspend fun getActiveBaseUrl(): String? = context.dataStore.data.first()[Keys.ACTIVE_BASE_URL]
 
@@ -101,6 +105,14 @@ class AppPreferences(private val context: Context) {
 
     suspend fun setStudentRecordsColumns(columns: Int) {
         context.dataStore.edit { it[Keys.STUDENT_RECORDS_COLUMNS] = columns.coerceIn(1, 8) }
+    }
+
+    suspend fun setClassAdminSummaryColumns(columns: Int) {
+        context.dataStore.edit { it[Keys.CLASS_ADMIN_SUMMARY_COLUMNS] = columns.coerceIn(1, 2) }
+    }
+
+    suspend fun setClassAdminRosterColumns(columns: Int) {
+        context.dataStore.edit { it[Keys.CLASS_ADMIN_ROSTER_COLUMNS] = columns.coerceIn(1, 2) }
     }
 
     suspend fun applyServer(baseUrl: String, schoolName: String) {

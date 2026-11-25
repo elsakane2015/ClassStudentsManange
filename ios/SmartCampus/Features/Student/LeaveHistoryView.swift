@@ -2,9 +2,10 @@ import SwiftUI
 
 struct LeaveHistoryView: View {
     let user: User
+    let embedInNavigationStack: Bool
 
     @State private var statusFilter: String = "all"
-    @State private var ownerScope: OwnerScope = .all
+    @State private var ownerScope: OwnerScope
     @State private var searchText: String = ""
     @State private var requests: [LeaveRequestGroup] = []
     @State private var isLoading = false
@@ -16,6 +17,16 @@ struct LeaveHistoryView: View {
         case all = "全班"
         case mine = "仅看我的"
         var id: String { rawValue }
+    }
+
+    init(
+        user: User,
+        embedInNavigationStack: Bool = true,
+        defaultOwnerScope: OwnerScope = .all
+    ) {
+        self.user = user
+        self.embedInNavigationStack = embedInNavigationStack
+        _ownerScope = State(initialValue: defaultOwnerScope)
     }
 
     private let filters: [(key: String, label: String)] = [
@@ -55,8 +66,17 @@ struct LeaveHistoryView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
+        if embedInNavigationStack {
+            NavigationStack {
+                historyContent
+            }
+        } else {
+            historyContent
+        }
+    }
+
+    private var historyContent: some View {
+        VStack(spacing: 0) {
                 Picker("审批状态", selection: $statusFilter) {
                     ForEach(filters, id: \.key) { item in
                         Text(item.label).tag(item.key)
@@ -177,7 +197,6 @@ struct LeaveHistoryView: View {
             .task {
                 await loadRequests()
             }
-        }
     }
 
     private func loadRequests() async {

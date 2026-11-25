@@ -107,9 +107,14 @@ fun RoleBasedHomeScreen(user: User) {
         when {
             user.isParent -> listOf(TabId.PARENT_FEED, TabId.PARENT_ATTENDANCE, TabId.PROFILE)
             user.isStudent -> buildList {
+                val isDualAdmin = user.isClassAdminStudent && user.isRollCallAdminStudent
                 add(TabId.STUDENT_HOME)
                 add(TabId.LEAVE_REQUEST)
-                add(TabId.LEAVE_HISTORY)
+                if (isDualAdmin) {
+                    add(TabId.APPROVALS)
+                } else {
+                    add(TabId.LEAVE_HISTORY)
+                }
                 if (user.isRollCallAdminStudent) {
                     add(TabId.ROLL_CALL)
                 } else if (user.isClassAdminStudent) {
@@ -133,6 +138,7 @@ fun RoleBasedHomeScreen(user: User) {
     var selectedTab by remember(user.id) { mutableStateOf(tabs.first()) }
     var subRoute by remember { mutableStateOf<SubRoute?>(null) }
     var approvalsWeekTrigger by remember { mutableIntStateOf(0) }
+    var classAdminLeaveSegIdx by remember { mutableIntStateOf(0) }
     var parentFocusedStudentId by remember { mutableStateOf<Int?>(null) }
 
     BackHandler(enabled = subRoute != null) {
@@ -155,12 +161,23 @@ fun RoleBasedHomeScreen(user: User) {
                 else subRoute = SubRoute.ParentChildPortal(sid)
             }
             PushDestination.LEAVE_APPROVALS -> {
-                selectedTab = if (TabId.APPROVALS in tabs) TabId.APPROVALS else tabs.first()
+                if (TabId.APPROVALS in tabs) {
+                    classAdminLeaveSegIdx = 0
+                    approvalsWeekTrigger += 1
+                    selectedTab = TabId.APPROVALS
+                } else {
+                    selectedTab = tabs.first()
+                }
             }
             PushDestination.LEAVE_HISTORY -> {
-                selectedTab = if (TabId.LEAVE_HISTORY in tabs) TabId.LEAVE_HISTORY
-                else if (TabId.APPROVALS in tabs) TabId.APPROVALS
-                else tabs.first()
+                if (user.isClassAdminStudent && user.isRollCallAdminStudent && TabId.APPROVALS in tabs) {
+                    classAdminLeaveSegIdx = 1
+                    selectedTab = TabId.APPROVALS
+                } else {
+                    selectedTab = if (TabId.LEAVE_HISTORY in tabs) TabId.LEAVE_HISTORY
+                    else if (TabId.APPROVALS in tabs) TabId.APPROVALS
+                    else tabs.first()
+                }
             }
             PushDestination.STUDENT_DASHBOARD -> {
                 selectedTab = tabs.first()
@@ -336,7 +353,38 @@ fun RoleBasedHomeScreen(user: User) {
                         }
                     )
                 }
-                TabId.APPROVALS -> LeaveApprovalsScreen(openCurrentWeekTrigger = approvalsWeekTrigger)
+                TabId.APPROVALS -> {
+                    if (user.isClassAdminStudent && user.isRollCallAdminStudent) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            TopAppBar(title = { Text(if (classAdminLeaveSegIdx == 0) "请假审批" else "我的请假记录") })
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                            ) {
+                                listOf("班级审批", "我的记录").forEachIndexed { idx, title ->
+                                    SegmentedButton(
+                                        selected = classAdminLeaveSegIdx == idx,
+                                        onClick = { classAdminLeaveSegIdx = idx },
+                                        shape = SegmentedButtonDefaults.itemShape(idx, 2)
+                                    ) { Text(title) }
+                                }
+                            }
+                            if (classAdminLeaveSegIdx == 0) {
+                                LeaveApprovalsScreen(
+                                    openCurrentWeekTrigger = approvalsWeekTrigger,
+                                    showTopBar = false
+                                )
+                            } else {
+                                LeaveHistoryScreen(
+                                    user = user,
+                                    showTopBar = false,
+                                    defaultOwnerScope = "mine"
+                                )
+                            }
+                        }
+                    } else {
+                        LeaveApprovalsScreen(openCurrentWeekTrigger = approvalsWeekTrigger)
+                    }
+                }
                 TabId.STUDENTS -> StudentListScreen(
                     onOpenStudent = { subRoute = SubRoute.StudentManageDetail(it) }
                 )

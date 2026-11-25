@@ -356,4 +356,24 @@ class CalendarSummaryEveningStudyTest extends TestCase
         $this->assertSame('2026-11-27', $summary['records'][4]['date']);
         $this->assertSame('申请：早读、早操、第1-6节、晚操 (9节)', $summary['records'][0]['detail']);
     }
+
+    public function test_allows_class_admin_to_access_calendar_summary(): void
+    {
+        $teacher = (object) ['role' => 'teacher', 'student' => null];
+        $classAdmin = (object) [
+            'role' => 'student',
+            'student' => (object) ['is_class_admin' => true, 'class_id' => 12],
+        ];
+        $regularStudent = (object) [
+            'role' => 'student',
+            'student' => (object) ['is_class_admin' => false, 'class_id' => 12],
+        ];
+        $parent = (object) ['role' => 'parent', 'student' => null];
+
+        $this->assertTrue(AttendanceController::canAccessCalendarSummary($teacher));
+        $this->assertTrue(AttendanceController::canAccessCalendarSummary($classAdmin));
+        $this->assertFalse(AttendanceController::canAccessCalendarSummary($regularStudent));
+        $this->assertFalse(AttendanceController::canAccessCalendarSummary($parent));
+        $this->assertFalse(AttendanceController::canAccessCalendarSummary(null));
+    }
 }
