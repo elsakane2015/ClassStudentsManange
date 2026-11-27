@@ -564,9 +564,16 @@ export default function ParentDashboard({ initialTab = 'feed' }) {
                                                     {req.reason && (
                                                         <p className="text-xs text-gray-600">原因：{req.reason}</p>
                                                     )}
+                                                    {req.created_at && (
+                                                        <p className="text-xs text-gray-400">
+                                                            申请时间：{format(new Date(req.created_at), 'yyyy-MM-dd HH:mm')}
+                                                        </p>
+                                                    )}
                                                     {req.approver_name && (
                                                         <p className="text-xs text-gray-400">
-                                                            审批人：{req.approver_name}{req.rejection_reason ? ` · 驳回理由：${req.rejection_reason}` : ''}
+                                                            审批人：{req.approver_name}
+                                                            {req.approved_at ? ` · ${format(new Date(req.approved_at), 'yyyy-MM-dd HH:mm')}` : ''}
+                                                            {req.rejection_reason ? ` · 驳回理由：${req.rejection_reason}` : ''}
                                                         </p>
                                                     )}
                                                 </li>

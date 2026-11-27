@@ -325,6 +325,7 @@ export default function ApprovalHistory() {
         try {
             await axios.delete(`/leave-requests/${id}`);
             fetchRequests();
+            window.dispatchEvent(new CustomEvent('notificationsUpdated'));
         } catch (error) {
             alert('操作失败: ' + (error.response?.data?.error || error.message));
         }
@@ -337,6 +338,7 @@ export default function ApprovalHistory() {
                 reason: reason || '教师驳回',
             });
             fetchRequests();
+            window.dispatchEvent(new CustomEvent('notificationsUpdated'));
         } catch (error) {
             alert('操作失败: ' + (error.response?.data?.message || error.response?.data?.error || error.message));
             throw error;
@@ -349,6 +351,7 @@ export default function ApprovalHistory() {
             if (leaveTypeId) payload.leave_type_id = leaveTypeId;
             await axios.post(`/leave-requests/${id}/approve`, payload);
             fetchRequests();
+            window.dispatchEvent(new CustomEvent('notificationsUpdated'));
         } catch (error) {
             alert('操作失败: ' + (error.response?.data?.message || error.response?.data?.error || error.message));
             throw error;

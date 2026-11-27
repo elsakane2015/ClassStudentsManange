@@ -499,8 +499,16 @@ struct ParentChildAttendanceView: View {
                                             if let reason = req.reason, !reason.isEmpty {
                                                 Text("原因：\(reason)").font(.caption).foregroundStyle(.secondary)
                                             }
+                                            if let created = req.createdAt, !created.isEmpty {
+                                                Text("申请时间：\(SCDateFormatter.displayDateTime(created))")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
                                             if let approver = req.approverName, !approver.isEmpty {
-                                                Text("审批人：\(approver)\(req.rejectionReason.map { " · 驳回原因：\($0)" } ?? "")")
+                                                let approvedTime = (req.approvedAt?.isEmpty == false)
+                                                    ? " · \(SCDateFormatter.displayDateTime(req.approvedAt))"
+                                                    : ""
+                                                Text("审批人：\(approver)\(approvedTime)\(req.rejectionReason.map { " · 驳回原因：\($0)" } ?? "")")
                                                     .font(.caption2)
                                                     .foregroundStyle(.tertiary)
                                             }

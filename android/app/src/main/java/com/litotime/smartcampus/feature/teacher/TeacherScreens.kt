@@ -4651,6 +4651,14 @@ fun LeaveApprovalsScreen(
                                     }
                                 }
                             }
+                            req.createdAt?.takeIf { it.isNotBlank() }?.let { createdAt ->
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "申请时间：${SCDateFormatter.displayDateTime(createdAt)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
 
                             if (req.status == "pending") {
                                 val chosenTypeId = selectedLeaveTypeOverrides[req.id] ?: req.leaveTypeId
@@ -4793,6 +4801,7 @@ fun LeaveApprovalsScreen(
                                                 }.onSuccess {
                                                     selectedLeaveTypeOverrides = selectedLeaveTypeOverrides - req.id
                                                     loadFirstPage()
+                                                    SmartCampusApp.container.pushManager.refreshUnreadCount()
                                                     snackbarHostState.showSnackbar("已批准 ${req.studentName} 的请假")
                                                 }.onFailure { error = it.localizedMessage }
                                                 processingActions = processingActions - req.id
@@ -4815,9 +4824,15 @@ fun LeaveApprovalsScreen(
                                     }
                                 }
                             } else {
-                                req.approverName?.let {
-                                    Spacer(Modifier.height(6.dp))
-                                    Text("审批人：$it · ${SCDateFormatter.displayDateTime(req.approvedAt ?: req.createdAt)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (!req.approverName.isNullOrBlank() || !req.approvedAt.isNullOrBlank()) {
+                                    Spacer(Modifier.height(3.dp))
+                                    val approverLabel = req.approverName?.takeIf { it.isNotBlank() }?.let { "审批人：$it" } ?: "已审批"
+                                    val approvedTime = req.approvedAt?.takeIf { it.isNotBlank() }?.let { " · ${SCDateFormatter.displayDateTime(it)}" }.orEmpty()
+                                    Text(
+                                        "$approverLabel$approvedTime",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
@@ -4878,6 +4893,7 @@ fun LeaveApprovalsScreen(
                         runCatching { repo.rejectLeaveRequest(target.id, reasonText) }
                             .onSuccess {
                                 loadFirstPage()
+                                SmartCampusApp.container.pushManager.refreshUnreadCount()
                                 snackbarHostState.showSnackbar("已驳回 ${target.studentName} 的请假")
                             }
                             .onFailure { error = it.localizedMessage }
@@ -5008,6 +5024,7 @@ fun LeaveApprovalsScreen(
                                     .onSuccess {
                                         selectedLeaveTypeOverrides = selectedLeaveTypeOverrides - target.id
                                         loadFirstPage()
+                                        SmartCampusApp.container.pushManager.refreshUnreadCount()
                                     }
                                     .onFailure { error = it.localizedMessage }
                             }
@@ -5026,6 +5043,7 @@ fun LeaveApprovalsScreen(
                                     .onSuccess {
                                         selectedLeaveTypeOverrides = selectedLeaveTypeOverrides - target.id
                                         loadFirstPage()
+                                        SmartCampusApp.container.pushManager.refreshUnreadCount()
                                     }
                                     .onFailure { error = it.localizedMessage }
                             }

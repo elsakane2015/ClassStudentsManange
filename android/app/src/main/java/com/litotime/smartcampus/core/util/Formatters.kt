@@ -296,11 +296,14 @@ object SCDateFormatter {
     }
 
     fun displayDateTime(raw: String?): String {
-        if (raw.isNullOrBlank()) return "-"
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty()) return "-"
         return runCatching {
-            Instant.parse(raw).atZone(ZoneId.systemDefault()).format(displayDateTimeFmt)
+            Instant.parse(trimmed).atZone(ZoneId.systemDefault()).format(displayDateTimeFmt)
+        }.recoverCatching {
+            OffsetDateTime.parse(trimmed).atZoneSameInstant(ZoneId.systemDefault()).format(displayDateTimeFmt)
         }.getOrElse {
-            raw.replace("T", " ").take(16)
+            trimmed.replace("T", " ").take(16)
         }
     }
 }

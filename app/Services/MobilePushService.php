@@ -112,6 +112,136 @@ class MobilePushService
     }
 
     /**
+     * Automatically mark unread leave_submitted notifications for a leave request / batch as read
+     * once all pending items in that request have been approved, rejected, or cancelled.
+     */
+    public function markLeaveSubmittedNotificationsRead(AttendanceRecord $record, array $recordIds = []): int
+    {
+        $batchId = is_string($record->leave_batch_id) && trim($record->leave_batch_id) !== ''
+            ? trim($record->leave_batch_id)
+            : null;
+
+        $targetIds = collect($recordIds)
+            ->push($record->id)
+            ->filter(fn ($id) => ! empty($id))
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($batchId === null && empty($targetIds)) {
+            return 0;
+        }
+
+        $unread = AppNotification::where('type', 'leave_submitted')
+            ->whereNull('read_at')
+            ->get(['id', 'data']);
+
+        $matchedIds = $unread
+            ->filter(function (AppNotification $notification) use ($batchId, $targetIds) {
+                $data = is_array($notification->data) ? $notification->data : [];
+                $notifBatchId = isset($data['leave_batch_id']) && is_string($data['leave_batch_id'])
+                    ? trim($data['leave_batch_id'])
+                    : null;
+                $notifRequestId = isset($data['leave_request_id']) ? (int) $data['leave_request_id'] : 0;
+
+                if ($batchId !== null && $notifBatchId !== null && $notifBatchId === $batchId) {
+                    return true;
+                }
+
+                return $notifRequestId > 0 && in_array($notifRequestId, $targetIds, true);
+            })
+            ->pluck('id')
+            ->all();
+
+        if (empty($matchedIds)) {
+            return 0;
+        }
+
+        return AppNotification::whereIn('id', $matchedIds)
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+    }
+
+    /**
+     * Clean up historical unread leave_submitted notifications whose underlying leave requests
+     * no longer have any pending attendance records (already approved, rejected, or deleted).
+     */
+    public function cleanupResolvedLeaveSubmittedNotifications(): int
+    {
+        $unread = AppNotification::where('type', 'leave_submitted')
+            ->whereNull('read_at')
+            ->get(['id', 'data']);
+
+        if ($unread->isEmpty()) {
+            return 0;
+        }
+
+        $batchIds = [];
+        $requestIds = [];
+        foreach ($unread as $notification) {
+            $data = is_array($notification->data) ? $notification->data : [];
+            if (! empty($data['leave_batch_id']) && is_string($data['leave_batch_id'])) {
+                $batchIds[] = trim($data['leave_batch_id']);
+            }
+            if (! empty($data['leave_request_id'])) {
+                $requestIds[] = (int) $data['leave_request_id'];
+            }
+        }
+
+        $batchIds = array_values(array_unique($batchIds));
+        $requestIds = array_values(array_unique($requestIds));
+
+        $pendingBatchMap = empty($batchIds)
+            ? []
+            : AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->whereIn('leave_batch_id', $batchIds)
+                ->where('approval_status', 'pending')
+                ->pluck('leave_batch_id')
+                ->unique()
+                ->flip()
+                ->all();
+
+        $pendingRequestMap = empty($requestIds)
+            ? []
+            : AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->whereIn('id', $requestIds)
+                ->where('approval_status', 'pending')
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->flip()
+                ->all();
+
+        $resolvedNotificationIds = [];
+        foreach ($unread as $notification) {
+            $data = is_array($notification->data) ? $notification->data : [];
+            $notifBatchId = ! empty($data['leave_batch_id']) && is_string($data['leave_batch_id'])
+                ? trim($data['leave_batch_id'])
+                : null;
+            $notifRequestId = ! empty($data['leave_request_id']) ? (int) $data['leave_request_id'] : 0;
+
+            if ($notifBatchId !== null) {
+                if (! isset($pendingBatchMap[$notifBatchId])) {
+                    $resolvedNotificationIds[] = $notification->id;
+                }
+            } elseif ($notifRequestId > 0) {
+                if (! isset($pendingRequestMap[$notifRequestId])) {
+                    $resolvedNotificationIds[] = $notification->id;
+                }
+            }
+        }
+
+        if (empty($resolvedNotificationIds)) {
+            return 0;
+        }
+
+        return AppNotification::whereIn('id', $resolvedNotificationIds)
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+    }
+
+    /**
      * Notify student when their leave request is approved or rejected.
      */
     public function notifyLeaveRequestReviewed(

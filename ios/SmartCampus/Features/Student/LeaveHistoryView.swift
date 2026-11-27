@@ -215,6 +215,7 @@ struct LeaveHistoryView: View {
         do {
             try await LeaveRepository.cancelLeaveRequest(id: req.id)
             requests.removeAll { $0.id == req.id }
+            await PushNotificationManager.shared.refreshUnreadCount()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -354,15 +355,21 @@ private struct LeaveRecordCard: View {
                     }
                 }
 
-                HStack {
-                    if let approver = request.approverName, !approver.isEmpty {
-                        Text("审批人：\(approver)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    } else if let created = request.createdAt {
-                        Text("提交于 \(SCDateFormatter.displayDateTime(created))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let created = request.createdAt, !created.isEmpty {
+                            Text("申请时间：\(SCDateFormatter.displayDateTime(created))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let approver = request.approverName, !approver.isEmpty {
+                            let approvedTimeText = (request.approvedAt?.isEmpty == false)
+                                ? " · \(SCDateFormatter.displayDateTime(request.approvedAt))"
+                                : ""
+                            Text("审批人：\(approver)\(approvedTimeText)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                     Spacer()
                     if canCancel {

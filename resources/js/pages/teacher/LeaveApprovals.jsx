@@ -36,6 +36,7 @@ export default function LeaveApprovals() {
             }
             // remove from list
             setRequests(prev => prev.filter(r => r.id !== id));
+            window.dispatchEvent(new CustomEvent('notificationsUpdated'));
         } catch (error) {
             alert('操作失败');
         }
@@ -96,7 +97,7 @@ export default function LeaveApprovals() {
                                             )}
                                             {request.created_at && (
                                                 <span className="ml-3 text-gray-400">
-                                                    提交于 {format(new Date(request.created_at), 'HH:mm')}
+                                                    申请时间：{format(new Date(request.created_at), 'yyyy-MM-dd HH:mm')}
                                                 </span>
                                             )}
                                         </p>

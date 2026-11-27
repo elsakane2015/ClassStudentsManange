@@ -153,7 +153,9 @@ data class ParentLeaveRequestItem(
     val reason: String?,
     val status: String,
     val approverName: String?,
-    val rejectionReason: String?
+    val approvedAt: String? = null,
+    val rejectionReason: String?,
+    val createdAt: String? = null
 ) {
     val statusDisplayText: String
         get() = when (status) {
@@ -176,7 +178,9 @@ data class ParentLeaveRequestItem(
             reason = o.str("reason"),
             status = o.str("approval_status") ?: o.str("status") ?: "approved",
             approverName = o.str("approver_name"),
-            rejectionReason = o.str("rejection_reason")
+            approvedAt = o.str("approved_at"),
+            rejectionReason = o.str("rejection_reason"),
+            createdAt = o.str("created_at")
         )
     }
 }

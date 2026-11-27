@@ -34,6 +34,7 @@ struct ParentLeaveRequestItem: Decodable, Identifiable, Hashable {
     let status: String?
     let approvalStatus: String?
     let approverName: String?
+    let approvedAt: String?
     let rejectionReason: String?
     let createdAt: String?
 
@@ -51,6 +52,7 @@ struct ParentLeaveRequestItem: Decodable, Identifiable, Hashable {
         case hasEveningStudy = "has_evening_study"
         case approvalStatus = "approval_status"
         case approverName = "approver_name"
+        case approvedAt = "approved_at"
         case rejectionReason = "rejection_reason"
         case createdAt = "created_at"
     }

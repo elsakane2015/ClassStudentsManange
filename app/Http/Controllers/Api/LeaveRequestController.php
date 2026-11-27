@@ -949,11 +949,33 @@ class LeaveRequestController extends Controller
                 ->where('approval_status', 'pending')
                 ->count();
 
-            return ['processed' => $relatedRecords->count(), 'remaining' => $remainingPendingCount];
+            $allBatchRecordIds = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->when($record->leave_batch_id,
+                    fn ($query) => $query->where('leave_batch_id', $record->leave_batch_id),
+                    fn ($query) => $query->where('student_id', $record->student_id)
+                        ->whereDate('date', $record->date)
+                        ->where('leave_type_id', $record->leave_type_id)
+                        ->where('is_self_applied', true))
+                ->pluck('id')
+                ->merge($relatedRecords->pluck('id'))
+                ->push($record->id)
+                ->map(fn ($value) => (int) $value)
+                ->unique()
+                ->values()
+                ->all();
+
+            return [
+                'processed' => $relatedRecords->count(),
+                'remaining' => $remainingPendingCount,
+                'all_batch_record_ids' => $allBatchRecordIds,
+            ];
         });
 
         try {
             $mobilePush = app(\App\Services\MobilePushService::class);
+            if ($result['remaining'] === 0) {
+                $mobilePush->markLeaveSubmittedNotificationsRead($record, $result['all_batch_record_ids']);
+            }
             $mobilePush->notifyLeaveRequestReviewed(
                 $record,
                 'approved',
@@ -972,6 +994,7 @@ class LeaveRequestController extends Controller
             'message' => 'Approved',
             'approved_count' => $result['processed'],
             'remaining_pending_count' => $result['remaining'],
+            'unread_count' => $user->appNotifications()->whereNull('read_at')->count(),
         ]);
     }
 
@@ -1063,6 +1086,7 @@ class LeaveRequestController extends Controller
                     $r->update([
                         'approval_status'  => 'rejected',
                         'approver_id'      => $user->id,
+                        'approved_at'      => now(),
                         'rejection_reason' => $request->input('reason'),
                     ]);
                 }
@@ -1078,11 +1102,33 @@ class LeaveRequestController extends Controller
                 ->where('approval_status', 'pending')
                 ->count();
 
-            return ['processed' => $relatedRecords->count(), 'remaining' => $remainingPendingCount];
+            $allBatchRecordIds = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->when($record->leave_batch_id,
+                    fn ($query) => $query->where('leave_batch_id', $record->leave_batch_id),
+                    fn ($query) => $query->where('student_id', $record->student_id)
+                        ->whereDate('date', $record->date)
+                        ->where('leave_type_id', $record->leave_type_id)
+                        ->where('is_self_applied', true))
+                ->pluck('id')
+                ->merge($relatedRecords->pluck('id'))
+                ->push($record->id)
+                ->map(fn ($value) => (int) $value)
+                ->unique()
+                ->values()
+                ->all();
+
+            return [
+                'processed' => $relatedRecords->count(),
+                'remaining' => $remainingPendingCount,
+                'all_batch_record_ids' => $allBatchRecordIds,
+            ];
         });
 
         try {
             $mobilePush = app(\App\Services\MobilePushService::class);
+            if ($result['remaining'] === 0) {
+                $mobilePush->markLeaveSubmittedNotificationsRead($record, $result['all_batch_record_ids']);
+            }
             $mobilePush->notifyLeaveRequestReviewed(
                 $record,
                 'rejected',
@@ -1103,6 +1149,7 @@ class LeaveRequestController extends Controller
             'message' => 'Rejected',
             'rejected_count' => $result['processed'],
             'remaining_pending_count' => $result['remaining'],
+            'unread_count' => $user->appNotifications()->whereNull('read_at')->count(),
         ]);
     }
 
@@ -1136,7 +1183,7 @@ class LeaveRequestController extends Controller
              return response()->json(['error' => 'Unauthorized'], 403);   
         }
         
-        $deletedCount = DB::transaction(function () use ($record, $user) {
+        $destroyResult = DB::transaction(function () use ($record, $user) {
             if ($record->leave_batch_id) {
                 $query = AttendanceRecord::withoutGlobalScope('day_attendance')->where('leave_batch_id', $record->leave_batch_id);
                 if ($user->role === 'student') {
@@ -1156,13 +1203,44 @@ class LeaveRequestController extends Controller
 
             $ids = $query->lockForUpdate()->pluck('id');
             if ($ids->isEmpty()) {
-                return 0;
+                return ['deleted_count' => 0, 'deleted_ids' => [], 'remaining_pending' => 0];
             }
 
-            return AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $ids)->delete();
+            $deleted = AttendanceRecord::withoutGlobalScope('day_attendance')->whereIn('id', $ids)->delete();
+
+            $remainingPending = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->when($record->leave_batch_id,
+                    fn ($q) => $q->where('leave_batch_id', $record->leave_batch_id),
+                    fn ($q) => $q->where('student_id', $record->student_id)
+                        ->whereDate('date', $record->date)
+                        ->where('leave_type_id', $record->leave_type_id)
+                        ->where('is_self_applied', true))
+                ->where('approval_status', 'pending')
+                ->count();
+
+            return [
+                'deleted_count' => $deleted,
+                'deleted_ids' => $ids->map(fn ($value) => (int) $value)->all(),
+                'remaining_pending' => $remainingPending,
+            ];
         });
 
-        return response()->json(['message' => 'Leave request deleted successfully.', 'deleted_count' => $deletedCount]);
+        if ($destroyResult['deleted_count'] > 0 && $destroyResult['remaining_pending'] === 0) {
+            try {
+                app(\App\Services\MobilePushService::class)->markLeaveSubmittedNotificationsRead(
+                    $record,
+                    $destroyResult['deleted_ids']
+                );
+            } catch (\Throwable $e) {
+                \Log::warning('Failed to auto-read leave notifications after destroy', ['error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'message' => 'Leave request deleted successfully.',
+            'deleted_count' => $destroyResult['deleted_count'],
+            'unread_count' => $user->appNotifications()->whereNull('read_at')->count(),
+        ]);
     }
 
     private function checkLeaveTypeRequestLimit(

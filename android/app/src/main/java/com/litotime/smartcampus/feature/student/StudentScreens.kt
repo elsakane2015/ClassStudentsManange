@@ -1246,12 +1246,23 @@ fun LeaveHistoryScreen(
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    req.approverName?.let { "审批人：$it" } ?: "提交于 ${SCDateFormatter.displayDateTime(req.createdAt)}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    req.createdAt?.takeIf { it.isNotBlank() }?.let { created ->
+                                        Text(
+                                            "申请时间：${SCDateFormatter.displayDateTime(created)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    req.approverName?.takeIf { it.isNotBlank() }?.let { approver ->
+                                        val approvedTime = req.approvedAt?.takeIf { it.isNotBlank() }?.let { " · ${SCDateFormatter.displayDateTime(it)}" }.orEmpty()
+                                        Text(
+                                            "审批人：$approver$approvedTime",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                                 if (req.status == "pending" && isMine) {
                                     OutlinedButton(
                                         onClick = { cancelTarget = req },
@@ -1277,7 +1288,10 @@ fun LeaveHistoryScreen(
                     cancelTarget = null
                     scope.launch {
                         runCatching { repo.cancelLeaveRequest(target.id) }
-                            .onSuccess { requests = requests.filterNot { it.id == target.id } }
+                            .onSuccess {
+                                requests = requests.filterNot { it.id == target.id }
+                                SmartCampusApp.container.pushManager.refreshUnreadCount()
+                            }
                             .onFailure { error = it.localizedMessage }
                     }
                 }) { Text("确认撤销", color = Color(0xFFDC2626)) }

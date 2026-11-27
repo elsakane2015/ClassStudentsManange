@@ -554,9 +554,17 @@ fun ParentChildAttendanceScreen(
                                     req.reason?.takeIf { it.isNotBlank() }?.let {
                                         Text("原因：$it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
+                                    req.createdAt?.takeIf { it.isNotBlank() }?.let { created ->
+                                        Text(
+                                            "申请时间：${SCDateFormatter.displayDateTime(created)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                     req.approverName?.takeIf { it.isNotBlank() }?.let { approver ->
+                                        val approvedTime = req.approvedAt?.takeIf { it.isNotBlank() }?.let { " · ${SCDateFormatter.displayDateTime(it)}" }.orEmpty()
                                         val rej = req.rejectionReason?.takeIf { it.isNotBlank() }?.let { " · 驳回理由：$it" }.orEmpty()
-                                        Text("审批人：$approver$rej", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("审批人：$approver$approvedTime$rej", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                                 if (idx != leaveRequests.lastIndex) HorizontalDivider()

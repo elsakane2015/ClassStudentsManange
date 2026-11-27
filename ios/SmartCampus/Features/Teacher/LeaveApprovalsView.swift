@@ -761,7 +761,9 @@ struct LeaveApprovalsView: View {
             selectedLeaveTypeOverrides.removeValue(forKey: req.id)
             hapticSuccess += 1
             showToast("已批准 \(req.student?.name ?? "学生") 的请假")
-            await loadFirstPage()
+            async let refreshList: Void = loadFirstPage()
+            async let refreshBadge: Void = PushNotificationManager.shared.refreshUnreadCount()
+            _ = await (refreshList, refreshBadge)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -778,7 +780,9 @@ struct LeaveApprovalsView: View {
             selectedLeaveTypeOverrides.removeValue(forKey: req.id)
             hapticSuccess += 1
             showToast("已驳回 \(req.student?.name ?? "学生") 的请假")
-            await loadFirstPage()
+            async let refreshList: Void = loadFirstPage()
+            async let refreshBadge: Void = PushNotificationManager.shared.refreshUnreadCount()
+            _ = await (refreshList, refreshBadge)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -901,6 +905,16 @@ private struct ApprovalItemRow: View {
                 }
 
                 if request.effectiveStatus == "pending" {
+                    if let created = request.createdAt, !created.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.caption2)
+                            Text("申请时间：\(SCDateFormatter.displayDateTime(created))")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+
                     VStack(alignment: .leading, spacing: 8) {
                         Divider()
 
@@ -1014,10 +1028,23 @@ private struct ApprovalItemRow: View {
                             .disabled(isProcessing)
                         }
                     }
-                } else if let approver = request.approverName {
-                    Text("审批人：\(approver) · \(SCDateFormatter.displayDateTime(request.approvedAt ?? request.createdAt))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let created = request.createdAt, !created.isEmpty {
+                            Text("申请时间：\(SCDateFormatter.displayDateTime(created))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if request.approverName != nil || (request.approvedAt?.isEmpty == false) {
+                            let approverText = request.approverName.map { "审批人：\($0)" } ?? "已审批"
+                            let approvedTimeText = (request.approvedAt?.isEmpty == false)
+                                ? " · \(SCDateFormatter.displayDateTime(request.approvedAt))"
+                                : ""
+                            Text("\(approverText)\(approvedTimeText)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
         }
