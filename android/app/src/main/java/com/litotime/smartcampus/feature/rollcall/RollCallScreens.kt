@@ -377,7 +377,11 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
             loading = true
             error = null
             runCatching {
-                val detail = repo.fetchRollCallDetail(rollCallId)
+                var detail = repo.fetchRollCallDetail(rollCallId)
+                // 兼容未升级的旧服务端：首次打开点名若触发同步可能导致 records 缺少 student 关系，自动补拉一次
+                if (detail.records.isNotEmpty() && detail.records.any { it.studentNo.isNullOrBlank() && it.studentName == "学生 #${it.studentId}" }) {
+                    runCatching { repo.fetchRollCallDetail(rollCallId) }.onSuccess { detail = it }
+                }
                 if (leaveTypes.isEmpty()) {
                     leaveTypes = runCatching { repo.fetchLeaveTypes() }.getOrDefault(emptyList())
                 }

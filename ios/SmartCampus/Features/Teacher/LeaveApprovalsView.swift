@@ -401,7 +401,7 @@ struct LeaveApprovalsView: View {
             .navigationTitle("请假审批")
             .searchable(text: $searchText, prompt: "搜索学生姓名、学号或班级")
             .sensoryFeedback(.success, trigger: hapticSuccess)
-            .refreshable {
+            .safeRefreshable {
                 await loadFirstPage()
             }
             .onChange(of: statusFilter) { _, _ in
@@ -711,6 +711,7 @@ struct LeaveApprovalsView: View {
             hasMore = res.hasMore
         } catch {
             guard gen == requestGeneration else { return }
+            guard !error.isCancellationError else { return }
             errorMessage = error.localizedDescription
         }
         if gen == requestGeneration {
@@ -743,6 +744,7 @@ struct LeaveApprovalsView: View {
             hasMore = res.hasMore
         } catch {
             guard gen == requestGeneration else { return }
+            guard !error.isCancellationError else { return }
             errorMessage = error.localizedDescription
         }
         if gen == requestGeneration {

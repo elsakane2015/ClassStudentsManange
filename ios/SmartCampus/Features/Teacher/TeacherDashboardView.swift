@@ -374,7 +374,7 @@ struct TeacherDashboardView: View {
                     }
                 }
             }
-            .refreshable {
+            .safeRefreshable {
                 await loadAll()
             }
             .onChange(of: scope) { _, _ in
@@ -952,20 +952,22 @@ struct TeacherDashboardView: View {
         async let slotsReq = AttendanceRepository.fetchTimeSlots()
         async let periodsReq = AttendanceRepository.fetchClassPeriods()
 
-        leaveTypes = (try? await typesReq) ?? []
-        semesters = (try? await semReq) ?? []
-        timeSlots = (try? await slotsReq) ?? []
-        classPeriods = (try? await periodsReq) ?? []
+        if let types = try? await typesReq { leaveTypes = types }
+        if let sems = try? await semReq { semesters = sems }
+        if let slots = try? await slotsReq { timeSlots = slots }
+        if let periods = try? await periodsReq { classPeriods = periods }
 
         await loadStats()
         await loadCalendarSummary()
         await loadOverview()
+        await PushNotificationManager.shared.refreshUnreadCount()
     }
 
     private func loadStats() async {
         do {
             stats = try await AttendanceRepository.fetchTeacherStats(scope: scope, semesterId: selectedSemesterId)
         } catch {
+            guard !error.isCancellationError else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -1018,6 +1020,7 @@ struct TeacherDashboardView: View {
                 }
             }
         } catch {
+            guard !error.isCancellationError else { return }
             errorMessage = error.localizedDescription
         }
     }

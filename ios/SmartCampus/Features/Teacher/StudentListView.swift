@@ -93,7 +93,7 @@ struct StudentListView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("学生管理")
             .searchable(text: $searchText, prompt: "搜索姓名、学号或班级")
-            .refreshable {
+            .safeRefreshable {
                 await loadStudents()
             }
             .onChange(of: selectedClassId) { _, _ in

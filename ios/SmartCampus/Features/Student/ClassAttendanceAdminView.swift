@@ -190,7 +190,7 @@ struct ClassAttendanceAdminView: View {
                 .disabled(isLoading)
             }
         }
-        .refreshable {
+        .safeRefreshable {
             await loadData()
         }
         .onChange(of: selectedDateKey) { _, _ in

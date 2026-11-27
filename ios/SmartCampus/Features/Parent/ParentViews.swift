@@ -133,7 +133,7 @@ struct ParentFeedView: View {
                     }
                 }
             }
-            .refreshable {
+            .safeRefreshable {
                 await loadAll()
             }
             .task {
@@ -529,7 +529,7 @@ struct ParentChildAttendanceView: View {
         .background(SCTheme.background.ignoresSafeArea())
         .navigationTitle("孩子考勤")
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable {
+        .safeRefreshable {
             await loadChildrenAndDetail()
         }
         .task(id: initialStudentId) {

@@ -169,7 +169,7 @@ struct LeaveHistoryView: View {
             }
             .background(SCTheme.background.ignoresSafeArea())
             .navigationTitle(showStudentIdentity ? "班级请假记录" : "请假记录")
-            .refreshable {
+            .safeRefreshable {
                 await loadRequests()
             }
             .onChange(of: statusFilter) { _, _ in

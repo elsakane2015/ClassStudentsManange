@@ -315,7 +315,7 @@ class RollCallController extends Controller
                     ->count();
                 $rollCall->update(['on_leave_count' => $onLeaveCount]);
                 
-                $createdRollCalls[] = $rollCall->refresh()->load('rollCallType', 'class', 'records.student.user');
+                $createdRollCalls[] = $rollCall->refresh()->load('rollCallType', 'class', 'records.student.user', 'records.leaveType');
             }
 
             DB::commit();
@@ -388,7 +388,7 @@ class RollCallController extends Controller
         }
 
         if ($needReloadLeaveTypes) {
-            $rollCall->load('records.leaveType');
+            $rollCall->load(['records.student.user', 'records.leaveType']);
         }
 
         // 同步更新已到与请假人数统计
@@ -754,7 +754,7 @@ class RollCallController extends Controller
                 \Log::warning('Parent roll call push failed', ['error' => $e->getMessage()]);
             }
 
-            return response()->json($rollCall->fresh()->load('rollCallType', 'records'));
+            return response()->json($rollCall->fresh()->load(['rollCallType', 'class', 'creator', 'records.student.user', 'records.leaveType']));
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::error('Failed to complete roll call', [

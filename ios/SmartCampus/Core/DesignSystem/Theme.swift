@@ -232,3 +232,15 @@ struct SCActionButtonStyle: ButtonStyle {
         }
     }
 }
+
+extension View {
+    /// 隔离 SwiftUI `.refreshable` 视图重排或回弹导致的 Task 级联取消，
+    /// 避免下拉刷新中途被系统取消并弹出「网络请求失败：已取消」。
+    func safeRefreshable(_ action: @escaping @MainActor () async -> Void) -> some View {
+        refreshable {
+            await Task { @MainActor in
+                await action()
+            }.value
+        }
+    }
+}

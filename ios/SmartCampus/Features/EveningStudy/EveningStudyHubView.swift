@@ -171,7 +171,7 @@ struct EveningStudyContentView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .refreshable {
+        .safeRefreshable {
             await loadClassesAndSummary()
         }
         .onChange(of: selectedDate) { _, _ in
@@ -439,7 +439,7 @@ struct EveningStudyHistoryView: View {
                         }
                     }
                 }
-                .refreshable {
+                .safeRefreshable {
                     await loadHistory()
                 }
             }

@@ -270,7 +270,7 @@ struct StudentDashboardView: View {
                     }
                 }
             }
-            .refreshable {
+            .safeRefreshable {
                 await loadAll()
             }
             .onChange(of: scope) { _, _ in

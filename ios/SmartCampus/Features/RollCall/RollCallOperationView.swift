@@ -217,7 +217,7 @@ struct RollCallOperationView: View {
                     }
                     .padding()
                 }
-                .refreshable {
+                .safeRefreshable {
                     await loadDetail()
                 }
                 .background(SCTheme.background)
@@ -307,7 +307,13 @@ struct RollCallOperationView: View {
         do {
             async let detailReq = RollCallRepository.fetchRollCallDetail(id: rollCallId)
             let shouldFetchLeaveTypes = leaveTypes.isEmpty
-            let detail = try await detailReq
+            var detail = try await detailReq
+            // 兼容未升级的旧服务端：首次打开点名若触发同步可能导致 records 缺少 student 关系，自动补拉一次
+            if let recs = detail.records, !recs.isEmpty, recs.contains(where: { $0.student == nil }) {
+                if let refetched = try? await RollCallRepository.fetchRollCallDetail(id: rollCallId) {
+                    detail = refetched
+                }
+            }
             if shouldFetchLeaveTypes, let fetchedTypes = try? await AttendanceRepository.fetchLeaveTypes() {
                 leaveTypes = fetchedTypes
             }
@@ -335,6 +341,7 @@ struct RollCallOperationView: View {
             }
             records = loadedRecords
         } catch {
+            guard !error.isCancellationError else { return }
             errorMessage = error.localizedDescription
         }
     }

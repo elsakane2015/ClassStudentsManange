@@ -149,7 +149,7 @@ struct RollCallHubContentView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .refreshable {
+        .safeRefreshable {
             await loadAll()
         }
         .onChange(of: historyScope) { _, _ in

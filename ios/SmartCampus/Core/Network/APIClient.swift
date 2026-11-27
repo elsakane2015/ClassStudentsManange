@@ -275,8 +275,15 @@ final class APIClient {
             return (data, http)
         } catch let error as APIError {
             throw error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
         } catch {
             let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+                throw CancellationError()
+            }
             if nsError.code == NSURLErrorNotConnectedToInternet {
                 throw APIError.networkError("当前网络不可用，请检查 Wi-Fi 或移动数据")
             }
@@ -354,6 +361,16 @@ final class APIClient {
             quality -= 0.15
         }
         return scaledImage.jpegData(compressionQuality: 0.2)
+    }
+}
+
+extension Error {
+    /// 判断是否为 Swift 并发或 URLSession 请求取消错误（下拉刷新回弹、视图切换等非真正网络故障）
+    var isCancellationError: Bool {
+        if self is CancellationError { return true }
+        if let urlError = self as? URLError, urlError.code == .cancelled { return true }
+        let nsError = self as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 }
 
