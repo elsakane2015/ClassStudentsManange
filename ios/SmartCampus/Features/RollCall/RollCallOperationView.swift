@@ -17,10 +17,12 @@ struct RollCallOperationView: View {
 
     @State private var confirmComplete = false
     @State private var editingCompletedRecord: RollCallRecord?
+    @State private var inspectingLeaveRecord: RollCallRecord?
     @State private var leaveTypes: [LeaveType] = []
 
     private var isInProgress: Bool { rollCall?.status == "in_progress" }
     private var canModifyCompleted: Bool { rollCall?.canModifyRecords?.value == true }
+    private var isTeacherOrAdmin: Bool { SessionManager.shared.currentUser?.isTeacherOrAdmin == true }
     private var selectableLeaveTypes: [LeaveType] {
         leaveTypes.filter { $0.isActiveFlag && $0.mappedAttendanceStatus == "leave" }
     }
@@ -294,6 +296,18 @@ struct RollCallOperationView: View {
             }
             Button("取消", role: .cancel) {}
         }
+        .sheet(item: $inspectingLeaveRecord) { rec in
+            LeaveRecordDetailSheet(
+                record: rec,
+                isTeacherOrAdmin: isTeacherOrAdmin,
+                canTeacherOverride: !isInProgress && canModifyCompleted && isTeacherOrAdmin
+            ) {
+                inspectingLeaveRecord = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    editingCompletedRecord = rec
+                }
+            }
+        }
         .task {
             await loadDetail()
         }
@@ -347,9 +361,13 @@ struct RollCallOperationView: View {
     }
 
     private func handleTap(_ record: RollCallRecord) {
+        // 请假/考勤标记学生：点名员严格只读不可修改，统一弹出「请假与去向详情」查看完整事由/备注
+        if record.status == "on_leave" {
+            inspectingLeaveRecord = record
+            return
+        }
+
         if isInProgress {
-            // 请假状态受保护，防止走动误点
-            guard record.status != "on_leave" else { return }
             guard let idx = records.firstIndex(where: { $0.id == record.id }) else { return }
 
             let nextPresent = records[idx].status != "present"
@@ -487,7 +505,7 @@ private struct RollCallStudentTile: View {
     private var tileColor: Color {
         switch record.status {
         case "present": return .green
-        case "on_leave": return .blue
+        case "on_leave": return record.isPendingApprovalLeave ? .orange : .blue
         case "absent": return .red
         default: return .gray
         }
@@ -496,7 +514,7 @@ private struct RollCallStudentTile: View {
     private var statusText: String {
         switch record.status {
         case "present": return record.markedAtLocal ?? "已到"
-        case "on_leave": return record.leaveType?.name ?? "请假"
+        case "on_leave": return record.leaveTitleText
         case "absent": return "缺勤"
         default: return "未点"
         }
@@ -505,7 +523,7 @@ private struct RollCallStudentTile: View {
     private var watermarkColor: Color {
         switch record.status {
         case "present": return Color.white.opacity(0.26)
-        case "on_leave": return Color.blue.opacity(0.22)
+        case "on_leave": return (record.isPendingApprovalLeave ? Color.orange : Color.blue).opacity(0.18)
         case "absent": return Color.red.opacity(0.22)
         default: return SCTheme.primary.opacity(0.16)
         }
@@ -525,12 +543,20 @@ private struct RollCallStudentTile: View {
                         .allowsHitTesting(false)
                 }
 
-                VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-                    Text(record.student?.name ?? "学生 #\(record.studentId)")
-                        .font(compact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
-                        .foregroundStyle(record.status == "present" ? .white : .primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                VStack(alignment: .leading, spacing: compact ? 3 : 5) {
+                    HStack(spacing: 4) {
+                        Text(record.student?.name ?? "学生 #\(record.studentId)")
+                            .font(compact ? .footnote.weight(.semibold) : .subheadline.weight(.semibold))
+                            .foregroundStyle(record.status == "present" ? .white : .primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        if record.status == "on_leave" {
+                            Spacer(minLength: 2)
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: compact ? 9 : 10))
+                                .foregroundStyle(tileColor)
+                        }
+                    }
 
                     if !compact, let no = record.student?.studentNo, !no.isEmpty {
                         Text(no)
@@ -539,25 +565,43 @@ private struct RollCallStudentTile: View {
                             .lineLimit(1)
                     }
 
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Text(statusText)
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(record.status == "present" ? .white.opacity(0.95) : tileColor)
                             .lineLimit(1)
+                        if record.status == "on_leave" && record.isPendingApprovalLeave {
+                            Text("待审批")
+                                .font(.system(size: 9, weight: .semibold))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Color.orange.opacity(0.2))
+                                .foregroundStyle(.orange)
+                                .clipShape(Capsule())
+                        }
                         if record.status == "present" {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: compact ? 11 : 12))
                                 .foregroundStyle(.white)
                         }
                     }
+
+                    if record.status == "on_leave" {
+                        Text(record.leaveDetailDisplayText)
+                            .font(.system(size: compact ? 10 : 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(compact ? 2 : 3)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                .padding(compact ? 10 : 12)
-                .frame(maxWidth: .infinity, minHeight: compact ? 58 : 74, alignment: .topLeading)
+                .padding(compact ? 9 : 12)
+                .frame(maxWidth: .infinity, minHeight: compact ? 62 : 76, alignment: .topLeading)
             }
             .background(
                 record.status == "present"
                     ? Color.green
-                    : (record.status == "pending" ? SCTheme.cardBackground : tileColor.opacity(0.14))
+                    : (record.status == "pending" ? SCTheme.cardBackground : tileColor.opacity(0.12))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -566,5 +610,87 @@ private struct RollCallStudentTile: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// 只读学生请假与去向详情弹窗（点名员/学生管理员仅查看不可修改，班主任在已完成状态可按需调整）
+private struct LeaveRecordDetailSheet: View {
+    let record: RollCallRecord
+    let isTeacherOrAdmin: Bool
+    let canTeacherOverride: Bool
+    let onRequestOverride: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private var accentColor: Color {
+        record.isPendingApprovalLeave ? .orange : .blue
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("学生信息") {
+                    LabeledContent("姓名", value: record.student?.name ?? "学生 #\(record.studentId)")
+                    if let no = record.student?.studentNo, !no.isEmpty {
+                        LabeledContent("学号", value: no)
+                    }
+                    HStack {
+                        Text("考勤状态")
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                            Text(record.isPendingApprovalLeave ? "待审批请假" : record.leaveTitleText)
+                                .font(.caption.weight(.semibold))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(accentColor.opacity(0.14))
+                        .foregroundStyle(accentColor)
+                        .clipShape(Capsule())
+                    }
+                }
+
+                Section("请假事由 / 备注与去向") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(record.leaveDetailDisplayText)
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                        Text(record.leaveStatusSummaryText)
+                            .font(.caption)
+                            .foregroundStyle(accentColor)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section {
+                    Label(
+                        isTeacherOrAdmin
+                            ? "该生在当前节次已有请假申请或考勤标记，点名过程中自动锁定以防误点。"
+                            : "该生在当前节次已有请假申请或考勤标记，点名员仅可查看去向，不可修改状态。",
+                        systemImage: "lock.shield"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                if canTeacherOverride {
+                    Section {
+                        Button("教师手动调整点名状态") {
+                            onRequestOverride()
+                        }
+                        .foregroundStyle(.indigo)
+                    }
+                }
+            }
+            .navigationTitle("学生请假与去向")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("知道了") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }

@@ -439,6 +439,7 @@ data class TimeSlot(
 data class ClassPeriod(
     val id: Int,
     val name: String,
+    val type: String? = null,
     val scene: String,
     val audienceScope: String,
     val isActive: Boolean
@@ -446,10 +447,23 @@ data class ClassPeriod(
     val isEveningStudy: Boolean get() = scene == "evening_study"
     val isBoardingOnly: Boolean get() = audienceScope == "boarding"
 
+    /** 是否为固定特殊活动节次（如早读、早操、晚操等），正课「第X节」返回 false */
+    val isFixedActivity: Boolean
+        get() {
+            if (type?.trim()?.lowercase() == "special") return true
+            val s = name.trim()
+            if (s.startsWith("第") && s.endsWith("节") && s.substring(1, s.length - 1).toIntOrNull() != null) {
+                return false
+            }
+            val keywords = listOf("早读", "早操", "晚操", "晨读", "升旗", "集会", "跑操", "眼保健操")
+            return keywords.any { s.contains(it) }
+        }
+
     companion object {
         fun fromJson(o: JsonObject) = ClassPeriod(
             id = o.intVal("id"),
             name = o.str("name").orEmpty(),
+            type = o.str("type"),
             scene = o.str("scene") ?: "regular",
             audienceScope = o.str("audience_scope") ?: "all",
             isActive = o.boolVal("is_active", true)
@@ -1257,6 +1271,60 @@ data class RollCallType(
 }
 
 object RollCallPeriodNamingHelper {
+    private fun normalizeActivityName(raw: String): String {
+        val s = raw.trim()
+        return (if (s.endsWith("点名")) s.dropLast(2) else s).trim()
+    }
+
+    /** 方案 B：返回某班级已被已有启用点名类型占用的固定活动节次 ID 集合（正课节次永远不禁用） */
+    fun occupiedFixedPeriodIds(
+        types: List<RollCallType>,
+        classId: Int,
+        excludingTypeId: Int? = null,
+        periods: List<ClassPeriod>
+    ): Set<Int> {
+        if (classId <= 0) return emptySet()
+        val classTypes = types.filter { t ->
+            t.isActive && t.classId == classId && (excludingTypeId == null || t.id != excludingTypeId)
+        }
+        if (classTypes.isEmpty()) return emptySet()
+
+        val result = mutableSetOf<Int>()
+        for (period in periods) {
+            if (!period.isFixedActivity) continue
+            val pNorm = normalizeActivityName(period.name)
+            val occupied = classTypes.any { t ->
+                if (period.id in t.periodIds) {
+                    true
+                } else if (t.periodIds.isEmpty()) {
+                    val tNorm = normalizeActivityName(t.name)
+                    pNorm.isNotEmpty() && (tNorm == pNorm || tNorm.contains(pNorm))
+                } else {
+                    false
+                }
+            }
+            if (occupied) result.add(period.id)
+        }
+        return result
+    }
+
+    /** 查找同班级是否已有完全相同节次集合的启用点名类型 */
+    fun matchingExistingType(
+        selectedIds: Set<Int>,
+        types: List<RollCallType>,
+        classId: Int,
+        excludingTypeId: Int? = null
+    ): RollCallType? {
+        if (selectedIds.isEmpty() || classId <= 0) return null
+        return types.firstOrNull { t ->
+            t.isActive &&
+                t.classId == classId &&
+                (excludingTypeId == null || t.id != excludingTypeId) &&
+                t.periodIds.isNotEmpty() &&
+                t.periodIds.toSet() == selectedIds
+        }
+    }
+
     fun suggestedName(selectedIds: Set<Int>, periods: List<ClassPeriod>): String {
         val ordered = periods.filter { it.id in selectedIds }
         if (ordered.isEmpty()) return ""
@@ -1288,6 +1356,8 @@ data class RollCallRecord(
     val studentNo: String?,
     val status: String, // pending, present, absent, on_leave
     val leaveTypeName: String?,
+    val leaveDetail: String? = null,
+    val leaveStatus: String? = null,
     val markedAt: String?,
     val markedAtLocal: String?
 ) {
@@ -1300,6 +1370,18 @@ data class RollCallRecord(
             return if (trimmed.all { it.isDigit() }) "0$trimmed" else trimmed
         }
 
+    val isPendingApprovalLeave: Boolean
+        get() = leaveStatus == "pending_leave" || (leaveDetail?.contains("待审批") == true)
+
+    val leaveTitleText: String
+        get() = leaveTypeName?.takeIf { it.isNotBlank() } ?: "请假"
+
+    val leaveDetailDisplayText: String
+        get() = leaveDetail?.trim()?.takeIf { it.isNotEmpty() } ?: leaveTitleText
+
+    val leaveStatusSummaryText: String
+        get() = if (isPendingApprovalLeave) "待审批请假（学生已申请，等待班主任审批）" else "已生效请假 / 考勤标记"
+
     companion object {
         fun fromJson(o: JsonObject): RollCallRecord {
             val st = o.objOrNull("student")
@@ -1310,6 +1392,8 @@ data class RollCallRecord(
                 studentNo = st?.str("student_no"),
                 status = o.str("status") ?: "pending",
                 leaveTypeName = o.objOrNull("leave_type")?.str("name"),
+                leaveDetail = o.str("leave_detail"),
+                leaveStatus = o.str("leave_status"),
                 markedAt = o.str("marked_at"),
                 markedAtLocal = o.str("marked_at_local")
             )

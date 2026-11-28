@@ -845,7 +845,7 @@ class LeaveRequestController extends Controller
                     ->get();
             } else {
                 $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $record->student_id)
-                    ->where('date', $record->date)
+                    ->whereDate('date', $record->date)
                     ->where('leave_type_id', $record->leave_type_id)
                     ->where('approval_status', 'pending')
                     ->where('is_self_applied', true)
@@ -1037,7 +1037,7 @@ class LeaveRequestController extends Controller
                     ->get();
             } else {
                 $relatedRecords = AttendanceRecord::withoutGlobalScope('day_attendance')->where('student_id', $record->student_id)
-                    ->where('date', $record->date)
+                    ->whereDate('date', $record->date)
                     ->where('leave_type_id', $record->leave_type_id)
                     ->where('approval_status', 'pending')
                     ->where('is_self_applied', true)
@@ -1079,9 +1079,28 @@ class LeaveRequestController extends Controller
                         'leave_type_id'    => $rcp['leave_type_id'],
                         'status'           => 'leave',
                         'approver_id'      => $user->id,
+                        'approved_at'      => now(),
                         'rejection_reason' => $request->input('reason'),
                         'details'          => $rollCallDetails,
                     ]);
+
+                    // 若点名记录此前因待审批假条锁定为 on_leave (pending_leave)，驳回后同步转回缺勤并重算请假数
+                    if (!empty($rcp['roll_call_record_id'])) {
+                        $rcRec = \App\Models\RollCallRecord::find((int) $rcp['roll_call_record_id']);
+                        if ($rcRec && $rcRec->status === 'on_leave' && $rcRec->leave_status === 'pending_leave') {
+                            $rcRec->update([
+                                'status' => 'absent',
+                                'leave_type_id' => null,
+                                'leave_detail' => null,
+                                'leave_status' => null,
+                            ]);
+                            \App\Models\RollCall::where('id', $rcRec->roll_call_id)->update([
+                                'on_leave_count' => \App\Models\RollCallRecord::where('roll_call_id', $rcRec->roll_call_id)
+                                    ->where('status', 'on_leave')
+                                    ->count(),
+                            ]);
+                        }
+                    }
                 } else {
                     $r->update([
                         'approval_status'  => 'rejected',

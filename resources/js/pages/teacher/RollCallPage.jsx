@@ -1,11 +1,83 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Layout from '../../components/Layout';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { PlusIcon, TrashIcon, PencilIcon, UserGroupIcon, ClockIcon, CheckCircleIcon, PlayIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, TrashIcon, PencilIcon, UserGroupIcon, ClockIcon, CheckCircleIcon, PlayIcon, AcademicCapIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 import { Link, useNavigate } from 'react-router-dom';
 import useAuthStore from '../../store/authStore';
+
+// 方案 B 工具函数：区分固定活动节次（早读/早操/晚操）与正课节次（第1~N节）
+function isFixedActivityPeriod(period) {
+    if (!period) return false;
+    if ((period.type || '').trim().toLowerCase() === 'special') return true;
+    const name = (period.name || '').trim();
+    if (/^第\d+节$/.test(name)) return false;
+    return ['早读', '早操', '晚操', '晨读', '升旗', '集会', '跑操', '眼保健操'].some((kw) => name.includes(kw));
+}
+
+function normalizeActivityName(raw) {
+    return (raw || '').trim().replace(/点名$/, '').trim();
+}
+
+function getOccupiedFixedPeriodIdsForClass(types, classId, excludingTypeId, periods) {
+    const cid = parseInt(classId, 10);
+    if (!cid || Number.isNaN(cid)) return new Set();
+    const classTypes = types.filter(
+        (t) => (t.is_active ?? true) && parseInt(t.class_id, 10) === cid && (!excludingTypeId || t.id !== excludingTypeId)
+    );
+    const result = new Set();
+    for (const p of periods) {
+        if (!isFixedActivityPeriod(p)) continue;
+        const pid = parseInt(p.id, 10);
+        const pNorm = normalizeActivityName(p.name);
+        const occupied = classTypes.some((t) => {
+            const pids = (t.period_ids || []).map((id) => parseInt(id, 10));
+            if (pids.includes(pid)) return true;
+            if (pids.length === 0 && pNorm) {
+                const tNorm = normalizeActivityName(t.name);
+                if (tNorm === pNorm || tNorm.includes(pNorm)) return true;
+            }
+            return false;
+        });
+        if (occupied) result.add(pid);
+    }
+    return result;
+}
+
+function findMatchingExistingType(selectedPeriodIds, types, classId, excludingTypeId) {
+    const cid = parseInt(classId, 10);
+    if (!selectedPeriodIds || selectedPeriodIds.length === 0 || !cid || Number.isNaN(cid)) return null;
+    const selectedSet = new Set(selectedPeriodIds.map((id) => parseInt(id, 10)));
+    return types.find((t) => {
+        if (!(t.is_active ?? true)) return false;
+        if (parseInt(t.class_id, 10) !== cid) return false;
+        if (excludingTypeId && t.id === excludingTypeId) return false;
+        const pids = (t.period_ids || []).map((id) => parseInt(id, 10));
+        if (pids.length !== selectedSet.size) return false;
+        return pids.every((id) => selectedSet.has(id));
+    }) || null;
+}
+
+function suggestCourseRollCallName(selectedPeriodIds, periods) {
+    const selectedSet = new Set((selectedPeriodIds || []).map((id) => parseInt(id, 10)));
+    const ordered = periods.filter((p) => selectedSet.has(parseInt(p.id, 10)));
+    if (ordered.length === 0) return '';
+    if (ordered.length === 1) {
+        const n = (ordered[0].name || '').trim();
+        return n.endsWith('点名') ? n : `${n}点名`;
+    }
+    const nums = ordered.map((p) => {
+        const m = (p.name || '').trim().match(/^第(\d+)节$/);
+        return m ? parseInt(m[1], 10) : null;
+    });
+    if (nums.every((n) => n !== null)) {
+        const sorted = [...nums].sort((a, b) => a - b);
+        const contiguous = sorted.every((val, idx) => idx === 0 || val === sorted[idx - 1] + 1);
+        return contiguous ? `第${sorted[0]}-${sorted[sorted.length - 1]}节点名` : `第${sorted.join('、')}节点名`;
+    }
+    return `${ordered.map((p) => p.name).join('、')}点名`;
+}
 
 export default function RollCallPage() {
     const navigate = useNavigate();
@@ -23,6 +95,19 @@ export default function RollCallPage() {
     const [leaveTypes, setLeaveTypes] = useState([]);
     const [periods, setPeriods] = useState([]);  // 节次列表
     const [selectedPeriodIds, setSelectedPeriodIds] = useState([]);  // 选中的节次ID（多选）
+    const [formClassId, setFormClassId] = useState(null);
+    const [formName, setFormName] = useState('');
+    const [lastAutoFormName, setLastAutoFormName] = useState('');
+    // 本次课程点名（单次事件，不加入常用活动类型）
+    const [showCourseModal, setShowCourseModal] = useState(false);
+    const [courseClassId, setCourseClassId] = useState(null);
+    const [coursePeriodIds, setCoursePeriodIds] = useState([]);
+    const [courseName, setCourseName] = useState('');
+    const [lastAutoCourseName, setLastAutoCourseName] = useState('');
+    const [courseAbsentStatus, setCourseAbsentStatus] = useState('absent');
+    const [courseLeaveTypeId, setCourseLeaveTypeId] = useState('');
+    const [courseNotes, setCourseNotes] = useState('');
+    const [courseLoading, setCourseLoading] = useState(false);
     // For department manager batch selection
     const [showBatchModal, setShowBatchModal] = useState(false);
     const [batchTypeId, setBatchTypeId] = useState(null);
@@ -77,6 +162,103 @@ export default function RollCallPage() {
     // State for batch type creation (department manager)
     const [batchTypeMode, setBatchTypeMode] = useState(false);
     const [batchTypeClassIds, setBatchTypeClassIds] = useState([]);
+
+    const effectiveFormClassId = editingType?.class_id || formClassId || selectedClassId || classes[0]?.id || null;
+
+    // 长期活动类型表单：方案 B 已占用固定活动节次
+    const formOccupiedFixedPeriodIds = useMemo(() => {
+        if ((batchTypeMode && isDepartmentManager) || editingType?._isGroup) {
+            if (batchTypeClassIds.length === 0) return new Set();
+            const excludingId = editingType?._isGroup ? null : editingType?.id;
+            const sets = batchTypeClassIds.map((cid) => {
+                const matchGroupItem = editingType?._groupTypes?.find((gt) => parseInt(gt.class_id, 10) === parseInt(cid, 10));
+                return getOccupiedFixedPeriodIdsForClass(rollCallTypes, cid, matchGroupItem?.id || excludingId, periods);
+            });
+            // 仅当所选全部班级都已占用该固定活动时才禁用
+            return new Set([...sets[0]].filter((pid) => sets.every((s) => s.has(pid))));
+        }
+        return getOccupiedFixedPeriodIdsForClass(rollCallTypes, effectiveFormClassId, editingType?.id, periods);
+    }, [rollCallTypes, effectiveFormClassId, editingType, periods, batchTypeMode, isDepartmentManager, batchTypeClassIds]);
+
+    const formMatchedExistingType = useMemo(() => {
+        if ((batchTypeMode && isDepartmentManager) || editingType?._isGroup) return null;
+        return findMatchingExistingType(selectedPeriodIds, rollCallTypes, effectiveFormClassId, editingType?.id);
+    }, [selectedPeriodIds, rollCallTypes, effectiveFormClassId, editingType, batchTypeMode, isDepartmentManager]);
+
+    // 本次课程点名弹窗：方案 B 已占用固定活动节次（正课第1~N节永远开放重新自由选择）
+    const courseOccupiedFixedPeriodIds = useMemo(
+        () => getOccupiedFixedPeriodIdsForClass(rollCallTypes, courseClassId, null, periods),
+        [rollCallTypes, courseClassId, periods]
+    );
+
+    const openCourseRollCallModal = () => {
+        const defaultCid = selectedClassId || classes[0]?.id || null;
+        setCourseClassId(defaultCid);
+        setCoursePeriodIds([]);
+        setCourseName('');
+        setLastAutoCourseName('');
+        setCourseAbsentStatus('absent');
+        setCourseLeaveTypeId('');
+        setCourseNotes('');
+        setShowCourseModal(true);
+    };
+
+    const handleCourseClassChange = (newClassId) => {
+        const cid = parseInt(newClassId, 10);
+        setCourseClassId(cid);
+        const occupied = getOccupiedFixedPeriodIdsForClass(rollCallTypes, cid, null, periods);
+        setCoursePeriodIds((prev) => {
+            const next = prev.filter((id) => !occupied.has(parseInt(id, 10)));
+            const trimmed = courseName.trim();
+            if (trimmed === '' || trimmed === lastAutoCourseName) {
+                const suggested = suggestCourseRollCallName(next, periods);
+                setCourseName(suggested);
+                setLastAutoCourseName(suggested);
+            }
+            return next;
+        });
+    };
+
+    const handleStartOneOffCourseRollCall = async (e) => {
+        e.preventDefault();
+        const cleanName = courseName.trim();
+        if (!courseClassId) {
+            alert('请选择班级');
+            return;
+        }
+        if (!cleanName) {
+            alert('请勾选课程节次或输入活动名称');
+            return;
+        }
+        setCourseLoading(true);
+        try {
+            const orderedPeriods = periods
+                .filter((p) => coursePeriodIds.includes(parseInt(p.id, 10)))
+                .map((p) => parseInt(p.id, 10));
+            const typePayload = {
+                class_id: parseInt(courseClassId, 10),
+                name: cleanName,
+                absent_status: courseAbsentStatus || 'absent',
+                period_ids: orderedPeriods.length > 0 ? orderedPeriods : null,
+                is_active: false, // 仅对本次事件生效，不污染常用活动类型列表
+            };
+            if (courseLeaveTypeId) {
+                typePayload.leave_type_id = parseInt(courseLeaveTypeId, 10);
+            }
+            const typeRes = await axios.post('/roll-call-types', typePayload);
+            const rcRes = await axios.post('/roll-calls', {
+                roll_call_type_id: typeRes.data.id,
+                roll_call_time: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+                notes: courseNotes.trim() || null,
+            });
+            setShowCourseModal(false);
+            navigate(`/roll-call/${rcRes.data.id}`);
+        } catch (err) {
+            alert('发起失败: ' + (err.response?.data?.error || err.response?.data?.message || err.message));
+        } finally {
+            setCourseLoading(false);
+        }
+    };
 
     const handleTypeSubmit = async (e) => {
         e.preventDefault();
@@ -331,11 +513,25 @@ export default function RollCallPage() {
                                         <span className="hidden sm:inline">点名员</span>
                                     </Link>
                                     <button
-                                        onClick={() => { setEditingType(null); setSelectedPeriodIds([]); setShowTypeForm(true); }}
+                                        onClick={openCourseRollCallModal}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors"
+                                    >
+                                        <AcademicCapIcon className="h-4 w-4" />
+                                        <span className="hidden sm:inline">课程点名(本次)</span>
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setEditingType(null);
+                                            setFormClassId(selectedClassId || classes[0]?.id || null);
+                                            setFormName('');
+                                            setLastAutoFormName('');
+                                            setSelectedPeriodIds([]);
+                                            setShowTypeForm(true);
+                                        }}
                                         className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
                                     >
                                         <PlusIcon className="h-4 w-4" />
-                                        <span className="hidden sm:inline">新增</span>
+                                        <span className="hidden sm:inline">新增类型</span>
                                     </button>
                                 </>
                             )}
@@ -350,8 +546,9 @@ export default function RollCallPage() {
                                     <input
                                         required
                                         name="name"
-                                        defaultValue={editingType?.name}
-                                        placeholder="早操点名"
+                                        value={formName}
+                                        onChange={(e) => setFormName(e.target.value)}
+                                        placeholder="如：第1-2节点名 / 早操点名"
                                         className="input-field"
                                     />
                                     {editingType?._isGroup && (
@@ -428,7 +625,18 @@ export default function RollCallPage() {
                                             </div>
                                         </div>
                                     ) : (
-                                        <select name="class_id" defaultValue={editingType?.class_id || selectedClassId} className="input-field">
+                                        <select
+                                            name="class_id"
+                                            value={effectiveFormClassId || ''}
+                                            onChange={(e) => {
+                                                const cid = parseInt(e.target.value, 10);
+                                                setFormClassId(cid);
+                                                const occ = getOccupiedFixedPeriodIdsForClass(rollCallTypes, cid, editingType?.id, periods);
+                                                setSelectedPeriodIds((prev) => prev.filter((id) => !occ.has(parseInt(id, 10))));
+                                            }}
+                                            disabled={!!editingType}
+                                            className="input-field"
+                                        >
                                             {classes.map(c => (
                                                 <option key={c.id} value={c.id}>{c.name}</option>
                                             ))}
@@ -479,38 +687,60 @@ export default function RollCallPage() {
                                     </label>
                                     <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
                                         {periods.map((p) => {
-                                            const isSelected = selectedPeriodIds.some(id => parseInt(id) === parseInt(p.id));
+                                            const periodId = parseInt(p.id, 10);
+                                            const isDisabled = formOccupiedFixedPeriodIds.has(periodId);
+                                            const isSelected = !isDisabled && selectedPeriodIds.some(id => parseInt(id, 10) === periodId);
                                             return (
                                                 <label
                                                     key={p.id}
-                                                    className={`flex items-center justify-center p-2 border rounded cursor-pointer transition-colors text-sm ${isSelected
-                                                        ? 'bg-indigo-100 border-indigo-500 text-indigo-700'
-                                                        : 'hover:bg-gray-50 border-gray-200'
+                                                    title={isDisabled ? `本班已有「${p.name}」固定点名类型，不可重复选择` : p.name}
+                                                    className={`flex flex-col items-center justify-center p-2 border rounded transition-colors text-sm ${isDisabled
+                                                        ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                                                        : isSelected
+                                                            ? 'bg-indigo-100 border-indigo-500 text-indigo-700 cursor-pointer font-medium'
+                                                            : 'hover:bg-gray-50 border-gray-200 cursor-pointer'
                                                         }`}
                                                 >
                                                     <input
                                                         type="checkbox"
                                                         className="sr-only"
+                                                        disabled={isDisabled}
                                                         checked={isSelected}
                                                         onChange={() => {
-                                                            const periodId = parseInt(p.id);
-                                                            setSelectedPeriodIds(prev =>
-                                                                prev.some(id => parseInt(id) === periodId)
-                                                                    ? prev.filter(id => parseInt(id) !== periodId)
-                                                                    : [...prev, periodId]
-                                                            );
+                                                            if (isDisabled) return;
+                                                            setSelectedPeriodIds(prev => {
+                                                                const next = prev.some(id => parseInt(id, 10) === periodId)
+                                                                    ? prev.filter(id => parseInt(id, 10) !== periodId)
+                                                                    : [...prev, periodId];
+                                                                if (!editingType) {
+                                                                    const trimmed = formName.trim();
+                                                                    if (trimmed === '' || trimmed === lastAutoFormName) {
+                                                                        const suggested = suggestCourseRollCallName(next, periods);
+                                                                        setFormName(suggested);
+                                                                        setLastAutoFormName(suggested);
+                                                                    }
+                                                                }
+                                                                return next;
+                                                            });
                                                         }}
                                                     />
-                                                    {p.name}
+                                                    <span>{p.name}</span>
+                                                    {isDisabled && <span className="text-[10px] text-gray-400 leading-tight mt-0.5">已有</span>}
                                                 </label>
                                             );
                                         })}
                                     </div>
+                                    {formMatchedExistingType && (
+                                        <div className="mt-2 flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-md px-2.5 py-1.5">
+                                            <InformationCircleIcon className="h-4 w-4 flex-shrink-0" />
+                                            <span>本班已有同节次类型「{formMatchedExistingType.name}」，可直接使用原类型或改名另建。</span>
+                                        </div>
+                                    )}
                                     {periods.length === 0 && (
                                         <p className="text-sm text-gray-400">暂无节次配置，请在系统设置中添加</p>
                                     )}
                                     <p className="text-xs text-gray-400 mt-2">
-                                        已选 {selectedPeriodIds.length} 个节次，缺勤时将生成对应的考勤记录
+                                        已选 {selectedPeriodIds.length} 个节次；本班已有固定活动（如早读/早操/晚操）自动置灰不可重复选择，正课节次可自由组合。
                                     </p>
                                 </div>
                                 <label className="flex items-center col-span-2">
@@ -565,10 +795,12 @@ export default function RollCallPage() {
                                                     // Edit group - enter batch mode with existing classes
                                                     const firstType = group.types[0];
                                                     setEditingType({ ...firstType, _isGroup: true, _groupTypes: group.types });
+                                                    setFormName(firstType.name || '');
+                                                    setLastAutoFormName('');
                                                     setBatchTypeMode(true);
                                                     setBatchTypeClassIds(group.classIds);
                                                     // 确保 period_ids 转换为整数数组
-                                                    setSelectedPeriodIds((firstType.period_ids || []).map(id => parseInt(id)));
+                                                    setSelectedPeriodIds((firstType.period_ids || []).map(id => parseInt(id, 10)));
                                                     setShowTypeForm(true);
                                                 }}
                                                 className="text-indigo-600 hover:text-indigo-800 p-1"
@@ -646,8 +878,11 @@ export default function RollCallPage() {
                                                 <button
                                                     onClick={() => {
                                                         setEditingType(type);
+                                                        setFormClassId(type.class_id);
+                                                        setFormName(type.name || '');
+                                                        setLastAutoFormName('');
                                                         // 确保 period_ids 转换为整数数组
-                                                        setSelectedPeriodIds((type.period_ids || []).map(id => parseInt(id)));
+                                                        setSelectedPeriodIds((type.period_ids || []).map(id => parseInt(id, 10)));
                                                         setShowTypeForm(true);
                                                     }}
                                                     className="text-indigo-600 hover:text-indigo-800 p-1"
@@ -677,6 +912,168 @@ export default function RollCallPage() {
                     )}
                 </div>
             </div>
+
+            {/* One-off Course Roll Call Modal (方案 B: 仅本次有效，下次重新选择节次) */}
+            {showCourseModal && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+                    onClick={() => !courseLoading && setShowCourseModal(false)}
+                >
+                    <form
+                        onSubmit={handleStartOneOffCourseRollCall}
+                        onClick={(e) => e.stopPropagation()}
+                        className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[88vh] overflow-y-auto"
+                    >
+                        <div className="px-6 py-4 border-b flex items-center justify-between">
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">发起本次课程点名</h3>
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                    仅针对本次点名生效，不会添加到常用活动类型；明天或下次点名可重新自由选择节次
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowCourseModal(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <XMarkIcon className="h-5 w-5" />
+                            </button>
+                        </div>
+
+                        <div className="px-6 py-4 space-y-4">
+                            {classes.length > 1 && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">班级</label>
+                                    <select
+                                        value={courseClassId || ''}
+                                        onChange={(e) => handleCourseClassChange(e.target.value)}
+                                        className="input-field"
+                                    >
+                                        {classes.map((c) => (
+                                            <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    选择本次课程节次
+                                    <span className="text-gray-400 font-normal ml-1">(可多选，用于同步请假与考勤)</span>
+                                </label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {periods.map((p) => {
+                                        const pid = parseInt(p.id, 10);
+                                        const isDisabled = courseOccupiedFixedPeriodIds.has(pid);
+                                        const isSelected = !isDisabled && coursePeriodIds.includes(pid);
+                                        return (
+                                            <button
+                                                key={p.id}
+                                                type="button"
+                                                disabled={isDisabled}
+                                                title={isDisabled ? `本班已有「${p.name}」固定类型，请直接从活动类型列表发起点名` : p.name}
+                                                onClick={() => {
+                                                    if (isDisabled) return;
+                                                    setCoursePeriodIds((prev) => {
+                                                        const next = prev.includes(pid) ? prev.filter((id) => id !== pid) : [...prev, pid];
+                                                        const trimmed = courseName.trim();
+                                                        if (trimmed === '' || trimmed === lastAutoCourseName) {
+                                                            const suggested = suggestCourseRollCallName(next, periods);
+                                                            setCourseName(suggested);
+                                                            setLastAutoCourseName(suggested);
+                                                        }
+                                                        return next;
+                                                    });
+                                                }}
+                                                className={`flex flex-col items-center justify-center p-2 border rounded-lg transition-colors text-sm ${isDisabled
+                                                    ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                                                    : isSelected
+                                                        ? 'bg-indigo-100 border-indigo-500 text-indigo-700 font-medium'
+                                                        : 'hover:bg-gray-50 border-gray-200 text-gray-700'
+                                                    }`}
+                                            >
+                                                <span>{p.name}</span>
+                                                {isDisabled && <span className="text-[10px] text-gray-400 leading-tight mt-0.5">已有</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <p className="text-xs text-gray-400 mt-1.5">
+                                    已选 {coursePeriodIds.length} 个节次；早读/早操/晚操等本班已有固定活动置灰不可重复选，正课节次每次可自由重选。
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">本次点名名称</label>
+                                <input
+                                    required
+                                    value={courseName}
+                                    onChange={(e) => setCourseName(e.target.value)}
+                                    placeholder="如：第1-2节点名 / 专业课点名"
+                                    className="input-field"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">未到标记为</label>
+                                    <select
+                                        value={courseAbsentStatus}
+                                        onChange={(e) => setCourseAbsentStatus(e.target.value)}
+                                        className="input-field"
+                                    >
+                                        <option value="absent">旷课</option>
+                                        <option value="late">迟到</option>
+                                        <option value="leave">请假</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">关联请假类型(可选)</label>
+                                    <select
+                                        value={courseLeaveTypeId}
+                                        onChange={(e) => setCourseLeaveTypeId(e.target.value)}
+                                        className="input-field"
+                                    >
+                                        <option value="">不关联</option>
+                                        {leaveTypes.map((lt) => (
+                                            <option key={lt.id} value={lt.id}>{lt.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">备注 (可选)</label>
+                                <input
+                                    value={courseNotes}
+                                    onChange={(e) => setCourseNotes(e.target.value)}
+                                    placeholder="可选备注"
+                                    className="input-field"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowCourseModal(false)}
+                                disabled={courseLoading}
+                                className="btn-secondary"
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={courseLoading || !courseName.trim() || !courseClassId}
+                                className="btn-primary flex items-center gap-1"
+                            >
+                                <PlayIcon className="h-4 w-4" />
+                                {courseLoading ? '创建中...' : '立即开始本次点名'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
 
             {/* Batch Selection Modal for Department Manager */}
             {showBatchModal && (

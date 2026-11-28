@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -88,6 +89,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
@@ -342,6 +345,22 @@ private fun StartRollCallDialog(
 
     val selectedType = types.firstOrNull { it.id == selectedTypeId }
     val absentOptions = listOf("absent" to "旷课", "late" to "迟到", "leave" to "请假")
+    // 方案 B：当前班级已有固定活动（早读/早操/晚操）置灰不可选，正课第1~N节每次重新自由选择
+    val occupiedFixedIds = remember(types, selectedClassId, periods) {
+        RollCallPeriodNamingHelper.occupiedFixedPeriodIds(types, selectedClassId, null, periods)
+    }
+    LaunchedEffect(occupiedFixedIds) {
+        val cleaned = selectedPeriodIds - occupiedFixedIds
+        if (cleaned != selectedPeriodIds) {
+            selectedPeriodIds = cleaned
+            val trimmed = courseName.trim()
+            if (trimmed.isEmpty() || trimmed == lastAutoName) {
+                val suggested = RollCallPeriodNamingHelper.suggestedName(cleaned, periods)
+                courseName = suggested
+                lastAutoName = suggested
+            }
+        }
+    }
     val canSubmit = !creating && if (mode == 0) selectedTypeId > 0 else (selectedClassId > 0 && courseName.isNotBlank())
 
     AlertDialog(
@@ -356,7 +375,7 @@ private fun StartRollCallDialog(
 
                 if (user.isTeacherOrAdmin) {
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        listOf("已有类型", "新建课程点名").forEachIndexed { idx, label ->
+                        listOf("已有类型", "本次课程点名").forEachIndexed { idx, label ->
                             SegmentedButton(
                                 selected = mode == idx,
                                 onClick = { mode = idx },
@@ -368,7 +387,7 @@ private fun StartRollCallDialog(
 
                 if (mode == 0) {
                     if (types.isEmpty()) {
-                        Text("暂无已有活动类型，请切换到「新建课程点名」创建。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("暂无已有活动类型，请切换到「本次课程点名」发起。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         Box {
                             OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) {
@@ -388,7 +407,7 @@ private fun StartRollCallDialog(
                         }
                     }
                 } else {
-                    Text("选择课程节次（可多选，用于考勤统计）", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    Text("选择本次课程节次（可多选，用于考勤统计）", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                     if (periods.isEmpty()) {
                         Text("暂未读取到节次配置，可直接输入课程名称。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
@@ -397,10 +416,13 @@ private fun StartRollCallDialog(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             periods.forEach { p ->
-                                val chosen = p.id in selectedPeriodIds
+                                val isDisabled = p.id in occupiedFixedIds
+                                val chosen = !isDisabled && p.id in selectedPeriodIds
                                 FilterChip(
                                     selected = chosen,
+                                    enabled = !isDisabled,
                                     onClick = {
+                                        if (isDisabled) return@FilterChip
                                         val next = if (chosen) selectedPeriodIds - p.id else selectedPeriodIds + p.id
                                         selectedPeriodIds = next
                                         val trimmed = courseName.trim()
@@ -410,10 +432,20 @@ private fun StartRollCallDialog(
                                             lastAutoName = suggested
                                         }
                                     },
-                                    label = { Text(p.name, style = MaterialTheme.typography.labelMedium) }
+                                    label = {
+                                        Text(
+                                            if (isDisabled) "${p.name} · 已有" else p.name,
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
                                 )
                             }
                         }
+                        Text(
+                            "已选 ${selectedPeriodIds.size} 个节次。早读/早操/晚操等本班已有固定活动不可重复选；本次选择仅用于当前点名，不会加入常用类型，明天或下次可重新自由选择。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
                     OutlinedTextField(
@@ -473,17 +505,13 @@ private fun StartRollCallDialog(
                             } else {
                                 val cleanName = courseName.trim()
                                 val orderedPeriods = periods.filter { it.id in selectedPeriodIds }.map { it.id }
-                                val reusable = types.firstOrNull {
-                                    it.classId == selectedClassId &&
-                                        it.name.trim() == cleanName &&
-                                        it.periodIds.toSet() == orderedPeriods.toSet()
-                                }
-                                reusable?.id ?: repo.createRollCallType(
+                                // 本次课程点名：使用 isActive = false 的单次事件类型，不污染「已有类型」列表
+                                repo.createRollCallType(
                                     classId = selectedClassId,
                                     name = cleanName,
                                     absentStatus = absentStatus,
                                     periodIds = orderedPeriods,
-                                    isActive = true
+                                    isActive = false
                                 ).id
                             }
                             val rc = repo.startRollCall(
@@ -496,7 +524,7 @@ private fun StartRollCallDialog(
                         creating = false
                     }
                 }
-            ) { Text(if (creating) "创建中..." else if (mode == 0) "立即开始" else "创建并开始") }
+            ) { Text(if (creating) "创建中..." else if (mode == 0) "立即开始" else "发起本次点名") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
@@ -515,6 +543,8 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     val columnCount by container.prefs.rollCallColumnsFlow.collectAsStateWithLifecycle(initialValue = 2)
+    val currentUser by container.sessionManager.currentUser.collectAsStateWithLifecycle()
+    val isTeacherOrAdmin = currentUser?.isTeacherOrAdmin == true
     var rollCall by remember { mutableStateOf<RollCall?>(null) }
     var records by remember { mutableStateOf<List<RollCallRecord>>(emptyList()) }
     var searchText by remember { mutableStateOf("") }
@@ -526,6 +556,7 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
     var colsMenuOpen by remember { mutableStateOf(false) }
     var confirmComplete by remember { mutableStateOf(false) }
     var editingCompleted by remember { mutableStateOf<RollCallRecord?>(null) }
+    var inspectingLeaveRecord by remember { mutableStateOf<RollCallRecord?>(null) }
     var leaveTypes by remember { mutableStateOf<List<LeaveType>>(emptyList()) }
 
     val isInProgress = rollCall?.status == "in_progress"
@@ -788,9 +819,11 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                     items(filtered, key = { it.id }) { rec ->
                         val compact = columnCount >= 3
                         val isPresent = rec.status == "present"
+                        val isOnLeave = rec.status == "on_leave"
+                        val isPendingLeave = isOnLeave && rec.isPendingApprovalLeave
                         val tileColor = when (rec.status) {
                             "present" -> Color(0xFF16A34A)
-                            "on_leave" -> Color(0xFF2563EB)
+                            "on_leave" -> if (isPendingLeave) Color(0xFFEA580C) else Color(0xFF2563EB)
                             "absent" -> Color(0xFFDC2626)
                             else -> Color(0xFF64748B)
                         }
@@ -799,12 +832,16 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                             color = when {
                                 isPresent -> Color(0xFF16A34A)
                                 rec.status == "pending" -> MaterialTheme.colorScheme.surface
-                                else -> tileColor.copy(alpha = 0.14f)
+                                else -> tileColor.copy(alpha = 0.12f)
                             },
                             border = BorderStroke(1.2.dp, tileColor.copy(alpha = if (rec.status == "pending") 0.25f else 0.6f)),
                             modifier = Modifier.fillMaxWidth().clickable {
+                                // 请假/考勤标记学生：点名员严格只读不可修改，点击统一弹出「请假与去向详情」查看完整事由/备注
+                                if (isOnLeave) {
+                                    inspectingLeaveRecord = rec
+                                    return@clickable
+                                }
                                 if (isInProgress) {
-                                    if (rec.status == "on_leave") return@clickable
                                     val nextPresent = rec.status != "present"
                                     val iso = if (nextPresent) SCDateFormatter.nowIso() else null
                                     val local = if (nextPresent) SCDateFormatter.nowHhmm() else null
@@ -823,7 +860,7 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                 }
                             }
                         ) {
-                            Box(modifier = Modifier.fillMaxWidth().height(if (compact) 62.dp else 78.dp)) {
+                            Box(modifier = Modifier.fillMaxWidth().heightIn(min = if (compact) 68.dp else 82.dp)) {
                                 rec.shortStudentNo?.let { shortNo ->
                                     Text(
                                         text = shortNo,
@@ -832,7 +869,7 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                         fontWeight = FontWeight.Black,
                                         color = when {
                                             isPresent -> Color.White.copy(alpha = 0.26f)
-                                            rec.status == "on_leave" -> Color(0xFF2563EB).copy(alpha = 0.22f)
+                                            isOnLeave -> tileColor.copy(alpha = 0.18f)
                                             rec.status == "absent" -> Color(0xFFDC2626).copy(alpha = 0.22f)
                                             else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
                                         },
@@ -843,17 +880,31 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                     )
                                 }
                                 Column(
-                                    modifier = Modifier.fillMaxSize().padding(if (compact) 10.dp else 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(if (compact) 9.dp else 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp)
                                 ) {
-                                    Text(
-                                        rec.studentName,
-                                        fontSize = if (compact) 13.sp else 15.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isPresent) Color.White else MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            rec.studentName,
+                                            fontSize = if (compact) 13.sp else 15.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (isPresent) Color.White else MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        if (isOnLeave) {
+                                            Icon(
+                                                Icons.Rounded.Lock,
+                                                contentDescription = "请假已锁定",
+                                                tint = tileColor,
+                                                modifier = Modifier.size(if (compact) 11.dp else 13.dp)
+                                            )
+                                        }
+                                    }
                                     if (!compact && !rec.studentNo.isNullOrBlank()) {
                                         Text(
                                             rec.studentNo,
@@ -862,15 +913,14 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                             maxLines = 1
                                         )
                                     }
-                                    Spacer(Modifier.weight(1f))
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         Text(
                                             when (rec.status) {
                                                 "present" -> rec.markedAtLocal ?: "已到"
-                                                "on_leave" -> rec.leaveTypeName ?: "请假"
+                                                "on_leave" -> rec.leaveTitleText
                                                 "absent" -> "缺勤"
                                                 else -> "未点"
                                             },
@@ -879,6 +929,20 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                             color = if (isPresent) Color.White else tileColor,
                                             maxLines = 1
                                         )
+                                        if (isPendingLeave) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color(0xFFEA580C).copy(alpha = 0.18f)
+                                            ) {
+                                                Text(
+                                                    "待审批",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFFEA580C),
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                        }
                                         if (isPresent) {
                                             Icon(
                                                 Icons.Rounded.CheckCircle,
@@ -887,6 +951,16 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                                                 modifier = Modifier.size(if (compact) 12.dp else 13.dp)
                                             )
                                         }
+                                    }
+                                    if (isOnLeave) {
+                                        Text(
+                                            rec.leaveDetailDisplayText,
+                                            fontSize = if (compact) 10.sp else 11.sp,
+                                            lineHeight = if (compact) 13.sp else 15.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = if (compact) 2 else 3,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
                                 }
                             }
@@ -920,6 +994,75 @@ fun RollCallOperationScreen(rollCallId: Int, onBack: () -> Unit) {
                 }) { Text("确认提交", fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton(onClick = { confirmComplete = false }) { Text("取消") } }
+        )
+    }
+
+    inspectingLeaveRecord?.let { rec ->
+        val accent = if (rec.isPendingApprovalLeave) Color(0xFFEA580C) else Color(0xFF2563EB)
+        AlertDialog(
+            onDismissRequest = { inspectingLeaveRecord = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Rounded.Lock, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
+                    Text("学生请假与去向详情")
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(rec.studentName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            rec.studentNo?.takeIf { it.isNotBlank() }?.let {
+                                Text("学号：$it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        StatusBadge(
+                            if (rec.isPendingApprovalLeave) "待审批请假" else rec.leaveTitleText,
+                            accent
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = accent.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, accent.copy(alpha = 0.25f))
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text("请假事由 / 备注与去向", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(rec.leaveDetailDisplayText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(rec.leaveStatusSummaryText, style = MaterialTheme.typography.labelSmall, color = accent)
+                        }
+                    }
+                    Text(
+                        if (isTeacherOrAdmin)
+                            "该生在当前节次已有请假申请或考勤标记，点名过程中自动锁定以防误操作。"
+                        else
+                            "该生在当前节次已有请假申请或考勤标记，点名员仅可查看去向，不可修改状态。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { inspectingLeaveRecord = null }) {
+                    Text("知道了", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = if (!isInProgress && canModifyCompleted && isTeacherOrAdmin) {
+                {
+                    TextButton(onClick = {
+                        inspectingLeaveRecord = null
+                        editingCompleted = rec
+                    }) {
+                        Text("教师调整状态")
+                    }
+                }
+            } else null
         )
     }
 
@@ -1254,6 +1397,7 @@ fun RollCallTypesManageScreen(
         RollCallTypeEditorDialog(
             user = user,
             editing = editingType,
+            existingTypes = types,
             classes = classes,
             periods = periods,
             leaveTypes = leaveTypes,
@@ -1273,6 +1417,7 @@ fun RollCallTypesManageScreen(
 private fun RollCallTypeEditorDialog(
     user: User,
     editing: RollCallType?,
+    existingTypes: List<RollCallType>,
     classes: List<ClassOptionItem>,
     periods: List<ClassPeriod>,
     leaveTypes: List<LeaveType>,
@@ -1302,6 +1447,29 @@ private fun RollCallTypeEditorDialog(
 
     val absentOptions = listOf("absent" to "旷课", "late" to "迟到", "leave" to "请假")
     val canBatch = editing == null && classes.size > 1 && user.isAdminTier
+    val occupiedFixedIds = remember(existingTypes, selectedClassId, batchMode, batchClassIds, editing?.id, periods) {
+        if (batchMode) {
+            if (batchClassIds.isEmpty()) emptySet()
+            else {
+                val sets = batchClassIds.map { cid ->
+                    RollCallPeriodNamingHelper.occupiedFixedPeriodIds(existingTypes, cid, editing?.id, periods)
+                }
+                sets.drop(1).fold(sets.first()) { acc, s -> acc intersect s }
+            }
+        } else {
+            RollCallPeriodNamingHelper.occupiedFixedPeriodIds(existingTypes, selectedClassId, editing?.id, periods)
+        }
+    }
+    val matchedExistingType = remember(selectedPeriodIds, existingTypes, selectedClassId, batchMode, editing?.id) {
+        if (batchMode) null
+        else RollCallPeriodNamingHelper.matchingExistingType(selectedPeriodIds, existingTypes, selectedClassId, editing?.id)
+    }
+    LaunchedEffect(occupiedFixedIds) {
+        val cleaned = selectedPeriodIds - occupiedFixedIds
+        if (cleaned != selectedPeriodIds) {
+            selectedPeriodIds = cleaned
+        }
+    }
     val canSubmit = !saving && name.isNotBlank() && (editing != null || (if (batchMode) batchClassIds.isNotEmpty() else selectedClassId > 0))
 
     AlertDialog(
@@ -1323,10 +1491,13 @@ private fun RollCallTypeEditorDialog(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         periods.forEach { p ->
-                            val chosen = p.id in selectedPeriodIds
+                            val isDisabled = p.id in occupiedFixedIds
+                            val chosen = !isDisabled && p.id in selectedPeriodIds
                             FilterChip(
                                 selected = chosen,
+                                enabled = !isDisabled,
                                 onClick = {
+                                    if (isDisabled) return@FilterChip
                                     val next = if (chosen) selectedPeriodIds - p.id else selectedPeriodIds + p.id
                                     selectedPeriodIds = next
                                     if (editing == null) {
@@ -1338,10 +1509,40 @@ private fun RollCallTypeEditorDialog(
                                         }
                                     }
                                 },
-                                label = { Text(p.name, style = MaterialTheme.typography.labelMedium) }
+                                label = {
+                                    Text(
+                                        if (isDisabled) "${p.name} · 已有" else p.name,
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
                             )
                         }
                     }
+                    matchedExistingType?.let { dup ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF2563EB).copy(alpha = 0.08f),
+                            border = BorderStroke(1.dp, Color(0xFF2563EB).copy(alpha = 0.25f))
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Rounded.Info, contentDescription = null, tint = Color(0xFF2563EB), modifier = Modifier.size(16.dp))
+                                Text(
+                                    "本班已有同节次类型「${dup.name}」，可复用原类型或改名另建。",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF2563EB)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        "已选 ${selectedPeriodIds.size} 个节次；本班已有固定活动（如早读/早操/晚操）已置灰不可重复选，正课节次可自由组合。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 OutlinedTextField(

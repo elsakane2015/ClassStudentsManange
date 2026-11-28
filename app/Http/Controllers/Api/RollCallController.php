@@ -542,12 +542,12 @@ class RollCallController extends Controller
 
             $type = $rollCall->rollCallType;
 
-            // 实时检查请假状态，若学生请假已被批准则更新为 on_leave，避免误标记为旷课
+            // 实时检查请假状态，若学生有待审批/已批准请假或教师考勤标记则更新为 on_leave，避免误标记为旷课
             foreach ($rollCall->records as $rRecord) {
                 $student = $rRecord->student;
-                if (!$student || $rRecord->status === 'on_leave') continue;
+                if (!$student) continue;
                 $leaveInfo = $this->getStudentLeaveInfo($student, $rollCall->roll_call_time, $type, $rollCall->id);
-                if ($leaveInfo) {
+                if ($leaveInfo && ($rRecord->status !== 'on_leave' || $rRecord->leave_detail !== ($leaveInfo['detail'] ?? null) || $rRecord->leave_status !== ($leaveInfo['status'] ?? null))) {
                     $rRecord->update([
                         'status' => 'on_leave',
                         'leave_type_id' => $leaveInfo['leave_type_id'] ?? null,
@@ -555,6 +555,17 @@ class RollCallController extends Controller
                         'leave_status' => $leaveInfo['status'] ?? null,
                     ]);
                 }
+            }
+
+            // 为点名期间仍处于待审批（pending_leave）的自主请假记录附加 roll_call_pending 关联，
+            // 以便教师批准时转正式请假、驳回时自动转点名旷课并同步回写点名记录。
+            $pendingLeaveRollCallRecords = RollCallRecord::where('roll_call_id', $rollCall->id)
+                ->where('status', 'on_leave')
+                ->where('leave_status', 'pending_leave')
+                ->get();
+            $rollCallPeriodIdsForPending = $type->period_ids ?? [];
+            foreach ($pendingLeaveRollCallRecords as $pendingRcRec) {
+                $this->attachPendingRollCallMetadata($rollCall, $type, $pendingRcRec, $rollCallPeriodIdsForPending);
             }
 
             // Mark all pending as absent
@@ -904,6 +915,11 @@ class RollCallController extends Controller
 
         if ((int) $record->roll_call_id !== (int) $rollCall->id) {
             return response()->json(['error' => '点名记录不属于当前点名'], 404);
+        }
+
+        // 学生点名员/学生管理员严禁修改已有请假或教师考勤标记的学生状态
+        if ($user->role === 'student' && $record->status === 'on_leave') {
+            return response()->json(['error' => '该学生已有请假或考勤标记，点名员不可修改'], 403);
         }
 
         $validated = $request->validate([
@@ -1522,26 +1538,29 @@ class RollCallController extends Controller
                   ->orWhere('source_type', '!=', 'roll_call');
             })
             ->where(function ($q) {
-                // For leave/excused, require approval; for others (absent, late, early_leave), always show
+                // Include approved leaves, teacher-marked records (null), and student pending applications (exclude rejected)
                 $q->whereIn('status', ['absent', 'late', 'early_leave'])
                   ->orWhere(function ($q2) {
                       $q2->whereIn('status', ['leave', 'excused'])
                          ->where(function ($q3) {
-                             $q3->where('approval_status', 'approved')
+                             $q3->whereIn('approval_status', ['approved', 'pending'])
                                 ->orWhereNull('approval_status');
                          });
                   });
             })
             ->with('leaveType')
-            // 优先处理最新的记录（按更新时间倒序）
+            // 优先匹配已批准或教师标记的记录，其次匹配待审批申请（同类按最新更新时间倒序）
+            ->orderByRaw("CASE WHEN approval_status = 'pending' THEN 1 ELSE 0 END ASC")
             ->orderByDesc('updated_at')
             ->get();
 
         $rollCallTypeName = $rollCallType?->name ?? '';
 
         foreach ($attendanceRecords as $record) {
-            $details = $record->details ?? [];
+            $details = is_array($record->details) ? $record->details : (json_decode($record->details ?? '{}', true) ?? []);
             $status = $record->status;
+            $isPendingApproval = $record->approval_status === 'pending';
+            $effectiveLeaveStatus = $isPendingApproval ? 'pending_leave' : $status;
             
             // Get type name based on status
             $typeName = $record->leaveType?->name ?? match($status) {
@@ -1571,17 +1590,18 @@ class RollCallController extends Controller
             
             // Get display label for this record
             $displayLabel = $this->getLeaveDisplayLabel($record, $details, $inputConfig);
+            $buildResult = fn (string $labelOverride) => [
+                'leave_type_id' => $record->leave_type_id,
+                'detail' => $this->buildRollCallLeaveDetail($record, $typeName, $labelOverride, $details, $isPendingApproval),
+                'status' => $effectiveLeaveStatus,
+                'updated_at' => $record->updated_at,
+            ];
 
             // 若该考勤记录是在某场点名详情页直接改请假生成的，优先按 from_roll_call_id 精确归属，防止无节次点名间互相串扰
             $fromRollCallId = isset($details['from_roll_call_id']) ? (int) $details['from_roll_call_id'] : null;
             if ($fromRollCallId !== null && $rollCallId !== null) {
                 if ($fromRollCallId === $rollCallId) {
-                    return [
-                        'leave_type_id' => $record->leave_type_id,
-                        'detail' => $typeName . '(' . $displayLabel . ')',
-                        'status' => $status,
-                        'updated_at' => $record->updated_at,
-                    ];
+                    return $buildResult($displayLabel);
                 }
                 if (empty($recordPeriodIds)) {
                     continue;
@@ -1596,12 +1616,7 @@ class RollCallController extends Controller
                 if (!empty($rollCallPeriodIdsInt) && !empty($recordPeriodIds)) {
                     $intersection = array_intersect($recordPeriodIds, $rollCallPeriodIdsInt);
                     if (!empty($intersection)) {
-                        return [
-                            'leave_type_id' => $record->leave_type_id,
-                            'detail' => $typeName . '(' . $displayLabel . ')',
-                            'status' => $status,
-                            'updated_at' => $record->updated_at,
-                        ];
+                        return $buildResult($displayLabel);
                     }
                     continue; // No intersection, skip
                 }
@@ -1641,12 +1656,7 @@ class RollCallController extends Controller
                         }
                         
                         if ($hasMatch) {
-                            return [
-                                'leave_type_id' => $record->leave_type_id,
-                                'detail' => $typeName . '(' . $displayLabel . ')',
-                                'status' => $status,
-                                'updated_at' => $record->updated_at,
-                            ];
+                            return $buildResult($displayLabel);
                         }
                     }
                     continue; // No name match, skip
@@ -1662,12 +1672,7 @@ class RollCallController extends Controller
                 
                 if (!empty($intersection)) {
                     // Record covers at least one period of this roll call
-                    return [
-                        'leave_type_id' => $record->leave_type_id,
-                        'detail' => $typeName . '(' . $displayLabel . ')',
-                        'status' => $status,
-                        'updated_at' => $record->updated_at,
-                    ];
+                    return $buildResult($displayLabel);
                 }
                 // No intersection - this record doesn't cover the roll call periods
                 continue;
@@ -1696,12 +1701,7 @@ class RollCallController extends Controller
                 }
                 
                 if ($hasMatch) {
-                    return [
-                        'leave_type_id' => $record->leave_type_id,
-                        'detail' => $typeName . '(' . $displayLabel . ')',
-                        'status' => $status,
-                        'updated_at' => $record->updated_at,
-                    ];
+                    return $buildResult($displayLabel);
                 }
                 
                 // 节次名称与点名类型不匹配，跳过此记录
@@ -1733,12 +1733,7 @@ class RollCallController extends Controller
                 
                 if ($normalizedOptionLabel === $normalizedRollCallTypeName || 
                     str_contains($rollCallTypeName, $optionLabel)) {
-                    return [
-                        'leave_type_id' => $record->leave_type_id,
-                        'detail' => $typeName . '(' . $optionLabel . ')',
-                        'status' => $status,
-                        'updated_at' => $record->updated_at,
-                    ];
+                    return $buildResult($optionLabel);
                 }
                 // Option doesn't match current roll call type - skip this record
                 continue;
@@ -1756,12 +1751,7 @@ class RollCallController extends Controller
                         $intersection = array_intersect($timeSlotPeriodIds, $rollCallPeriodIdsInt);
                         
                         if (!empty($intersection)) {
-                            return [
-                                'leave_type_id' => $record->leave_type_id,
-                                'detail' => $typeName . '(' . $timeSlot->name . ')',
-                                'status' => $status,
-                                'updated_at' => $record->updated_at,
-                            ];
+                            return $buildResult($timeSlot->name);
                         }
                     } else {
                         // No roll call periods configured, use time-based check
@@ -1770,12 +1760,7 @@ class RollCallController extends Controller
                         $end = $timeSlot->time_end;
 
                         if ($rollCallTimeOnly >= $start && $rollCallTimeOnly <= $end) {
-                            return [
-                                'leave_type_id' => $record->leave_type_id,
-                                'detail' => $typeName . '(' . $timeSlot->name . ')',
-                                'status' => $status,
-                                'updated_at' => $record->updated_at,
-                            ];
+                            return $buildResult($timeSlot->name);
                         }
                     }
                     continue;
@@ -1783,18 +1768,141 @@ class RollCallController extends Controller
             }
             
             // Full day record (no specific period or time slot)
-            // If roll call has no periods configured, treat as matching
             if (empty($recordPeriodIds) && empty($details['option']) && empty($details['time_slot_id'])) {
-                return [
-                    'leave_type_id' => $record->leave_type_id,
-                    'detail' => $typeName . '(' . $displayLabel . ')',
-                    'status' => $status,
-                    'updated_at' => $record->updated_at,
-                ];
+                return $buildResult($displayLabel);
             }
         }
 
         return null;
+    }
+
+    /**
+     * Build a complete human-readable leave summary for roll call cards, including
+     * approval status (when pending), period/scope label, and full reason/remark/destination.
+     */
+    private function buildRollCallLeaveDetail(
+        AttendanceRecord $record,
+        string $typeName,
+        string $scopeLabel,
+        array $details,
+        bool $isPendingApproval
+    ): string {
+        $cleanScope = trim($scopeLabel);
+        $bracketParts = [];
+        if ($isPendingApproval) {
+            $bracketParts[] = '待审批';
+        }
+        if ($cleanScope !== '') {
+            $bracketParts[] = $cleanScope;
+        }
+        $header = !empty($bracketParts)
+            ? "{$typeName}(" . implode('·', $bracketParts) . ")"
+            : $typeName;
+
+        $remarkCandidates = [
+            $details['text'] ?? null,
+            $record->reason ?? null,
+            $details['reason'] ?? null,
+            $record->note ?? null,
+            $details['note'] ?? null,
+            $record->destination ?? null,
+        ];
+        $remarkParts = [];
+        foreach ($remarkCandidates as $cand) {
+            if (!is_string($cand)) {
+                continue;
+            }
+            $val = trim($cand);
+            if ($val === '' || $val === $cleanScope || str_contains($header, $val)) {
+                continue;
+            }
+            $alreadyIncluded = false;
+            foreach ($remarkParts as $existing) {
+                if ($existing === $val || str_contains($existing, $val)) {
+                    $alreadyIncluded = true;
+                    break;
+                }
+            }
+            if (!$alreadyIncluded) {
+                $remarkParts[] = $val;
+            }
+        }
+
+        $full = !empty($remarkParts)
+            ? $header . ' - ' . implode(' · ', $remarkParts)
+            : $header;
+
+        return mb_strimwidth($full, 0, 240, '…', 'UTF-8');
+    }
+
+    /**
+     * Attach roll_call_pending metadata onto pending self-applied leave records covered by a completed roll call,
+     * so teacher approval keeps on_leave and teacher rejection converts both attendance and roll_call record to absent.
+     */
+    private function attachPendingRollCallMetadata(
+        RollCall $rollCall,
+        ?RollCallType $type,
+        RollCallRecord $record,
+        array $periodIds
+    ): void {
+        $rollCallDate = $rollCall->roll_call_time->copy()->setTimezone('Asia/Shanghai')->toDateString();
+        $rollCallTimeLabel = $rollCall->roll_call_time->copy()->setTimezone('Asia/Shanghai')->format('H:i');
+
+        if (!empty($periodIds)) {
+            foreach ($periodIds as $index => $periodId) {
+                $existingLeave = AttendanceRecord::withoutGlobalScope('day_attendance')
+                    ->where('student_id', $record->student_id)
+                    ->whereDate('date', $rollCallDate)
+                    ->where(function ($q) use ($periodId) {
+                        $q->where('period_id', $periodId)
+                          ->orWhereNull('period_id');
+                    })
+                    ->where('approval_status', 'pending')
+                    ->where(function ($q) {
+                        $q->where('source_type', 'self_applied')
+                          ->orWhere('source_type', 'leave_request')
+                          ->orWhere('is_self_applied', true);
+                    })
+                    ->first();
+
+                if ($existingLeave) {
+                    $d = is_array($existingLeave->details) ? $existingLeave->details : (json_decode($existingLeave->details ?? '{}', true) ?? []);
+                    $d['roll_call_pending'] = [
+                        'roll_call_type'      => $type?->name ?? '点名',
+                        'roll_call_time'      => $rollCallTimeLabel,
+                        'roll_call_id'        => $rollCall->id,
+                        'leave_type_id'       => $type?->leave_type_id,
+                        'roll_call_record_id' => $record->id,
+                        'period_index'        => $index + 1,
+                        'total_periods'       => count($periodIds),
+                    ];
+                    $existingLeave->update(['details' => $d]);
+                }
+            }
+        } else {
+            $existingLeave = AttendanceRecord::withoutGlobalScope('day_attendance')
+                ->where('student_id', $record->student_id)
+                ->whereDate('date', $rollCallDate)
+                ->where('approval_status', 'pending')
+                ->where(function ($q) {
+                    $q->where('source_type', 'self_applied')
+                      ->orWhere('source_type', 'leave_request')
+                      ->orWhere('is_self_applied', true);
+                })
+                ->first();
+
+            if ($existingLeave) {
+                $d = is_array($existingLeave->details) ? $existingLeave->details : (json_decode($existingLeave->details ?? '{}', true) ?? []);
+                $d['roll_call_pending'] = [
+                    'roll_call_type'      => $type?->name ?? '点名',
+                    'roll_call_time'      => $rollCallTimeLabel,
+                    'roll_call_id'        => $rollCall->id,
+                    'leave_type_id'       => $type?->leave_type_id,
+                    'roll_call_record_id' => $record->id,
+                ];
+                $existingLeave->update(['details' => $d]);
+            }
+        }
     }
     
     /**

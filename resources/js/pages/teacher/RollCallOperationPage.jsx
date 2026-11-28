@@ -3,7 +3,7 @@ import Layout from '../../components/Layout';
 import axios from 'axios';
 import { format, parseISO } from 'date-fns';
 import { useParams, useNavigate } from 'react-router-dom';
-import { CheckIcon, XMarkIcon, ArrowLeftIcon, CheckCircleIcon, PencilIcon, MinusIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, XMarkIcon, ArrowLeftIcon, CheckCircleIcon, PencilIcon, MinusIcon, PlusIcon, LockClosedIcon } from '@heroicons/react/24/outline';
 import useAuthStore from '../../store/authStore';
 
 export default function RollCallOperationPage() {
@@ -16,7 +16,12 @@ export default function RollCallOperationPage() {
     const [saving, setSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingRecord, setEditingRecord] = useState(null);
+    const [inspectingLeaveRecord, setInspectingLeaveRecord] = useState(null);
     const [canModifyRecords, setCanModifyRecords] = useState(false);
+    const isTeacherOrAdmin = ['teacher', 'admin', 'system_admin', 'school_admin', 'department_manager'].includes(user?.role);
+
+    const isPendingApprovalLeave = (rec) =>
+        rec?.leave_status === 'pending_leave' || (rec?.leave_detail || '').includes('待审批');
 
     // 列数配置，从 localStorage 读取，默认1列
     const [columnCount, setColumnCount] = useState(() => {
@@ -292,20 +297,26 @@ export default function RollCallOperationPage() {
 
                             const isPresent = record.status === 'present';
                             const isOnLeave = record.status === 'on_leave';
+                            const isPendingLeave = isOnLeave && isPendingApprovalLeave(record);
                             const isAbsent = record.status === 'absent';
                             const isPending = record.status === 'pending';
+                            const leaveDetailText = record.leave_detail || record.leave_type?.name || '请假';
 
                             // Determine if row is clickable
-                            // For in-progress: all non-leave students
-                            // For completed/cancelled: only if user has modify permission and not on leave
-                            const isRowClickable = !isOnLeave && !saving && (
+                            // 请假学生始终可点击弹出只读「请假与去向详情」，绝不可由点名员修改状态
+                            const isNonLeaveEditable = !isOnLeave && !saving && (
                                 rollCall?.status === 'in_progress' ||
                                 ((isCompleted || isCancelled) && canModifyRecords)
                             );
+                            const isRowClickable = isOnLeave || isNonLeaveEditable;
 
-                            // Handle row click - toggle present status
+                            // Handle row click - inspect leave detail for on_leave; toggle present for others
                             const handleRowClick = () => {
-                                if (!isRowClickable) return;
+                                if (isOnLeave) {
+                                    setInspectingLeaveRecord(record);
+                                    return;
+                                }
+                                if (!isNonLeaveEditable) return;
 
                                 if (rollCall?.status === 'in_progress') {
                                     // For in-progress: toggle between present and pending
@@ -321,30 +332,41 @@ export default function RollCallOperationPage() {
                                 <div
                                     key={record.id}
                                     onClick={handleRowClick}
-                                    className={`p-3 flex items-center justify-between transition-all duration-150 ${isOnLeave ? 'bg-blue-50' :
+                                    title={isOnLeave ? `${leaveDetailText}（点击查看完整请假与去向详情，不可修改）` : undefined}
+                                    className={`p-3 flex items-center justify-between gap-2 transition-all duration-150 ${isOnLeave ? (isPendingLeave ? 'bg-amber-50' : 'bg-blue-50') :
                                         isPresent ? 'bg-green-50' :
                                             isAbsent ? 'bg-red-50' : 'bg-white'
                                         } ${isRowClickable ? 'cursor-pointer hover:bg-opacity-80 active:scale-[0.99]' : ''}`}
                                 >
                                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${isOnLeave ? 'bg-blue-500' :
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${isOnLeave ? (isPendingLeave ? 'bg-amber-500' : 'bg-blue-500') :
                                             isPresent ? 'bg-green-500' :
                                                 isAbsent ? 'bg-red-500' : 'bg-gray-300'
                                             }`}>
                                             {avatarContent}
                                         </div>
                                         <div className="min-w-0 flex-1">
-                                            <div className="font-medium text-gray-900 truncate">{displayName}</div>
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className="font-medium text-gray-900 truncate">{displayName}</span>
+                                                {isOnLeave && (
+                                                    <LockClosedIcon className={`h-3.5 w-3.5 flex-shrink-0 ${isPendingLeave ? 'text-amber-600' : 'text-blue-600'}`} title="已锁定，不可修改" />
+                                                )}
+                                                {isPendingLeave && (
+                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 flex-shrink-0">
+                                                        待审批
+                                                    </span>
+                                                )}
+                                            </div>
                                             {/* 签到时间 - 所有列数都显示 */}
                                             {isPresent && record.marked_at_local && (
                                                 <div className="text-xs text-gray-400">
                                                     签到于 {record.marked_at_local}
                                                 </div>
                                             )}
-                                            {/* 请假信息 - 2列及以上时显示在名字下方 */}
+                                            {/* 请假信息 - 2列及以上时显示在名字下方（完整事由/去向，点击可看全文） */}
                                             {isOnLeave && columnCount >= 2 && (
-                                                <div className="text-xs text-blue-600 truncate">
-                                                    {record.leave_detail || '请假'}
+                                                <div className={`text-xs mt-0.5 break-words line-clamp-2 ${isPendingLeave ? 'text-amber-700' : 'text-blue-700'}`}>
+                                                    {leaveDetailText}
                                                 </div>
                                             )}
                                         </div>
@@ -352,10 +374,10 @@ export default function RollCallOperationPage() {
 
                                     {/* 右侧图标区域 - 1列时显示，2列及以上隐藏 */}
                                     {columnCount === 1 && (
-                                        <div className="flex items-center gap-2 flex-shrink-0">
+                                        <div className="flex items-center gap-2 flex-shrink-0 max-w-[60%]">
                                             {isOnLeave ? (
-                                                <span className="px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
-                                                    {record.leave_detail || '请假'}
+                                                <span className={`px-3 py-1 rounded-lg text-xs sm:text-sm whitespace-normal break-words text-left leading-snug ${isPendingLeave ? 'bg-amber-100 text-amber-900' : 'bg-blue-100 text-blue-800'}`}>
+                                                    {leaveDetailText}
                                                 </span>
                                             ) : isCompleted || isCancelled ? (
                                                 /* Completed/Cancelled: show status badge */
@@ -414,6 +436,97 @@ export default function RollCallOperationPage() {
                             <CheckCircleIcon className="h-5 w-5" />
                             完成点名 ({presentCount}/{totalCount - onLeaveCount})
                         </button>
+                    </div>
+                </div>
+            )}
+            {/* Read-only Student Leave & Destination Detail Modal */}
+            {inspectingLeaveRecord && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+                    onClick={() => setInspectingLeaveRecord(null)}
+                >
+                    <div
+                        className="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <LockClosedIcon className="h-5 w-5 text-blue-600" />
+                                <h3 className="text-base font-semibold text-gray-900">学生请假与去向详情</h3>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setInspectingLeaveRecord(null)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <XMarkIcon className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <div className="px-5 py-4 space-y-3 text-sm">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="font-semibold text-gray-900 text-base">
+                                        {inspectingLeaveRecord.student?.user?.name || inspectingLeaveRecord.student?.name || '未知学生'}
+                                    </div>
+                                    {inspectingLeaveRecord.student?.student_no && (
+                                        <div className="text-xs text-gray-500">学号：{inspectingLeaveRecord.student.student_no}</div>
+                                    )}
+                                </div>
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${isPendingApprovalLeave(inspectingLeaveRecord) ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}`}>
+                                    {isPendingApprovalLeave(inspectingLeaveRecord) ? '待审批请假' : (inspectingLeaveRecord.leave_type?.name || '请假 / 已标记')}
+                                </span>
+                            </div>
+
+                            <div className={`p-3 rounded-lg border ${isPendingApprovalLeave(inspectingLeaveRecord) ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'}`}>
+                                <div className="text-xs font-medium text-gray-600 mb-1">请假事由 / 备注与去向</div>
+                                <div className="text-gray-900 whitespace-pre-wrap break-words leading-relaxed">
+                                    {inspectingLeaveRecord.leave_detail || inspectingLeaveRecord.leave_type?.name || '请假'}
+                                </div>
+                            </div>
+
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                                {isTeacherOrAdmin
+                                    ? '该生在当前节次已有请假申请或考勤标记，点名过程中自动锁定以防误操作。'
+                                    : '该生在当前节次已有请假申请或考勤标记，点名员仅可查看去向，不可修改状态。'}
+                            </p>
+                        </div>
+                        <div className="px-5 py-3 bg-gray-50 border-t flex items-center justify-end gap-2">
+                            {isTeacherOrAdmin && (isCompleted || isCancelled) && canModifyRecords && (
+                                <>
+                                    <button
+                                        type="button"
+                                        disabled={saving}
+                                        onClick={() => {
+                                            const recId = inspectingLeaveRecord.id;
+                                            setInspectingLeaveRecord(null);
+                                            updateRecordStatus(recId, 'present');
+                                        }}
+                                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-green-300 text-green-700 hover:bg-green-50"
+                                    >
+                                        改为已到
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={saving}
+                                        onClick={() => {
+                                            const recId = inspectingLeaveRecord.id;
+                                            setInspectingLeaveRecord(null);
+                                            updateRecordStatus(recId, 'absent');
+                                        }}
+                                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-300 text-red-700 hover:bg-red-50"
+                                    >
+                                        改为缺勤
+                                    </button>
+                                </>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setInspectingLeaveRecord(null)}
+                                className="px-4 py-1.5 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+                            >
+                                知道了
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

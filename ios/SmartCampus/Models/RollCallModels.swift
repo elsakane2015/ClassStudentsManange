@@ -57,6 +57,79 @@ struct RollCallType: Decodable, Identifiable, Hashable {
 }
 
 enum RollCallPeriodNamingHelper {
+    /// 判断是否为固定特殊活动节次（如早读、早操、晚操等），正课「第X节」返回 false
+    static func isFixedActivityPeriod(_ period: ClassPeriod) -> Bool {
+        if (period.type ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "special" {
+            return true
+        }
+        let s = period.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("第"), s.hasSuffix("节"), Int(s.dropFirst().dropLast()) != nil {
+            return false
+        }
+        let fixedKeywords = ["早读", "早操", "晚操", "晨读", "升旗", "集会", "跑操", "眼保健操"]
+        return fixedKeywords.contains { s.contains($0) }
+    }
+
+    static func normalizeActivityName(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasSuffix("点名") {
+            s = String(s.dropLast(2))
+        }
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 方案 B：返回某班级已被已有启用点名类型占用的固定活动节次 ID 集合（正课节次永远不禁用）
+    static func occupiedFixedPeriodIds(
+        in types: [RollCallType],
+        classId: Int,
+        excludingTypeId: Int? = nil,
+        periods: [ClassPeriod]
+    ) -> Set<Int> {
+        guard classId > 0 else { return [] }
+        let classTypes = types.filter { t in
+            t.isActiveFlag && t.classId == classId && (excludingTypeId == nil || t.id != excludingTypeId)
+        }
+        guard !classTypes.isEmpty else { return [] }
+
+        var result = Set<Int>()
+        for period in periods where isFixedActivityPeriod(period) {
+            let pNorm = normalizeActivityName(period.name)
+            let isOccupied = classTypes.contains { t in
+                if t.periodIds.contains(period.id) {
+                    return true
+                }
+                if t.periodIds.isEmpty {
+                    let tNorm = normalizeActivityName(t.name)
+                    if !pNorm.isEmpty && (tNorm == pNorm || tNorm.contains(pNorm)) {
+                        return true
+                    }
+                }
+                return false
+            }
+            if isOccupied {
+                result.insert(period.id)
+            }
+        }
+        return result
+    }
+
+    /// 查找同班级是否已有完全相同节次集合的启用点名类型（用于长期类型管理时的柔和提示）
+    static func matchingExistingType(
+        for selectedIds: Set<Int>,
+        in types: [RollCallType],
+        classId: Int,
+        excludingTypeId: Int? = nil
+    ) -> RollCallType? {
+        guard !selectedIds.isEmpty, classId > 0 else { return nil }
+        return types.first { t in
+            t.isActiveFlag
+                && t.classId == classId
+                && (excludingTypeId == nil || t.id != excludingTypeId)
+                && !t.periodIds.isEmpty
+                && Set(t.periodIds) == selectedIds
+        }
+    }
+
     /// 根据多选的节次智能生成建议的点名活动名称（例如：第1节 -> 第1节点名；第1节+第2节 -> 第1-2节点名）
     static func suggestedName(for selectedIds: Set<Int>, in periods: [ClassPeriod]) -> String {
         let ordered = periods.filter { selectedIds.contains($0.id) }
@@ -134,6 +207,29 @@ struct RollCallRecord: Decodable, Identifiable, Hashable {
         case markedAt = "marked_at"
         case markedAtLocal = "marked_at_local"
         case leaveType = "leave_type"
+    }
+
+    /// 是否为学生已提交、尚未审批的请假申请
+    var isPendingApprovalLeave: Bool {
+        if leaveStatus == "pending_leave" { return true }
+        if let detail = leaveDetail, detail.contains("待审批") { return true }
+        return false
+    }
+
+    /// 卡片状态主标题（如「病假」「特殊」「请假」）
+    var leaveTitleText: String {
+        leaveType?.name ?? "请假"
+    }
+
+    /// 完整的请假去向/事由备注文本
+    var leaveDetailDisplayText: String {
+        let trimmed = (leaveDetail ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? leaveTitleText : trimmed
+    }
+
+    /// 审批状态说明
+    var leaveStatusSummaryText: String {
+        isPendingApprovalLeave ? "待审批请假（学生已申请，等待班主任审批）" : "已生效请假 / 考勤标记"
     }
 }
 

@@ -78,7 +78,7 @@ class RollCallAttendanceSyncService
 
                 $matchingRecordId = RollCallRecord::where('roll_call_id', $rollCall->id)
                     ->where('student_id', $record->student_id)
-                    ->whereIn('status', ['absent', 'pending'])
+                    ->whereIn('status', ['absent', 'pending', 'on_leave'])
                     ->value('id');
                 if ($matchingRecordId) {
                     $rollCallRecordIds->push((int) $matchingRecordId);
@@ -98,10 +98,29 @@ class RollCallAttendanceSyncService
             ?? $details['option']
             ?? null;
         $leaveTypeName = $record->leaveType?->name ?? '请假';
-        $leaveDetail = $optionLabel ? "{$leaveTypeName}({$optionLabel})" : $leaveTypeName;
+        $header = $optionLabel ? "{$leaveTypeName}({$optionLabel})" : $leaveTypeName;
+
+        $remarkParts = [];
+        foreach ([$details['text'] ?? null, $record->reason ?? null, $details['reason'] ?? null, $record->note ?? null, $details['note'] ?? null] as $cand) {
+            if (!is_string($cand)) {
+                continue;
+            }
+            $val = trim($cand);
+            if ($val === '' || str_contains($header, $val) || in_array($val, $remarkParts, true)) {
+                continue;
+            }
+            $remarkParts[] = $val;
+        }
+        $leaveDetail = mb_strimwidth(
+            !empty($remarkParts) ? $header . ' - ' . implode(' · ', $remarkParts) : $header,
+            0,
+            240,
+            '…',
+            'UTF-8'
+        );
 
         RollCallRecord::whereIn('id', $rollCallRecordIds)
-            ->whereIn('status', ['absent', 'pending'])
+            ->whereIn('status', ['absent', 'pending', 'on_leave'])
             ->update([
                 'status' => 'on_leave',
                 'leave_type_id' => $record->leave_type_id,

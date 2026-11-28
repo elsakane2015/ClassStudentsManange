@@ -290,7 +290,7 @@ private struct RollCallRowView: View {
 private struct StartRollCallSheet: View {
     enum StartMode: String, CaseIterable, Identifiable {
         case existing = "已有类型"
-        case createCourse = "新建课程点名"
+        case createCourse = "本次课程点名"
         var id: String { rawValue }
     }
 
@@ -326,6 +326,15 @@ private struct StartRollCallSheet: View {
 
     private var orderedSelectedPeriodIds: [Int] {
         periods.filter { selectedPeriodIds.contains($0.id) }.map(\.id)
+    }
+
+    /// 方案 B：当前班级已有固定活动（早读/早操/晚操）置灰不可选，正课第1~N节每次自由选择
+    private var occupiedFixedPeriodIds: Set<Int> {
+        RollCallPeriodNamingHelper.occupiedFixedPeriodIds(
+            in: types,
+            classId: selectedClassId,
+            periods: periods
+        )
     }
 
     private var canSubmit: Bool {
@@ -365,7 +374,7 @@ private struct StartRollCallSheet: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                                 if user.isTeacherOrAdmin {
-                                    Button("切换到「新建课程点名」") {
+                                    Button("切换到「本次课程点名」") {
                                         mode = .createCourse
                                     }
                                     .font(.caption.weight(.semibold))
@@ -399,15 +408,16 @@ private struct StartRollCallSheet: View {
                         } else {
                             PeriodMultiSelectGrid(
                                 periods: periods,
-                                selectedIds: $selectedPeriodIds
+                                selectedIds: $selectedPeriodIds,
+                                disabledPeriodIds: occupiedFixedPeriodIds
                             ) { nextIds in
                                 syncAutoCourseName(for: nextIds)
                             }
                         }
                     } header: {
-                        Text("选择课程节次（可多选，用于考勤统计）")
+                        Text("选择本次课程节次（可多选，用于考勤统计）")
                     } footer: {
-                        Text("已选 \(selectedPeriodIds.count) 个节次；点选节次后自动生成活动名称，您也可手动修改。")
+                        Text("已选 \(selectedPeriodIds.count) 个节次。早读/早操/晚操等本班已有固定活动不可重复勾选；本次选择仅针对当前点名生效，不会添加到已有类型，明天或下次点名可重新自由选择节次。")
                     }
 
                     Section("课程点名信息") {
@@ -452,7 +462,7 @@ private struct StartRollCallSheet: View {
                         HStack {
                             Spacer()
                             if isCreating { ProgressView().tint(.white) }
-                            Text(mode == .existing ? "立即开始点名" : "创建并立即开始点名")
+                            Text(mode == .existing ? "立即开始点名" : "发起本次课程点名")
                                 .font(.headline)
                             Spacer()
                         }
@@ -467,6 +477,14 @@ private struct StartRollCallSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
+                }
+            }
+            .onChange(of: selectedClassId) { _, _ in
+                let occupied = occupiedFixedPeriodIds
+                let cleaned = selectedPeriodIds.subtracting(occupied)
+                if cleaned != selectedPeriodIds {
+                    selectedPeriodIds = cleaned
+                    syncAutoCourseName(for: cleaned)
                 }
             }
             .task {
@@ -533,24 +551,17 @@ private struct StartRollCallSheet: View {
             } else {
                 let cleanName = courseName.trimmingCharacters(in: .whitespacesAndNewlines)
                 let targetPeriods = orderedSelectedPeriodIds
-                // 若本班已存在完全同名且关联节次一致的活动类型，直接复用避免重复建类型
-                if let reusable = types.first(where: {
-                    $0.classId == selectedClassId
-                        && $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == cleanName
-                        && Set($0.periodIds) == Set(targetPeriods)
-                }) {
-                    targetTypeId = reusable.id
-                } else {
-                    let createdType = try await RollCallRepository.createRollCallType(
-                        classId: selectedClassId,
-                        name: cleanName,
-                        absentStatus: absentStatus,
-                        leaveTypeId: linkedLeaveTypeId,
-                        periodIds: targetPeriods,
-                        isActive: true
-                    )
-                    targetTypeId = createdType.id
-                }
+                // 本次课程点名：使用 is_active = false 的单次事件类型，不污染「已有类型」列表，
+                // 明天或下次点名可重新自由选择任意一节或几节（后端自动优雅复用同规则临时类型）。
+                let oneOffType = try await RollCallRepository.createRollCallType(
+                    classId: selectedClassId,
+                    name: cleanName,
+                    absentStatus: absentStatus,
+                    leaveTypeId: linkedLeaveTypeId,
+                    periodIds: targetPeriods,
+                    isActive: false
+                )
+                targetTypeId = oneOffType.id
             }
 
             let created = try await RollCallRepository.startRollCall(
@@ -566,10 +577,11 @@ private struct StartRollCallSheet: View {
     }
 }
 
-/// 节次多选网格（对齐 Web 端关联节次多选交互）
+/// 节次多选网格（方案 B：本班已有固定活动置灰不可选并标注「已有」，正课节次自由多选）
 private struct PeriodMultiSelectGrid: View {
     let periods: [ClassPeriod]
     @Binding var selectedIds: Set<Int>
+    var disabledPeriodIds: Set<Int> = []
     var onChanged: ((Set<Int>) -> Void)? = nil
 
     private let columns = [GridItem(.adaptive(minimum: 74), spacing: 8)]
@@ -577,8 +589,10 @@ private struct PeriodMultiSelectGrid: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
             ForEach(periods) { period in
-                let isSelected = selectedIds.contains(period.id)
+                let isDisabled = disabledPeriodIds.contains(period.id)
+                let isSelected = !isDisabled && selectedIds.contains(period.id)
                 Button {
+                    guard !isDisabled else { return }
                     var next = selectedIds
                     if isSelected {
                         next.remove(period.id)
@@ -588,22 +602,37 @@ private struct PeriodMultiSelectGrid: View {
                     selectedIds = next
                     onChanged?(next)
                 } label: {
-                    Text(period.name)
-                        .font(.caption.weight(isSelected ? .semibold : .regular))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 9)
-                        .padding(.horizontal, 6)
-                        .background(isSelected ? SCTheme.primary.opacity(0.15) : Color(.tertiarySystemFill))
-                        .foregroundStyle(isSelected ? SCTheme.primary : .primary)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(isSelected ? SCTheme.primary : Color.clear, lineWidth: 1.4)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    VStack(spacing: 2) {
+                        Text(period.name)
+                            .font(.caption.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        if isDisabled {
+                            Text("已有")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 6)
+                    .background(
+                        isDisabled
+                            ? Color(.systemGray5)
+                            : (isSelected ? SCTheme.primary.opacity(0.15) : Color(.tertiarySystemFill))
+                    )
+                    .foregroundStyle(isDisabled ? Color.secondary.opacity(0.75) : (isSelected ? SCTheme.primary : .primary))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(
+                                isDisabled ? Color(.systemGray4) : (isSelected ? SCTheme.primary : Color.clear),
+                                lineWidth: isDisabled ? 0.8 : 1.4
+                            )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .disabled(isDisabled)
             }
         }
         .padding(.vertical, 4)
@@ -766,6 +795,7 @@ struct RollCallTypesManageView: View {
             RollCallTypeFormSheet(
                 user: user,
                 editing: editingType,
+                existingTypes: types,
                 classes: classes,
                 periods: periods,
                 leaveTypes: leaveTypes,
@@ -837,6 +867,7 @@ struct RollCallTypesManageView: View {
 private struct RollCallTypeFormSheet: View {
     let user: User
     let editing: RollCallType?
+    let existingTypes: [RollCallType]
     let classes: [ClassOptionItem]
     let periods: [ClassPeriod]
     let leaveTypes: [LeaveType]
@@ -862,6 +893,38 @@ private struct RollCallTypeFormSheet: View {
         editing == nil && classes.count > 1 && user.isAdminTier
     }
 
+    /// 方案 B：已占用的固定活动节次（编辑自身时不禁用自己）
+    private var occupiedFixedPeriodIds: Set<Int> {
+        if batchMode {
+            guard !batchClassIds.isEmpty else { return [] }
+            let sets = batchClassIds.map { cid in
+                RollCallPeriodNamingHelper.occupiedFixedPeriodIds(
+                    in: existingTypes,
+                    classId: cid,
+                    excludingTypeId: editing?.id,
+                    periods: periods
+                )
+            }
+            return sets.dropFirst().reduce(sets.first ?? []) { $0.intersection($1) }
+        }
+        return RollCallPeriodNamingHelper.occupiedFixedPeriodIds(
+            in: existingTypes,
+            classId: selectedClassId,
+            excludingTypeId: editing?.id,
+            periods: periods
+        )
+    }
+
+    private var matchedExistingType: RollCallType? {
+        guard !batchMode else { return nil }
+        return RollCallPeriodNamingHelper.matchingExistingType(
+            for: selectedPeriodIds,
+            in: existingTypes,
+            classId: selectedClassId,
+            excludingTypeId: editing?.id
+        )
+    }
+
     private var canSubmit: Bool {
         guard !isSaving else { return false }
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
@@ -885,7 +948,11 @@ private struct RollCallTypeFormSheet: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        PeriodMultiSelectGrid(periods: periods, selectedIds: $selectedPeriodIds) { nextIds in
+                        PeriodMultiSelectGrid(
+                            periods: periods,
+                            selectedIds: $selectedPeriodIds,
+                            disabledPeriodIds: occupiedFixedPeriodIds
+                        ) { nextIds in
                             if editing == nil {
                                 let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                                 if trimmed.isEmpty || trimmed == lastAutoName {
@@ -895,11 +962,25 @@ private struct RollCallTypeFormSheet: View {
                                 }
                             }
                         }
+
+                        if let dup = matchedExistingType {
+                            HStack(spacing: 6) {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundStyle(.blue)
+                                Text("本班已有同节次类型「\(dup.name)」，可直接复用原类型或改名另建。")
+                                    .font(.caption)
+                                    .foregroundStyle(.blue)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.blue.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
                     }
                 } header: {
                     Text("关联节次（可多选，用于考勤统计）")
                 } footer: {
-                    Text("已选 \(selectedPeriodIds.count) 个节次，点名缺勤时将自动同步至对应节次的考勤记录。")
+                    Text("已选 \(selectedPeriodIds.count) 个节次；本班已有固定活动（如早读/早操/晚操）已置灰不可重复选择，正课节次可自由组合。")
                 }
 
                 Section("基本信息") {
@@ -983,6 +1064,12 @@ private struct RollCallTypeFormSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
+                }
+            }
+            .onChange(of: selectedClassId) { _, _ in
+                let cleaned = selectedPeriodIds.subtracting(occupiedFixedPeriodIds)
+                if cleaned != selectedPeriodIds {
+                    selectedPeriodIds = cleaned
                 }
             }
             .onAppear {

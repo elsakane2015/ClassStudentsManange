@@ -111,6 +111,36 @@ class RollCallTypeController extends Controller
         $validated['school_id'] = $class->school_id;
         $validated['created_by'] = $user->id;
 
+        // 单次课程点名（is_active = false）：若本班已存在同名、同节次集合、同规则的临时课程类型则直接复用，
+        // 既不污染「已有类型」列表，又避免数据库无限膨胀并利于统计汇总。
+        if (array_key_exists('is_active', $validated) && $validated['is_active'] === false) {
+            $normalizedPeriods = array_values(array_unique(array_map('intval', $validated['period_ids'] ?? [])));
+            sort($normalizedPeriods);
+            $absentStatus = $validated['absent_status'] ?? 'absent';
+            $leaveTypeId = $validated['leave_type_id'] ?? null;
+
+            $existingOneOff = RollCallType::where('class_id', $validated['class_id'])
+                ->where('is_active', false)
+                ->where('name', $validated['name'])
+                ->where(function ($q) use ($absentStatus) {
+                    $q->where('absent_status', $absentStatus);
+                    if ($absentStatus === 'absent') {
+                        $q->orWhereNull('absent_status');
+                    }
+                })
+                ->when($leaveTypeId !== null, fn ($q) => $q->where('leave_type_id', $leaveTypeId), fn ($q) => $q->whereNull('leave_type_id'))
+                ->get()
+                ->first(function (RollCallType $candidate) use ($normalizedPeriods) {
+                    $candPeriods = array_values(array_unique(array_map('intval', $candidate->period_ids ?? [])));
+                    sort($candPeriods);
+                    return $candPeriods === $normalizedPeriods;
+                });
+
+            if ($existingOneOff) {
+                return response()->json($existingOneOff->load('class', 'leaveType'), 201);
+            }
+        }
+
         $type = RollCallType::create($validated);
         return response()->json($type->load('class', 'leaveType'), 201);
     }
