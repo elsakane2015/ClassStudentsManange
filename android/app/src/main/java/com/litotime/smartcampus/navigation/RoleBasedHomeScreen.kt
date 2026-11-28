@@ -56,6 +56,7 @@ import com.litotime.smartcampus.feature.profile.ProfileScreen
 import com.litotime.smartcampus.feature.rollcall.RollCallAdminsScreen
 import com.litotime.smartcampus.feature.rollcall.RollCallHubContent
 import com.litotime.smartcampus.feature.rollcall.RollCallOperationScreen
+import com.litotime.smartcampus.feature.rollcall.RollCallTypesManageScreen
 import com.litotime.smartcampus.feature.student.ClassAttendanceAdminScreen
 import com.litotime.smartcampus.feature.student.LeaveHistoryScreen
 import com.litotime.smartcampus.feature.student.LeaveRequestFormScreen
@@ -86,6 +87,7 @@ private sealed interface SubRoute {
     data object ClassAttendanceAdmin : SubRoute
     data object ClassLeaveApprovals : SubRoute
     data class RollCallOperate(val rollCallId: Int) : SubRoute
+    data object RollCallTypesManage : SubRoute
     data object RollCallAdmins : SubRoute
     data class EveningStudyTake(
         val payload: EveningStudySessionPayload,
@@ -223,6 +225,14 @@ fun RoleBasedHomeScreen(user: User) {
             RollCallOperationScreen(rollCallId = currentSub.rollCallId, onBack = { subRoute = null })
             return
         }
+        is SubRoute.RollCallTypesManage -> {
+            RollCallTypesManageScreen(
+                user = user,
+                onStartRollCall = { subRoute = SubRoute.RollCallOperate(it) },
+                onBack = { subRoute = null }
+            )
+            return
+        }
         is SubRoute.RollCallAdmins -> {
             RollCallAdminsScreen(onBack = { subRoute = null })
             return
@@ -320,6 +330,7 @@ fun RoleBasedHomeScreen(user: User) {
                                 RollCallHubContent(
                                     user = user,
                                     onOpenRollCall = { subRoute = SubRoute.RollCallOperate(it) },
+                                    onOpenTypesManage = { subRoute = SubRoute.RollCallTypesManage },
                                     onOpenAdmins = { subRoute = SubRoute.RollCallAdmins }
                                 )
                             } else {
@@ -338,6 +349,7 @@ fun RoleBasedHomeScreen(user: User) {
                             RollCallHubContent(
                                 user = user,
                                 onOpenRollCall = { subRoute = SubRoute.RollCallOperate(it) },
+                                onOpenTypesManage = { subRoute = SubRoute.RollCallTypesManage },
                                 onOpenAdmins = { subRoute = SubRoute.RollCallAdmins }
                             )
                         }

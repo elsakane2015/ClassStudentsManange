@@ -337,8 +337,93 @@ class SmartCampusRepository(private val api: ApiClient) {
 
     // MARK: - Roll Calls
 
-    suspend fun fetchRollCallTypes(): List<RollCallType> =
-        api.requestElement("/roll-call-types").asArrayOrEmpty().mapNotNull { it.asObjectOrNull()?.let(RollCallType::fromJson) }
+    suspend fun fetchRollCallTypes(classId: Int? = null): List<RollCallType> {
+        val q = classId?.let { mapOf("class_id" to it.toString()) } ?: emptyMap()
+        return api.requestElement("/roll-call-types", query = q).asArrayOrEmpty().mapNotNull { it.asObjectOrNull()?.let(RollCallType::fromJson) }
+    }
+
+    suspend fun createRollCallType(
+        classId: Int,
+        name: String,
+        description: String? = null,
+        absentStatus: String = "absent",
+        leaveTypeId: Int? = null,
+        periodIds: List<Int> = emptyList(),
+        isActive: Boolean = true
+    ): RollCallType {
+        val body = buildJsonObject {
+            put("class_id", classId)
+            put("name", name.trim())
+            if (!description.isNullOrBlank()) put("description", description.trim())
+            put("absent_status", absentStatus)
+            if (leaveTypeId != null) put("leave_type_id", leaveTypeId)
+            if (periodIds.isNotEmpty()) {
+                put("period_ids", buildJsonArray { periodIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+            } else {
+                put("period_ids", kotlinx.serialization.json.JsonNull)
+            }
+            put("is_active", isActive)
+        }
+        val obj = api.requestElement("/roll-call-types", method = "POST", jsonBody = body.toString())
+            .asObjectOrNull() ?: JsonObject(emptyMap())
+        return RollCallType.fromJson(obj)
+    }
+
+    suspend fun batchCreateRollCallTypes(
+        classIds: List<Int>,
+        name: String,
+        description: String? = null,
+        absentStatus: String = "absent",
+        leaveTypeId: Int? = null,
+        periodIds: List<Int> = emptyList(),
+        isActive: Boolean = true
+    ): String {
+        val body = buildJsonObject {
+            put("class_ids", buildJsonArray { classIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+            put("name", name.trim())
+            if (!description.isNullOrBlank()) put("description", description.trim())
+            put("absent_status", absentStatus)
+            if (leaveTypeId != null) put("leave_type_id", leaveTypeId)
+            if (periodIds.isNotEmpty()) {
+                put("period_ids", buildJsonArray { periodIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+            } else {
+                put("period_ids", kotlinx.serialization.json.JsonNull)
+            }
+            put("is_active", isActive)
+        }
+        val obj = api.requestElement("/roll-call-types/batch", method = "POST", jsonBody = body.toString()).asObjectOrNull()
+        return obj?.str("message") ?: "批量创建成功"
+    }
+
+    suspend fun updateRollCallType(
+        id: Int,
+        name: String,
+        description: String? = null,
+        absentStatus: String = "absent",
+        leaveTypeId: Int? = null,
+        periodIds: List<Int> = emptyList(),
+        isActive: Boolean = true
+    ): RollCallType {
+        val body = buildJsonObject {
+            put("name", name.trim())
+            put("description", description?.trim().orEmpty())
+            put("absent_status", absentStatus)
+            if (leaveTypeId != null) put("leave_type_id", leaveTypeId) else put("leave_type_id", kotlinx.serialization.json.JsonNull)
+            if (periodIds.isNotEmpty()) {
+                put("period_ids", buildJsonArray { periodIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+            } else {
+                put("period_ids", kotlinx.serialization.json.JsonNull)
+            }
+            put("is_active", isActive)
+        }
+        val obj = api.requestElement("/roll-call-types/$id", method = "PUT", jsonBody = body.toString())
+            .asObjectOrNull() ?: JsonObject(emptyMap())
+        return RollCallType.fromJson(obj)
+    }
+
+    suspend fun deleteRollCallType(id: Int) {
+        api.requestRaw("/roll-call-types/$id", method = "DELETE")
+    }
 
     suspend fun fetchInProgressRollCalls(): List<RollCall> =
         api.requestElement("/roll-calls/in-progress").asArrayOrEmpty().mapNotNull { it.asObjectOrNull()?.let(RollCall::fromJson) }

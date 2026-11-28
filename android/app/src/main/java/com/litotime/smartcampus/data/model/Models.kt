@@ -1210,17 +1210,74 @@ data class LeaveImageSettings(
 
 data class RollCallType(
     val id: Int,
+    val classId: Int? = null,
     val name: String,
-    val className: String?,
-    val isActive: Boolean
+    val description: String? = null,
+    val absentStatus: String = "absent",
+    val leaveTypeId: Int? = null,
+    val periodIds: List<Int> = emptyList(),
+    val className: String? = null,
+    val leaveTypeName: String? = null,
+    val isActive: Boolean = true
 ) {
+    val absentStatusDisplayName: String
+        get() = when (absentStatus) {
+            "late" -> "迟到"
+            "leave" -> "请假"
+            else -> "旷课"
+        }
+
+    fun periodSummary(periods: List<ClassPeriod>): String? {
+        if (periodIds.isEmpty()) return null
+        val map = periods.associate { it.id to it.name }
+        return periodIds.joinToString("、") { map[it] ?: "第${it}节" }
+    }
+
     companion object {
-        fun fromJson(o: JsonObject) = RollCallType(
-            id = o.intVal("id"),
-            name = o.str("name").orEmpty(),
-            className = o.objOrNull("class")?.str("name"),
-            isActive = o.boolVal("is_active", true)
-        )
+        fun fromJson(o: JsonObject): RollCallType {
+            val rawPeriods = o.arrOrEmpty("period_ids").mapNotNull { el ->
+                val p = el as? JsonPrimitive ?: return@mapNotNull null
+                if (p is kotlinx.serialization.json.JsonNull) return@mapNotNull null
+                p.intOrNull ?: p.content.trim().toIntOrNull()
+            }
+            return RollCallType(
+                id = o.intVal("id"),
+                classId = o.intOrNull("class_id"),
+                name = o.str("name").orEmpty(),
+                description = o.str("description"),
+                absentStatus = o.str("absent_status")?.takeIf { it.isNotBlank() } ?: "absent",
+                leaveTypeId = o.intOrNull("leave_type_id"),
+                periodIds = rawPeriods,
+                className = o.objOrNull("class")?.str("name"),
+                leaveTypeName = o.objOrNull("leave_type")?.str("name"),
+                isActive = o.boolVal("is_active", true)
+            )
+        }
+    }
+}
+
+object RollCallPeriodNamingHelper {
+    fun suggestedName(selectedIds: Set<Int>, periods: List<ClassPeriod>): String {
+        val ordered = periods.filter { it.id in selectedIds }
+        if (ordered.isEmpty()) return ""
+        if (ordered.size == 1) {
+            val n = ordered[0].name.trim()
+            return if (n.endsWith("点名")) n else "${n}点名"
+        }
+        val nums = ordered.mapNotNull { p ->
+            val s = p.name.trim()
+            if (s.startsWith("第") && s.endsWith("节")) s.substring(1, s.length - 1).toIntOrNull() else null
+        }
+        if (nums.size == ordered.size) {
+            val sorted = nums.sorted()
+            val contiguous = sorted.zipWithNext().all { (a, b) -> b == a + 1 }
+            return if (contiguous) {
+                "第${sorted.first()}-${sorted.last()}节点名"
+            } else {
+                "第${sorted.joinToString("、")}节点名"
+            }
+        }
+        return ordered.joinToString("、") { it.name } + "点名"
     }
 }
 

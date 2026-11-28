@@ -7,6 +7,95 @@ enum RollCallRepository {
         return try await APIClient.shared.request("/roll-call-types", query: query)
     }
 
+    static func createRollCallType(
+        classId: Int,
+        name: String,
+        description: String? = nil,
+        absentStatus: String = "absent",
+        leaveTypeId: Int? = nil,
+        periodIds: [Int] = [],
+        isActive: Bool = true
+    ) async throws -> RollCallType {
+        var body: [String: Any] = [
+            "class_id": classId,
+            "name": name.trimmingCharacters(in: .whitespacesAndNewlines),
+            "absent_status": absentStatus,
+            "is_active": isActive,
+            "period_ids": periodIds.isEmpty ? NSNull() : periodIds
+        ]
+        if let desc = description?.trimmingCharacters(in: .whitespacesAndNewlines), !desc.isEmpty {
+            body["description"] = desc
+        }
+        if let leaveTypeId {
+            body["leave_type_id"] = leaveTypeId
+        }
+        return try await APIClient.shared.requestWithJSONBody(
+            "/roll-call-types",
+            method: "POST",
+            jsonBody: body
+        )
+    }
+
+    static func batchCreateRollCallTypes(
+        classIds: [Int],
+        name: String,
+        description: String? = nil,
+        absentStatus: String = "absent",
+        leaveTypeId: Int? = nil,
+        periodIds: [Int] = [],
+        isActive: Bool = true
+    ) async throws -> MessageResponse {
+        var body: [String: Any] = [
+            "class_ids": classIds,
+            "name": name.trimmingCharacters(in: .whitespacesAndNewlines),
+            "absent_status": absentStatus,
+            "is_active": isActive,
+            "period_ids": periodIds.isEmpty ? NSNull() : periodIds
+        ]
+        if let desc = description?.trimmingCharacters(in: .whitespacesAndNewlines), !desc.isEmpty {
+            body["description"] = desc
+        }
+        if let leaveTypeId {
+            body["leave_type_id"] = leaveTypeId
+        }
+        return try await APIClient.shared.requestWithJSONBody(
+            "/roll-call-types/batch",
+            method: "POST",
+            jsonBody: body
+        )
+    }
+
+    static func updateRollCallType(
+        id: Int,
+        name: String,
+        description: String? = nil,
+        absentStatus: String = "absent",
+        leaveTypeId: Int? = nil,
+        periodIds: [Int] = [],
+        isActive: Bool = true
+    ) async throws -> RollCallType {
+        var body: [String: Any] = [
+            "name": name.trimmingCharacters(in: .whitespacesAndNewlines),
+            "absent_status": absentStatus,
+            "is_active": isActive,
+            "period_ids": periodIds.isEmpty ? NSNull() : periodIds,
+            "leave_type_id": leaveTypeId ?? NSNull(),
+            "description": description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        ]
+        return try await APIClient.shared.requestWithJSONBody(
+            "/roll-call-types/\(id)",
+            method: "PUT",
+            jsonBody: body
+        )
+    }
+
+    static func deleteRollCallType(id: Int) async throws {
+        let _: MessageResponse = try await APIClient.shared.request(
+            "/roll-call-types/\(id)",
+            method: "DELETE"
+        )
+    }
+
     static func fetchInProgress() async throws -> [RollCall] {
         try await APIClient.shared.request("/roll-calls/in-progress")
     }

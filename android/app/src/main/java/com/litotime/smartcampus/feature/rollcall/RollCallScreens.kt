@@ -81,6 +81,19 @@ import com.litotime.smartcampus.data.model.RollCall
 import com.litotime.smartcampus.data.model.RollCallAdminItem
 import com.litotime.smartcampus.data.model.RollCallRecord
 import com.litotime.smartcampus.data.model.RollCallType
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Category
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Switch
+import com.litotime.smartcampus.data.model.ClassPeriod
+import com.litotime.smartcampus.data.model.RollCallPeriodNamingHelper
 import com.litotime.smartcampus.data.model.User
 import kotlinx.coroutines.launch
 
@@ -89,6 +102,7 @@ import kotlinx.coroutines.launch
 fun RollCallHubContent(
     user: User,
     onOpenRollCall: (Int) -> Unit,
+    onOpenTypesManage: () -> Unit,
     onOpenAdmins: () -> Unit
 ) {
     val repo = SmartCampusApp.container.repository
@@ -96,6 +110,7 @@ fun RollCallHubContent(
     val scopes = listOf("today" to "今日", "week" to "本周", "month" to "本月", "semester" to "本学期")
 
     var types by remember { mutableStateOf<List<RollCallType>>(emptyList()) }
+    var periods by remember { mutableStateOf<List<ClassPeriod>>(emptyList()) }
     var inProgress by remember { mutableStateOf<List<RollCall>>(emptyList()) }
     var history by remember { mutableStateOf<List<RollCall>>(emptyList()) }
     var historyScope by remember { mutableStateOf("month") }
@@ -109,6 +124,7 @@ fun RollCallHubContent(
             error = null
             runCatching {
                 types = repo.fetchRollCallTypes().filter { it.isActive }
+                periods = runCatching { repo.fetchClassPeriods().filter { !it.isEveningStudy && it.isActive } }.getOrDefault(emptyList())
                 inProgress = runCatching { repo.fetchInProgressRollCalls() }.getOrDefault(emptyList())
                 history = runCatching { repo.fetchRollCallHistory(historyScope) }.getOrDefault(emptyList())
             }.onFailure { error = it.localizedMessage }
@@ -134,7 +150,7 @@ fun RollCallHubContent(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.fillMaxWidth().clickable(enabled = types.isNotEmpty()) { showStartDialog = true }
+                modifier = Modifier.fillMaxWidth().clickable(enabled = user.isTeacherOrAdmin || types.isNotEmpty()) { showStartDialog = true }
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
@@ -145,7 +161,9 @@ fun RollCallHubContent(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("发起新点名", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
-                            if (types.isEmpty()) "请先在后台配置点名类型" else "选择点名类型立即开始走动点名（支持 Room 断网防丢）",
+                            if (user.isTeacherOrAdmin) "支持选择已有类型或按第1、2…节新建课程点名"
+                            else if (types.isEmpty()) "请先由班主任配置点名类型"
+                            else "选择点名类型立即开始走动点名（支持离线防丢）",
                             color = Color.White.copy(alpha = 0.85f),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -159,10 +177,17 @@ fun RollCallHubContent(
 
         if (user.isTeacherOrAdmin) {
             item {
-                OutlinedButton(onClick = onOpenAdmins, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.ManageAccounts, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("管理班级点名员")
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = onOpenTypesManage, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.Category, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("管理课程点名", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    OutlinedButton(onClick = onOpenAdmins, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.ManageAccounts, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("班级点名员", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -223,7 +248,9 @@ fun RollCallHubContent(
 
     if (showStartDialog) {
         StartRollCallDialog(
+            user = user,
             types = types,
+            initialPeriods = periods,
             onDismiss = { showStartDialog = false },
             onCreated = { createdId ->
                 showStartDialog = false
@@ -273,40 +300,157 @@ private fun RollCallSummaryCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun StartRollCallDialog(
+    user: User,
     types: List<RollCallType>,
+    initialPeriods: List<ClassPeriod>,
     onDismiss: () -> Unit,
     onCreated: (Int) -> Unit
 ) {
+    val repo = SmartCampusApp.container.repository
     val scope = rememberCoroutineScope()
+    var mode by remember { mutableStateOf(if (types.isEmpty() && user.isTeacherOrAdmin) 1 else 0) } // 0 = 已有类型, 1 = 新建课程点名
     var selectedTypeId by remember { mutableStateOf(types.firstOrNull()?.id ?: 0) }
     var notes by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
+
+    // 新建课程点名状态
+    var classes by remember { mutableStateOf<List<ClassOptionItem>>(emptyList()) }
+    var selectedClassId by remember { mutableStateOf(0) }
+    var classMenuOpen by remember { mutableStateOf(false) }
+    var periods by remember { mutableStateOf(initialPeriods) }
+    var selectedPeriodIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var courseName by remember { mutableStateOf("") }
+    var lastAutoName by remember { mutableStateOf("") }
+    var absentStatus by remember { mutableStateOf("absent") }
+    var absentMenuOpen by remember { mutableStateOf(false) }
+
     var creating by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    LaunchedEffect(user.isTeacherOrAdmin) {
+        if (user.isTeacherOrAdmin) {
+            classes = runCatching { repo.fetchClasses() }.getOrDefault(emptyList())
+            if (selectedClassId == 0) selectedClassId = classes.firstOrNull()?.id ?: 0
+            if (periods.isEmpty()) {
+                periods = runCatching { repo.fetchClassPeriods().filter { !it.isEveningStudy && it.isActive } }.getOrDefault(emptyList())
+            }
+        }
+    }
+
     val selectedType = types.firstOrNull { it.id == selectedTypeId }
+    val absentOptions = listOf("absent" to "旷课", "late" to "迟到", "leave" to "请假")
+    val canSubmit = !creating && if (mode == 0) selectedTypeId > 0 else (selectedClassId > 0 && courseName.isNotBlank())
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("发起新点名") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 error?.let { Text(it, color = Color(0xFFDC2626), style = MaterialTheme.typography.bodySmall) }
-                Box {
-                    OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(selectedType?.let { "${it.name}${it.className?.let { c -> "（$c）" }.orEmpty()}" } ?: "选择点名类型")
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        types.forEach { t ->
-                            DropdownMenuItem(
-                                text = { Text("${t.name}${t.className?.let { c -> "（$c）" }.orEmpty()}") },
-                                onClick = { selectedTypeId = t.id; menuOpen = false }
-                            )
+
+                if (user.isTeacherOrAdmin) {
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        listOf("已有类型", "新建课程点名").forEachIndexed { idx, label ->
+                            SegmentedButton(
+                                selected = mode == idx,
+                                onClick = { mode = idx },
+                                shape = SegmentedButtonDefaults.itemShape(idx, 2)
+                            ) { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         }
                     }
                 }
+
+                if (mode == 0) {
+                    if (types.isEmpty()) {
+                        Text("暂无已有活动类型，请切换到「新建课程点名」创建。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Box {
+                            OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text(selectedType?.let { "${it.name}${it.className?.let { c -> "（$c）" }.orEmpty()}" } ?: "选择点名类型")
+                            }
+                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                types.forEach { t ->
+                                    DropdownMenuItem(
+                                        text = { Text("${t.name}${t.className?.let { c -> "（$c）" }.orEmpty()}") },
+                                        onClick = { selectedTypeId = t.id; menuOpen = false }
+                                    )
+                                }
+                            }
+                        }
+                        selectedType?.periodSummary(periods)?.let { summary ->
+                            Text("关联节次：$summary", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                } else {
+                    Text("选择课程节次（可多选，用于考勤统计）", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    if (periods.isEmpty()) {
+                        Text("暂未读取到节次配置，可直接输入课程名称。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            periods.forEach { p ->
+                                val chosen = p.id in selectedPeriodIds
+                                FilterChip(
+                                    selected = chosen,
+                                    onClick = {
+                                        val next = if (chosen) selectedPeriodIds - p.id else selectedPeriodIds + p.id
+                                        selectedPeriodIds = next
+                                        val trimmed = courseName.trim()
+                                        if (trimmed.isEmpty() || trimmed == lastAutoName) {
+                                            val suggested = RollCallPeriodNamingHelper.suggestedName(next, periods)
+                                            courseName = suggested
+                                            lastAutoName = suggested
+                                        }
+                                    },
+                                    label = { Text(p.name, style = MaterialTheme.typography.labelMedium) }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = courseName,
+                        onValueChange = { courseName = it },
+                        label = { Text("活动名称（如：第1-2节点名）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (classes.size > 1) {
+                        Box {
+                            OutlinedButton(onClick = { classMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("班级：" + (classes.firstOrNull { it.id == selectedClassId }?.name ?: "选择班级"))
+                            }
+                            DropdownMenu(expanded = classMenuOpen, onDismissRequest = { classMenuOpen = false }) {
+                                classes.forEach { cls ->
+                                    DropdownMenuItem(text = { Text(cls.name) }, onClick = { selectedClassId = cls.id; classMenuOpen = false })
+                                }
+                            }
+                        }
+                    } else if (classes.size == 1) {
+                        Text("所属班级：${classes[0].name}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    Box {
+                        OutlinedButton(onClick = { absentMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("未到标记：" + (absentOptions.firstOrNull { it.first == absentStatus }?.second ?: "旷课"))
+                        }
+                        DropdownMenu(expanded = absentMenuOpen, onDismissRequest = { absentMenuOpen = false }) {
+                            absentOptions.forEach { (k, label) ->
+                                DropdownMenuItem(text = { Text(label) }, onClick = { absentStatus = k; absentMenuOpen = false })
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = notes,
                     onValueChange = { notes = it },
@@ -318,14 +462,32 @@ private fun StartRollCallDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = !creating && selectedTypeId > 0,
+                enabled = canSubmit,
                 onClick = {
                     scope.launch {
                         creating = true
                         error = null
                         runCatching {
-                            val rc = SmartCampusApp.container.repository.startRollCall(
-                                typeId = selectedTypeId,
+                            val targetTypeId = if (mode == 0) {
+                                selectedTypeId
+                            } else {
+                                val cleanName = courseName.trim()
+                                val orderedPeriods = periods.filter { it.id in selectedPeriodIds }.map { it.id }
+                                val reusable = types.firstOrNull {
+                                    it.classId == selectedClassId &&
+                                        it.name.trim() == cleanName &&
+                                        it.periodIds.toSet() == orderedPeriods.toSet()
+                                }
+                                reusable?.id ?: repo.createRollCallType(
+                                    classId = selectedClassId,
+                                    name = cleanName,
+                                    absentStatus = absentStatus,
+                                    periodIds = orderedPeriods,
+                                    isActive = true
+                                ).id
+                            }
+                            val rc = repo.startRollCall(
+                                typeId = targetTypeId,
                                 rollCallTime = SCDateFormatter.nowRollCallDateTime(),
                                 notes = notes
                             )
@@ -334,7 +496,7 @@ private fun StartRollCallDialog(
                         creating = false
                     }
                 }
-            ) { Text(if (creating) "创建中..." else "立即开始") }
+            ) { Text(if (creating) "创建中..." else if (mode == 0) "立即开始" else "创建并开始") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
@@ -933,4 +1095,386 @@ fun RollCallAdminsScreen(onBack: () -> Unit) {
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun RollCallTypesManageScreen(
+    user: User,
+    onStartRollCall: (Int) -> Unit,
+    onBack: () -> Unit
+) {
+    val repo = SmartCampusApp.container.repository
+    val scope = rememberCoroutineScope()
+
+    var types by remember { mutableStateOf<List<RollCallType>>(emptyList()) }
+    var classes by remember { mutableStateOf<List<ClassOptionItem>>(emptyList()) }
+    var periods by remember { mutableStateOf<List<ClassPeriod>>(emptyList()) }
+    var leaveTypes by remember { mutableStateOf<List<LeaveType>>(emptyList()) }
+    var filterClassId by remember { mutableStateOf(0) }
+    var classMenuOpen by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    var showEditor by remember { mutableStateOf(false) }
+    var editingType by remember { mutableStateOf<RollCallType?>(null) }
+    var startingTypeId by remember { mutableStateOf<Int?>(null) }
+
+    fun loadAll() {
+        scope.launch {
+            loading = true
+            error = null
+            runCatching {
+                types = repo.fetchRollCallTypes()
+                classes = runCatching { repo.fetchClasses() }.getOrDefault(emptyList())
+                periods = runCatching { repo.fetchClassPeriods().filter { !it.isEveningStudy && it.isActive } }.getOrDefault(emptyList())
+                leaveTypes = runCatching { repo.fetchLeaveTypes().filter { it.isActive } }.getOrDefault(emptyList())
+            }.onFailure { error = it.localizedMessage }
+            loading = false
+        }
+    }
+
+    LaunchedEffect(Unit) { loadAll() }
+
+    val filteredTypes = if (filterClassId > 0) types.filter { it.classId == filterClassId } else types
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("点名类型与课程点名") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回") } },
+                actions = {
+                    IconButton(onClick = { editingType = null; showEditor = true }) {
+                        Icon(Icons.Rounded.Add, contentDescription = "新增点名类型")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            error?.let { ErrorBanner(message = it, onRetry = { loadAll() }) }
+
+            if (classes.size > 1) {
+                Box {
+                    OutlinedButton(onClick = { classMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (filterClassId == 0) "筛选班级：全部班级" else "筛选班级：${classes.firstOrNull { it.id == filterClassId }?.name.orEmpty()}")
+                    }
+                    DropdownMenu(expanded = classMenuOpen, onDismissRequest = { classMenuOpen = false }) {
+                        DropdownMenuItem(text = { Text("全部班级") }, onClick = { filterClassId = 0; classMenuOpen = false })
+                        classes.forEach { cls ->
+                            DropdownMenuItem(text = { Text(cls.name) }, onClick = { filterClassId = cls.id; classMenuOpen = false })
+                        }
+                    }
+                }
+            }
+
+            if (loading && types.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            } else if (filteredTypes.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无点名类型，点击右上角「+」可新增第1、2…节课程点名。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(filteredTypes, key = { it.id }) { item ->
+                        SCCard {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(item.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                                        item.className?.takeIf { it.isNotBlank() }?.let {
+                                            StatusBadge(it, MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                    item.periodSummary(periods)?.let { summary ->
+                                        Text("关联节次：$summary", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Text(
+                                        "未到标记：${item.absentStatusDisplayName}" + (item.leaveTypeName?.let { " · 关联假类：$it" }.orEmpty()),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    item.description?.takeIf { it.isNotBlank() }?.let {
+                                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Button(
+                                    enabled = startingTypeId == null,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    onClick = {
+                                        scope.launch {
+                                            startingTypeId = item.id
+                                            error = null
+                                            runCatching {
+                                                val created = repo.startRollCall(item.id, SCDateFormatter.nowRollCallDateTime(), null)
+                                                onStartRollCall(created.id)
+                                            }.onFailure { error = it.localizedMessage }
+                                            startingTypeId = null
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(2.dp))
+                                    Text("点名", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                TextButton(onClick = { editingType = item; showEditor = true }) {
+                                    Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("编辑")
+                                }
+                                TextButton(
+                                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFDC2626)),
+                                    onClick = {
+                                        scope.launch {
+                                            runCatching { repo.deleteRollCallType(item.id) }
+                                                .onSuccess { types = types.filterNot { it.id == item.id } }
+                                                .onFailure { error = it.localizedMessage }
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Rounded.Delete, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("删除")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showEditor) {
+        RollCallTypeEditorDialog(
+            user = user,
+            editing = editingType,
+            classes = classes,
+            periods = periods,
+            leaveTypes = leaveTypes,
+            defaultClassId = if (filterClassId > 0) filterClassId else (classes.firstOrNull()?.id ?: 0),
+            onDismiss = { showEditor = false; editingType = null },
+            onSaved = {
+                showEditor = false
+                editingType = null
+                loadAll()
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RollCallTypeEditorDialog(
+    user: User,
+    editing: RollCallType?,
+    classes: List<ClassOptionItem>,
+    periods: List<ClassPeriod>,
+    leaveTypes: List<LeaveType>,
+    defaultClassId: Int,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val repo = SmartCampusApp.container.repository
+    val scope = rememberCoroutineScope()
+
+    var name by remember(editing?.id) { mutableStateOf(editing?.name.orEmpty()) }
+    var lastAutoName by remember(editing?.id) { mutableStateOf("") }
+    var description by remember(editing?.id) { mutableStateOf(editing?.description.orEmpty()) }
+    var selectedClassId by remember(editing?.id) { mutableStateOf(editing?.classId ?: defaultClassId) }
+    var batchMode by remember(editing?.id) { mutableStateOf(false) }
+    var batchClassIds by remember(editing?.id) { mutableStateOf(if (defaultClassId > 0) setOf(defaultClassId) else emptySet()) }
+    var absentStatus by remember(editing?.id) { mutableStateOf(editing?.absentStatus ?: "absent") }
+    var leaveTypeId by remember(editing?.id) { mutableStateOf(editing?.leaveTypeId) }
+    var selectedPeriodIds by remember(editing?.id) { mutableStateOf(editing?.periodIds?.toSet() ?: emptySet()) }
+    var isActive by remember(editing?.id) { mutableStateOf(editing?.isActive ?: true) }
+
+    var classMenuOpen by remember { mutableStateOf(false) }
+    var absentMenuOpen by remember { mutableStateOf(false) }
+    var leaveMenuOpen by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val absentOptions = listOf("absent" to "旷课", "late" to "迟到", "leave" to "请假")
+    val canBatch = editing == null && classes.size > 1 && user.isAdminTier
+    val canSubmit = !saving && name.isNotBlank() && (editing != null || (if (batchMode) batchClassIds.isNotEmpty() else selectedClassId > 0))
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (editing != null) "编辑点名类型" else "新增点名类型") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                error?.let { Text(it, color = Color(0xFFDC2626), style = MaterialTheme.typography.bodySmall) }
+
+                Text("关联节次（可多选，用于考勤统计）", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                if (periods.isEmpty()) {
+                    Text("暂无节次配置", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        periods.forEach { p ->
+                            val chosen = p.id in selectedPeriodIds
+                            FilterChip(
+                                selected = chosen,
+                                onClick = {
+                                    val next = if (chosen) selectedPeriodIds - p.id else selectedPeriodIds + p.id
+                                    selectedPeriodIds = next
+                                    if (editing == null) {
+                                        val trimmed = name.trim()
+                                        if (trimmed.isEmpty() || trimmed == lastAutoName) {
+                                            val suggested = RollCallPeriodNamingHelper.suggestedName(next, periods)
+                                            name = suggested
+                                            lastAutoName = suggested
+                                        }
+                                    }
+                                },
+                                label = { Text(p.name, style = MaterialTheme.typography.labelMedium) }
+                            )
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("活动名称（如：第1-2节点名）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("描述（可选）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (editing == null) {
+                    if (canBatch) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text("为多个班级批量创建", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            Switch(checked = batchMode, onCheckedChange = { batchMode = it })
+                        }
+                    }
+                    if (batchMode) {
+                        classes.forEach { cls ->
+                            val checked = cls.id in batchClassIds
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    batchClassIds = if (checked) batchClassIds - cls.id else batchClassIds + cls.id
+                                }
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = {
+                                    batchClassIds = if (it) batchClassIds + cls.id else batchClassIds - cls.id
+                                })
+                                Text(cls.name, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    } else if (classes.size > 1) {
+                        Box {
+                            OutlinedButton(onClick = { classMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("班级：" + (classes.firstOrNull { it.id == selectedClassId }?.name ?: "选择班级"))
+                            }
+                            DropdownMenu(expanded = classMenuOpen, onDismissRequest = { classMenuOpen = false }) {
+                                classes.forEach { cls ->
+                                    DropdownMenuItem(text = { Text(cls.name) }, onClick = { selectedClassId = cls.id; classMenuOpen = false })
+                                }
+                            }
+                        }
+                    } else if (classes.size == 1) {
+                        Text("所属班级：${classes[0].name}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Box {
+                    OutlinedButton(onClick = { absentMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("未到标记：" + (absentOptions.firstOrNull { it.first == absentStatus }?.second ?: "旷课"))
+                    }
+                    DropdownMenu(expanded = absentMenuOpen, onDismissRequest = { absentMenuOpen = false }) {
+                        absentOptions.forEach { (k, label) ->
+                            DropdownMenuItem(text = { Text(label) }, onClick = { absentStatus = k; absentMenuOpen = false })
+                        }
+                    }
+                }
+
+                if (leaveTypes.isNotEmpty()) {
+                    Box {
+                        OutlinedButton(onClick = { leaveMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("关联假类：" + (leaveTypes.firstOrNull { it.id == leaveTypeId }?.name ?: "不关联"))
+                        }
+                        DropdownMenu(expanded = leaveMenuOpen, onDismissRequest = { leaveMenuOpen = false }) {
+                            DropdownMenuItem(text = { Text("不关联") }, onClick = { leaveTypeId = null; leaveMenuOpen = false })
+                            leaveTypes.forEach { lt ->
+                                DropdownMenuItem(text = { Text(lt.name) }, onClick = { leaveTypeId = lt.id; leaveMenuOpen = false })
+                            }
+                        }
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("启用该点名类型", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    Switch(checked = isActive, onCheckedChange = { isActive = it })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSubmit,
+                onClick = {
+                    scope.launch {
+                        saving = true
+                        error = null
+                        val orderedPeriods = periods.filter { it.id in selectedPeriodIds }.map { it.id }
+                        runCatching {
+                            if (editing != null) {
+                                repo.updateRollCallType(
+                                    id = editing.id,
+                                    name = name,
+                                    description = description,
+                                    absentStatus = absentStatus,
+                                    leaveTypeId = leaveTypeId,
+                                    periodIds = orderedPeriods,
+                                    isActive = isActive
+                                )
+                            } else if (batchMode) {
+                                repo.batchCreateRollCallTypes(
+                                    classIds = batchClassIds.toList(),
+                                    name = name,
+                                    description = description,
+                                    absentStatus = absentStatus,
+                                    leaveTypeId = leaveTypeId,
+                                    periodIds = orderedPeriods,
+                                    isActive = isActive
+                                )
+                            } else {
+                                repo.createRollCallType(
+                                    classId = selectedClassId,
+                                    name = name,
+                                    description = description,
+                                    absentStatus = absentStatus,
+                                    leaveTypeId = leaveTypeId,
+                                    periodIds = orderedPeriods,
+                                    isActive = isActive
+                                )
+                            }
+                            onSaved()
+                        }.onFailure { error = it.localizedMessage ?: "保存失败" }
+                        saving = false
+                    }
+                }
+            ) { Text(if (saving) "保存中..." else "保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }

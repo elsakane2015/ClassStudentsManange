@@ -17,7 +17,7 @@ struct RollCallType: Decodable, Identifiable, Hashable {
     let name: String
     let description: String?
     let absentStatus: String?
-    let periodIds: [Int]?
+    private let periodIdsRaw: [FlexibleInt]?
     let leaveTypeId: Int?
     let isActive: FlexibleBool?
     let sortOrder: Int?
@@ -28,7 +28,7 @@ struct RollCallType: Decodable, Identifiable, Hashable {
         case id, name, description
         case classId = "class_id"
         case absentStatus = "absent_status"
-        case periodIds = "period_ids"
+        case periodIdsRaw = "period_ids"
         case leaveTypeId = "leave_type_id"
         case isActive = "is_active"
         case sortOrder = "sort_order"
@@ -37,6 +37,54 @@ struct RollCallType: Decodable, Identifiable, Hashable {
     }
 
     var isActiveFlag: Bool { isActive?.value ?? true }
+    var periodIds: [Int] { (periodIdsRaw ?? []).map(\.value) }
+
+    var absentStatusDisplayName: String {
+        switch absentStatus {
+        case "late": return "迟到"
+        case "leave": return "请假"
+        default: return "旷课"
+        }
+    }
+
+    func periodSummary(using periods: [ClassPeriod]) -> String? {
+        let ids = periodIds
+        guard !ids.isEmpty else { return nil }
+        let map = Dictionary(uniqueKeysWithValues: periods.map { ($0.id, $0.name) })
+        let names = ids.compactMap { map[$0] ?? "第\($0)节" }
+        return names.isEmpty ? nil : names.joined(separator: "、")
+    }
+}
+
+enum RollCallPeriodNamingHelper {
+    /// 根据多选的节次智能生成建议的点名活动名称（例如：第1节 -> 第1节点名；第1节+第2节 -> 第1-2节点名）
+    static func suggestedName(for selectedIds: Set<Int>, in periods: [ClassPeriod]) -> String {
+        let ordered = periods.filter { selectedIds.contains($0.id) }
+        guard !ordered.isEmpty else { return "" }
+
+        if ordered.count == 1 {
+            let n = ordered[0].name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return n.hasSuffix("点名") ? n : "\(n)点名"
+        }
+
+        // 检查是否全为「第X节」格式
+        let nums: [Int] = ordered.compactMap { p in
+            let s = p.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard s.hasPrefix("第"), s.hasSuffix("节") else { return nil }
+            let mid = s.dropFirst().dropLast()
+            return Int(mid)
+        }
+        if nums.count == ordered.count {
+            let sortedNums = nums.sorted()
+            let isContiguous = zip(sortedNums, sortedNums.dropFirst()).allSatisfy { $1 == $0 + 1 }
+            if isContiguous, let first = sortedNums.first, let last = sortedNums.last {
+                return "第\(first)-\(last)节点名"
+            }
+            return "第\(sortedNums.map(String.init).joined(separator: "、"))节点名"
+        }
+
+        return ordered.map(\.name).joined(separator: "、") + "点名"
+    }
 }
 
 struct RollCallStudentRef: Decodable, Identifiable, Hashable {
